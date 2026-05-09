@@ -147,7 +147,24 @@ func (s *AccessReviewService) StartCampaign(ctx context.Context, in StartCampaig
 
 	var decisions []models.AccessReviewDecision
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(review).Error; err != nil {
+		// Use map-mode Create so an explicit AutoCertifyEnabled=false
+		// is sent to the DB. With struct-mode Create GORM omits zero
+		// values and the column's default:true tag would silently
+		// flip the persisted value to true, contradicting the caller.
+		// Same applies to State (always non-zero here) but is included
+		// for completeness.
+		row := map[string]interface{}{
+			"id":                   review.ID,
+			"workspace_id":         review.WorkspaceID,
+			"name":                 review.Name,
+			"scope_filter":         review.ScopeFilter,
+			"due_at":               review.DueAt,
+			"state":                review.State,
+			"auto_certify_enabled": review.AutoCertifyEnabled,
+			"created_at":           review.CreatedAt,
+			"updated_at":           review.UpdatedAt,
+		}
+		if err := tx.Table((&models.AccessReview{}).TableName()).Create(row).Error; err != nil {
 			return fmt.Errorf("access: insert access_review: %w", err)
 		}
 

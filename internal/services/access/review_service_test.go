@@ -133,6 +133,43 @@ func TestStartCampaign_HappyPath(t *testing.T) {
 	}
 }
 
+// TestStartCampaign_PersistsAutoCertifyDisabled is a regression test
+// for the GORM zero-value pitfall: the access_reviews.auto_certify_enabled
+// column carries default:true, so a struct-mode Create would skip an
+// explicit false from the caller and the DB would silently flip the
+// row to true. StartCampaign must persist the caller's value verbatim
+// so operators who disable auto-certification get a campaign that the
+// AI agent will not auto-certify.
+func TestStartCampaign_PersistsAutoCertifyDisabled(t *testing.T) {
+	db := newReviewTestDB(t)
+	const ws = "01H000000000000000WORKSPACE"
+	const conn = "01H000000000000000CONNECTOR"
+	seedActiveGrant(t, db, "01H000000000000000GRANT0010", ws, "u1", conn, "admin", "host-a")
+
+	svc := NewAccessReviewService(db, nil)
+	review, _, err := svc.StartCampaign(context.Background(), StartCampaignInput{
+		WorkspaceID:        ws,
+		Name:               "Manual-only review",
+		DueAt:              time.Now().Add(7 * 24 * time.Hour),
+		ScopeFilter:        scopeJSON(t, map[string]string{"connector_id": conn}),
+		AutoCertifyEnabled: false,
+	})
+	if err != nil {
+		t.Fatalf("StartCampaign: %v", err)
+	}
+	if review.AutoCertifyEnabled {
+		t.Error("returned review.AutoCertifyEnabled = true; want false")
+	}
+
+	var got models.AccessReview
+	if err := db.Where("id = ?", review.ID).First(&got).Error; err != nil {
+		t.Fatalf("reload review: %v", err)
+	}
+	if got.AutoCertifyEnabled {
+		t.Errorf("persisted auto_certify_enabled = true; want false (column default:true must not override explicit false)")
+	}
+}
+
 // TestStartCampaign_ValidationFailures exercises the validation
 // paths so the API layer can rely on ErrValidation as a 4xx signal.
 func TestStartCampaign_ValidationFailures(t *testing.T) {
