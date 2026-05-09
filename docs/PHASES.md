@@ -10,7 +10,7 @@ A phase is **shippable** only when *all* of its exit criteria are demonstrably m
 | 🟡 partial | Some exit criteria met; gaps tracked in `PROGRESS.md` |
 | ⏳ planned | Not yet started |
 
-> **Phase 0 is `✅ shipped`; Phase 1 is `🟡 partial`** (3 of 10 connectors landed with minimum capabilities). Later phases remain `⏳ planned`. As phases land, flip the marker and move the supporting status row in `PROGRESS.md`.
+> **Phase 0 is `✅ shipped`; Phase 1 is `🟡 partial`** (10 of 10 connectors landed with minimum capabilities; Admin UI + Keycloak federation exit criteria still open). Later phases remain `⏳ planned`. As phases land, flip the marker and move the supporting status row in `PROGRESS.md`.
 
 ---
 
@@ -41,13 +41,13 @@ A phase is **shippable** only when *all* of its exit criteria are demonstrably m
 - [x] **Microsoft Entra ID** connector (extends existing ZTNA IdP integration). — 🟡 minimum capabilities only (`Validate`, `Connect`, `VerifyPermissions`, `CountIdentities`, `SyncIdentities`, `SyncIdentitiesDelta`, `GroupSyncer`, `GetSSOMetadata`, `GetCredentialsMetadata`).
 - [x] **Google Workspace** connector. — 🟡 minimum capabilities only.
 - [x] **Okta** connector. — 🟡 minimum capabilities only (`SyncIdentitiesDelta` via system log polling).
-- [ ] **Auth0** connector.
-- [ ] **Generic SAML** connector (covers 60 %+ of enterprise SaaS that have no custom API).
-- [ ] **Generic OIDC** connector.
-- [ ] **Duo Security** connector.
-- [ ] **1Password** connector.
-- [ ] **LastPass** connector.
-- [ ] **Ping Identity** connector.
+- [x] **Auth0** connector. — 🟡 minimum capabilities only (`Validate`, `Connect`, `VerifyPermissions`, `CountIdentities`, `SyncIdentities`, `SyncIdentitiesDelta` via Auth0 logs API, `GetSSOMetadata`, `GetCredentialsMetadata`).
+- [x] **Generic SAML** connector (covers 60 %+ of enterprise SaaS that have no custom API). — 🟡 minimum capabilities only (SSO-only: `Validate`, `Connect`, `GetSSOMetadata` parsed from IdP metadata XML; `SyncIdentities` is a no-op).
+- [x] **Generic OIDC** connector. — 🟡 minimum capabilities only (SSO-only: `Validate`, `Connect`, `GetSSOMetadata` parsed from `/.well-known/openid-configuration`).
+- [x] **Duo Security** connector. — 🟡 minimum capabilities only (`Validate`, `Connect` with HMAC-SHA1 request signing, `CountIdentities`, `SyncIdentities`).
+- [x] **1Password** connector. — 🟡 minimum capabilities only (`Validate`, `Connect`, `CountIdentities`, `SyncIdentities` via SCIM v2).
+- [x] **LastPass** connector. — 🟡 minimum capabilities only (`Validate`, `Connect`, `CountIdentities`, `SyncIdentities` via Enterprise API `cmd=getuserdata`).
+- [x] **Ping Identity** connector. — 🟡 minimum capabilities only (`Validate`, `Connect`, `CountIdentities`, `SyncIdentities` via PingOne v1 with regional NA/EU/AP routing, `GetSSOMetadata`).
 - [x] Each landed connector implements at minimum: `Validate`, `Connect`, `SyncIdentities`, `GetCredentialsMetadata`.
 - [x] Each landed connector's `Validate` is pure-local (no I/O), enforced by a per-connector unit test.
 - [ ] Admin UI: connector marketplace page with a setup wizard per connector.

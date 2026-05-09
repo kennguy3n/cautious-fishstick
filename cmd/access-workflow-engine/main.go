@@ -8,9 +8,16 @@ import (
 
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/auth0"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/duo"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/generic_oidc"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/generic_saml"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/google_workspace"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/lastpass"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/microsoft"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/okta"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/onepassword"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/ping_identity"
 )
 
 func main() {

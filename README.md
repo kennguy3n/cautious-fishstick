@@ -1,6 +1,6 @@
 # ShieldNet 360 Access Platform
 
-> **Status:** Phase 0 shipped, Phase 1 partial. The `AccessConnector` contract, process-global registry, AES-GCM credential manager, `access_connectors` migration, and the first three Tier 1 connectors (Microsoft Entra ID, Google Workspace, Okta) are in `main`. See [`docs/PROGRESS.md`](docs/PROGRESS.md) for the per-connector matrix.
+> **Status:** Phase 0 shipped, Phase 1 partial. The `AccessConnector` contract, process-global registry, AES-GCM credential manager, `access_connectors` migration, and **all 10 Tier 1 connectors** (Microsoft Entra ID, Google Workspace, Okta, Auth0, Generic SAML, Generic OIDC, Duo Security, 1Password, LastPass, Ping Identity — each at minimum-capability level) are in `main`. The Phase 1 Admin UI and Keycloak federation exit criteria remain open. See [`docs/PROGRESS.md`](docs/PROGRESS.md) for the per-connector matrix.
 
 The ShieldNet 360 Access Platform is the access management product within the SN360 ecosystem. It is a multi-tenant platform that lets small and medium-sized businesses connect, manage, and secure access to **200+ cloud platforms, SaaS applications, and identity systems** from a single control plane.
 
@@ -50,7 +50,14 @@ cautious-fishstick/
 │   │   └── connectors/
 │   │       ├── microsoft/         # Entra ID — Validate, Connect, Sync, GroupSync, Delta
 │   │       ├── google_workspace/  # Admin SDK Directory — Validate, Connect, Sync, GroupSync
-│   │       └── okta/              # Okta API — Validate, Connect, Sync, Delta via system log
+│   │       ├── okta/              # Okta API — Validate, Connect, Sync, Delta via system log
+│   │       ├── auth0/             # Auth0 Management API — Validate, Connect, Sync, Delta via logs API
+│   │       ├── generic_saml/      # SAML IdP metadata broker — Validate, Connect, GetSSOMetadata (SSO-only)
+│   │       ├── generic_oidc/      # OIDC discovery broker — Validate, Connect, GetSSOMetadata (SSO-only)
+│   │       ├── duo/               # Duo Admin API — Validate, Connect (HMAC-SHA1), Sync
+│   │       ├── onepassword/       # 1Password SCIM v2 — Validate, Connect, Sync
+│   │       ├── lastpass/          # LastPass Enterprise API — Validate, Connect, Sync
+│   │       └── ping_identity/     # PingOne v1 (NA/EU/AP) — Validate, Connect, Sync
 │   ├── pkg/credentials/           # AES-GCM credential manager (KeyManager interface stub)
 │   ├── models/                    # GORM models (access_connectors)
 │   └── migrations/                # GORM AutoMigrate migrations (no FK constraints)

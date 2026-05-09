@@ -4,7 +4,7 @@ Last updated: keep this file in sync as PRs land. The state here should agree wi
 
 For the canonical phase definitions (and what "shipped" means), see `PHASES.md`. For the design contract see `PROPOSAL.md`.
 
-Status: **In progress | ~5 %**. Phase 0 (contract, registry, credential manager, migration) is complete; the first three Tier 1 connectors (Microsoft Entra ID, Google Workspace, Okta) implement the minimum capabilities — `Validate` + `Connect` + `SyncIdentities` — and are wired into the binaries via blank-import. Most rows below remain `⏳ planned`.
+Status: **In progress | ~15 %**. Phase 0 (contract, registry, credential manager, migration) is complete; Phase 1 Tier 1 is now feature-complete on the connector axis — all 10 Tier 1 connectors (Microsoft Entra ID, Google Workspace, Okta, Auth0, Generic SAML, Generic OIDC, Duo Security, 1Password, LastPass, Ping Identity) ship the minimum capabilities and are wired into the binaries via blank-import. Phase 1 stays 🟡 partial: the Admin UI and Keycloak SSO federation exit criteria are still unchecked. Most rows below remain `⏳ planned`.
 
 | Status legend |  |
 |---------------|--|
@@ -34,13 +34,13 @@ Path is the target directory under `internal/services/access/connectors/` once t
 | 1 | Microsoft Entra ID | IAM/SSO | `microsoft/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ | 🟡 |
 | 2 | Google Workspace | IAM/SSO | `google_workspace/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ | 🟡 |
 | 3 | Okta | IAM/SSO | `okta/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ | 🟡 |
-| 4 | Auth0 | IAM/SSO | `auth0/` | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
-| 5 | Generic SAML | IAM/SSO | `generic_saml/` | n/a | n/a | n/a | n/a | ⏳ | ⏳ |
-| 6 | Generic OIDC | IAM/SSO | `generic_oidc/` | n/a | n/a | n/a | n/a | ⏳ | ⏳ |
-| 7 | Duo Security | IAM/MFA | `duo/` | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
-| 8 | 1Password | Secrets/Vault | `onepassword/` | ⏳ | ⏳ | ⏳ | ⏳ | n/a | ⏳ |
-| 9 | LastPass | Secrets/Vault | `lastpass/` | ⏳ | ⏳ | ⏳ | ⏳ | n/a | ⏳ |
-| 10 | Ping Identity | IAM/SSO | `ping_identity/` | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
+| 4 | Auth0 | IAM/SSO | `auth0/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ | 🟡 |
+| 5 | Generic SAML | IAM/SSO | `generic_saml/` | n/a | n/a | n/a | n/a | 🟡 | 🟡 |
+| 6 | Generic OIDC | IAM/SSO | `generic_oidc/` | n/a | n/a | n/a | n/a | 🟡 | 🟡 |
+| 7 | Duo Security | IAM/MFA | `duo/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a | 🟡 |
+| 8 | 1Password | Secrets/Vault | `onepassword/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a | 🟡 |
+| 9 | LastPass | Secrets/Vault | `lastpass/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a | 🟡 |
+| 10 | Ping Identity | IAM/SSO | `ping_identity/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ | 🟡 |
 
 ### Tier 2 — Cloud Infrastructure (11–25)
 
@@ -321,6 +321,7 @@ When you ship something from §3, move it here with the merge date and PR link. 
 
 | Date | What | PR | Notes |
 |------|------|----|-------|
+| 2026-05-09 | Phase 1 — remaining 7 Tier 1 connectors | #N | Auth0, Generic SAML, Generic OIDC, Duo Security, 1Password, LastPass, Ping Identity. Each ships `Validate` (pure-local) + `Connect` + `SyncIdentities`/`CountIdentities` (or no-op for SSO-only providers) + `GetSSOMetadata`/`GetCredentialsMetadata`. `ProvisionAccess` / `RevokeAccess` / `ListEntitlements` remain Phase 1 stubs. |
 | 2026-05-09 | Phase 0 — contract, registry, credential manager, migration | #2 | Full Phase 0 exit criteria met. First 3 connectors (Microsoft, Google Workspace, Okta) with `Validate` + `Connect` + `SyncIdentities` |
 
 ---
