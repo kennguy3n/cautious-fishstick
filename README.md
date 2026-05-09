@@ -1,6 +1,6 @@
 # ShieldNet 360 Access Platform
 
-> **Status:** Phase 0 shipped, Phase 1 partial, Phase 2 partial, **Phase 3 partial, Phase 5 partial**. The `AccessConnector` contract, process-global registry, AES-GCM credential manager, `access_connectors` migration, and **all 10 Tier 1 connectors** (Microsoft Entra ID, Google Workspace, Okta, Auth0, Generic SAML, Generic OIDC, Duo Security, 1Password, LastPass, Ping Identity — each at minimum-capability level) are in `main`. Phase 2 lands the four request-lifecycle tables (`access_requests`, `access_request_state_history`, `access_grants`, `access_workflows`), the request state machine, and the request / provisioning / workflow services. **Phase 3 lands** the `policies` / `teams` / `team_members` / `resources` tables, the `PolicyService` (drafts, simulate, promote, test-access), `ImpactResolver`, and `ConflictDetector`. **Phase 5 lands** the `access_reviews` / `access_review_decisions` tables and `AccessReviewService` (`StartCampaign` / `SubmitDecision` / `CloseCampaign` / `AutoRevoke`). HTTP endpoints, Admin UI, Mobile SDK, Desktop Extension, AI auto-certification, scheduled campaigns, and the Phase 1 Admin UI / Keycloak federation exit criteria remain open. See [`docs/PROGRESS.md`](docs/PROGRESS.md) for the per-connector matrix and [`docs/PHASES.md`](docs/PHASES.md) for per-phase exit criteria.
+> **Status:** Phase 0 shipped, Phases 1–5 partial. The `AccessConnector` contract, process-global registry, AES-GCM credential manager, `access_connectors` migration, and **all 10 Tier 1 connectors** are in `main`. **Phase 2** lands the request-lifecycle tables, the request state machine, and the request / provisioning / workflow services PLUS the HTTP handler layer for access requests and grants. **Phase 3** lands the `policies` / `teams` / `team_members` / `resources` tables, `PolicyService`, `ImpactResolver`, `ConflictDetector` PLUS the HTTP handler layer for policy drafts, simulate, promote, and test-access. **Phase 4 (partial)** lands the Go-side A2A AI client (`internal/pkg/aiclient`), env-driven access platform config (`internal/config`), AI risk-scoring integration in `AccessRequestService.CreateRequest` and `PolicyService.Simulate`, and `POST /access/explain` + `POST /access/suggest` endpoints — the Python AI agent skills themselves remain open. **Phase 5** lands the `access_reviews` / `access_review_decisions` / `access_campaign_schedules` tables, `AccessReviewService`, the Phase 5 HTTP handler layer, AND the `internal/cron.CampaignScheduler` driving recurring campaigns. Admin UI, Mobile SDK, Desktop Extension, AI auto-certification, reviewer notifications, and the Phase 1 Admin UI / Keycloak federation exit criteria remain open. See [`docs/PROGRESS.md`](docs/PROGRESS.md) for the per-connector matrix and [`docs/PHASES.md`](docs/PHASES.md) for per-phase exit criteria.
 
 The ShieldNet 360 Access Platform is the access management product within the SN360 ecosystem. It is a multi-tenant platform that lets small and medium-sized businesses connect, manage, and secure access to **200+ cloud platforms, SaaS applications, and identity systems** from a single control plane.
 
@@ -19,11 +19,14 @@ go mod download
 # Build every package and binary
 go build ./...
 
-# Run the full test suite
-go test ./...
+# Run the full test suite (with the race detector)
+go test -race -timeout=180s ./...
 
-# Start any of the three binaries (Phase 0 stubs that just log the
-# registered connectors and exit; full handler wiring lands in Phase 2+)
+# Start the HTTP API on :8080 (override via ZTNA_API_LISTEN_ADDR).
+# Set ACCESS_AI_AGENT_BASE_URL + ACCESS_AI_AGENT_API_KEY to enable
+# AI risk scoring; leaving them empty turns AI off and AI-driven
+# routes return 503 (the request workflow falls back to medium per
+# PROPOSAL §5.3).
 go run ./cmd/ztna-api
 go run ./cmd/access-connector-worker
 go run ./cmd/access-workflow-engine
@@ -38,20 +41,36 @@ Each binary blank-imports the connector packages so their `init()` functions reg
 ```
 cautious-fishstick/
 ├── cmd/
-│   ├── ztna-api/                  # HTTP API binary (Phase 0 stub)
+│   ├── ztna-api/                  # HTTP API binary (Gin server on ZTNA_API_LISTEN_ADDR, default :8080)
 │   ├── access-connector-worker/   # Queue worker (Phase 0 stub)
 │   └── access-workflow-engine/    # LangGraph orchestrator host (Phase 0 stub)
 ├── internal/
+│   ├── config/                                 # Phase 4 env-driven access platform config (ACCESS_AI_AGENT_*, ACCESS_FULL_RESYNC_INTERVAL, ...)
+│   ├── cron/                                   # Phase 5 background workers
+│   │   └── campaign_scheduler.go               # CampaignScheduler — starts due AccessReview campaigns
+│   ├── handlers/                               # Gin HTTP handler layer (Phase 2–5)
+│   │   ├── router.go                           # Router + Dependencies (DI for services)
+│   │   ├── helpers.go                          # GetStringParam / GetPtrStringQuery (no direct c.Param/c.Query)
+│   │   ├── errors.go                           # service-error → HTTP-status mapping
+│   │   ├── access_request_handler.go           # POST/GET /access/requests, approve|deny|cancel
+│   │   ├── access_grant_handler.go             # GET /access/grants (filtered by user_id / connector_id)
+│   │   ├── access_review_handler.go            # POST /access/reviews, :id/decisions|close|auto-revoke
+│   │   ├── policy_handler.go                   # POST /workspace/policy + drafts / simulate / promote / test-access
+│   │   └── ai_handler.go                       # POST /access/explain + /access/suggest (A2A pass-through)
+│   ├── pkg/aiclient/                           # Phase 4 A2A AI client
+│   │   ├── client.go                           # POST {baseURL}/a2a/invoke with X-API-Key
+│   │   └── fallback.go                         # AssessRiskWithFallback (medium per PROPOSAL §5.3) + RiskAssessmentAdapter
 │   ├── services/access/
 │   │   ├── types.go                       # AccessConnector + record types
 │   │   ├── optional_interfaces.go         # IdentityDeltaSyncer / GroupSyncer / ...
 │   │   ├── factory.go                     # Process-global registry
 │   │   ├── testing.go                     # MockAccessConnector + SwapConnector test helper
 │   │   ├── request_state_machine.go       # Phase 2 request lifecycle FSM (pure logic)
-│   │   ├── request_service.go             # AccessRequestService — Create / Approve / Deny / Cancel
+│   │   ├── request_service.go             # AccessRequestService — Create / Approve / Deny / Cancel + AI risk scoring
 │   │   ├── provisioning_service.go        # AccessProvisioningService — Provision / Revoke
+│   │   ├── grant_query_service.go         # Read-only ListActiveGrants for /access/grants
 │   │   ├── workflow_service.go            # WorkflowService — ResolveWorkflow / ExecuteWorkflow
-│   │   ├── policy_service.go              # Phase 3 PolicyService — CreateDraft / Simulate / Promote / TestAccess
+│   │   ├── policy_service.go              # Phase 3 PolicyService — CreateDraft / Simulate / Promote / TestAccess + AI risk scoring
 │   │   ├── impact_resolver.go             # Phase 3 ImpactResolver — selector → affected teams / members / resources
 │   │   ├── conflict_detector.go           # Phase 3 ConflictDetector — redundant / contradictory classification
 │   │   ├── review_service.go              # Phase 5 AccessReviewService — StartCampaign / SubmitDecision / CloseCampaign / AutoRevoke
@@ -77,12 +96,14 @@ cautious-fishstick/
 │   │   ├── team.go                        # Phase 3 teams + team_members
 │   │   ├── resource.go                    # Phase 3 resources
 │   │   ├── access_review.go               # Phase 5 access_reviews + state constants
-│   │   └── access_review_decision.go      # Phase 5 access_review_decisions + decision constants
+│   │   ├── access_review_decision.go      # Phase 5 access_review_decisions + decision constants
+│   │   └── access_campaign_schedule.go    # Phase 5 access_campaign_schedules (recurring check-ups)
 │   └── migrations/                        # GORM AutoMigrate migrations (no FK constraints)
 │       ├── 001_create_access_connectors.go
 │       ├── 002_create_access_request_tables.go
 │       ├── 003_create_policy_tables.go
-│       └── 004_create_access_review_tables.go
+│       ├── 004_create_access_review_tables.go
+│       └── 005_create_access_campaign_schedules.go
 └── docs/                          # Proposal, architecture, phases, progress
 ```
 

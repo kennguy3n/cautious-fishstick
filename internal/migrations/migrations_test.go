@@ -29,7 +29,7 @@ func openTestDB(t *testing.T) *gorm.DB {
 // catches "added the file but forgot to wire it into All()" wiring bugs.
 func TestAll_ReturnsAllMigrations(t *testing.T) {
 	got := All()
-	want := []string{"001", "002", "003", "004"}
+	want := []string{"001", "002", "003", "004", "005"}
 	if len(got) != len(want) {
 		t.Fatalf("All() returned %d migrations; want %d", len(got), len(want))
 	}
@@ -69,6 +69,7 @@ func TestRunAll_AutoMigratesEveryTable(t *testing.T) {
 		"resources",
 		"access_reviews",
 		"access_review_decisions",
+		"access_campaign_schedules",
 	}
 	mig := db.Migrator()
 	for _, table := range wantTables {
@@ -163,6 +164,25 @@ func TestMigration004_RejectsNilDB(t *testing.T) {
 	}
 }
 
+// TestMigration005_IsIdempotent asserts that running the Phase 5
+// scheduled-campaigns migration a second time is a no-op.
+func TestMigration005_IsIdempotent(t *testing.T) {
+	db := openTestDB(t)
+	if err := Migration005CreateAccessCampaignSchedules(db); err != nil {
+		t.Fatalf("first run of migration 005 failed: %v", err)
+	}
+	if err := Migration005CreateAccessCampaignSchedules(db); err != nil {
+		t.Fatalf("second run of migration 005 was not idempotent: %v", err)
+	}
+}
+
+// TestMigration005_RejectsNilDB exercises the defensive guard.
+func TestMigration005_RejectsNilDB(t *testing.T) {
+	if err := Migration005CreateAccessCampaignSchedules(nil); err == nil {
+		t.Fatal("expected error for nil db, got nil")
+	}
+}
+
 // TestModelTableNames pins the TableName() overrides so accidental renames
 // surface as a unit-test failure instead of an at-runtime migration mismatch.
 func TestModelTableNames(t *testing.T) {
@@ -181,6 +201,7 @@ func TestModelTableNames(t *testing.T) {
 		{"resource", (models.Resource{}).TableName(), "resources"},
 		{"access_review", (models.AccessReview{}).TableName(), "access_reviews"},
 		{"access_review_decision", (models.AccessReviewDecision{}).TableName(), "access_review_decisions"},
+		{"access_campaign_schedule", (models.AccessCampaignSchedule{}).TableName(), "access_campaign_schedules"},
 	}
 	for _, tc := range cases {
 		if tc.got != tc.want {

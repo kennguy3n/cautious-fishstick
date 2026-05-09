@@ -35,6 +35,12 @@ type PolicyService struct {
 	db               *gorm.DB
 	impactResolver   *ImpactResolver
 	conflictDetector *ConflictDetector
+	// riskAssessor is the optional Phase 4 AI hook. When set, Simulate
+	// passes the freshly-built ImpactReport to AssessRequestRisk and
+	// stamps the returned score / factors onto the report. nil
+	// disables AI scoring; the report is persisted exactly as the
+	// resolver + conflict detector built it.
+	riskAssessor RiskAssessor
 	// now is overridable in tests so we can pin CreatedAt / PromotedAt
 	// timestamps in assertions. Defaults to time.Now in NewPolicyService.
 	now func() time.Time
@@ -55,6 +61,14 @@ func NewPolicyService(db *gorm.DB) *PolicyService {
 		now:              time.Now,
 		newID:            newULID,
 	}
+}
+
+// SetRiskAssessor wires an AI-driven risk assessor onto the service.
+// nil disables AI scoring during Simulate. Call this once at boot
+// from cmd/ztna-api/main.go; it is NOT safe to call concurrently
+// with Simulate.
+func (s *PolicyService) SetRiskAssessor(r RiskAssessor) {
+	s.riskAssessor = r
 }
 
 // SwapImpactResolver replaces the impact resolver. Intended for tests
@@ -251,6 +265,21 @@ func (s *PolicyService) Simulate(ctx context.Context, workspaceID, policyID stri
 	}
 	report.ConflictsWithExisting = conflicts
 	report.Highlights = buildHighlights(policy, report)
+
+	// Phase 4 AI scoring. PolicyService asks the assessor "how risky
+	// is this draft?". Per PROPOSAL §5.3 the AI is decision-support
+	// for Simulate — failure leaves the report's RiskScore empty
+	// rather than synthesising "medium". The fallback semantics for
+	// access requests (force "medium" on failure) intentionally do
+	// NOT apply here: a draft policy with no AI score is harmless,
+	// and we don't want admins acting on a synthesised score they
+	// can't audit.
+	if s.riskAssessor != nil {
+		if score, factors, ok := s.riskAssessor.AssessRequestRisk(ctx, report); ok && score != "" {
+			report.RiskScore = score
+			report.RiskFactors = factors
+		}
+	}
 
 	encoded, err := json.Marshal(report)
 	if err != nil {

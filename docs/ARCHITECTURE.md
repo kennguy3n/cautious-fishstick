@@ -121,6 +121,25 @@ Reference points:
   - `WorkflowService` (`ResolveWorkflow` + `ExecuteWorkflow` for self-service / manager-approval): `internal/services/access/workflow_service.go`.
   - Models: `internal/models/access_request.go`, `internal/models/access_request_state_history.go`, `internal/models/access_grant.go`, `internal/models/access_workflow.go`.
   - Migration: `internal/migrations/002_create_access_request_tables.go`.
+- HTTP handler layer (Phase 2–5, implemented):
+  - Gin router + dependency injection: `internal/handlers/router.go` (returns a fully-wired `*gin.Engine`).
+  - Helper functions enforcing the cross-cutting "no `c.Param` / `c.Query`" rule: `internal/handlers/helpers.go` (`GetStringParam`, `GetPtrStringQuery`).
+  - Service-error → HTTP-status mapping: `internal/handlers/errors.go`.
+  - Phase 2 handlers: `internal/handlers/access_request_handler.go`, `internal/handlers/access_grant_handler.go`.
+  - Phase 3 handlers: `internal/handlers/policy_handler.go`.
+  - Phase 5 handlers: `internal/handlers/access_review_handler.go`.
+  - Phase 4 AI handlers: `internal/handlers/ai_handler.go` (`POST /access/explain`, `POST /access/suggest`).
+  - HTTP server boot: `cmd/ztna-api/main.go` (binds `ZTNA_API_LISTEN_ADDR`, default `:8080`).
+- Phase 4 AI integration (Go-side, implemented; Python skill deferred):
+  - A2A client: `internal/pkg/aiclient/client.go` (POSTs `{baseURL}/a2a/invoke` with `X-API-Key`).
+  - Fallback helper: `internal/pkg/aiclient/fallback.go` (`AssessRiskWithFallback` returns `risk_score=medium` per PROPOSAL §5.3 when AI is unreachable).
+  - Adapter satisfying `access.RiskAssessor`: `internal/pkg/aiclient/fallback.go::RiskAssessmentAdapter`.
+  - Env-driven config: `internal/config/access.go` (`ACCESS_AI_AGENT_BASE_URL`, `ACCESS_AI_AGENT_API_KEY`, `ACCESS_WORKFLOW_ENGINE_BASE_URL`, `ACCESS_FULL_RESYNC_INTERVAL` default 7d, `ACCESS_REVIEW_DEFAULT_FREQUENCY` default 90d, `ACCESS_DRAFT_POLICY_STALE_AFTER` default 14d).
+  - Risk-scoring integration: `AccessRequestService.CreateRequest` and `PolicyService.Simulate` both consult a `RiskAssessor` and persist `risk_score` / `risk_factors`.
+- Phase 5 scheduled campaigns (implemented):
+  - Schedule model: `internal/models/access_campaign_schedule.go` (table `access_campaign_schedules`).
+  - Migration: `internal/migrations/005_create_access_campaign_schedules.go`.
+  - Cron worker: `internal/cron/campaign_scheduler.go` (`CampaignScheduler.Run` scans for due rows, calls `StartCampaign`, bumps `NextRunAt` by `FrequencyDays`; idempotent on partial failure — failed rows do not bump `NextRunAt` so the next pass retries).
 - Service entry: `internal/services/access/service.go` (target; parallels `shieldnet360-backend/internal/services/integration/service.go:188-262`).
 
 ---
@@ -338,6 +357,7 @@ Crucially: **drafts never touch OpenZiti.** Promotion is the only path that crea
 | `PolicyService` (`CreateDraft` / `GetDraft` / `ListDrafts` / `GetPolicy` / `Simulate` / `Promote` / `TestAccess`) | `internal/services/access/policy_service.go` |
 | `ImpactResolver` (selector → affected teams / members / resources) | `internal/services/access/impact_resolver.go` |
 | `ConflictDetector` (redundant / contradictory classification) | `internal/services/access/conflict_detector.go` |
+| HTTP handlers (`POST /workspace/policy`, `GET /workspace/policy/drafts`, `GET /workspace/policy/:id`, `POST /workspace/policy/:id/simulate|promote`, `POST /workspace/policy/test-access`) | `internal/handlers/policy_handler.go` |
 | "Drafts do not call OpenZiti" integration test | `internal/services/access/policy_service_test.go::TestPromote_DoesNotInvokeOpenZiti` |
 
 The OpenZiti `ServicePolicy` write that appears in the sequence diagram above (step 23) is **not** implemented in this repo — that integration lives in the `ztna-business-layer`. `PolicyService.Promote` flips the DB state (`is_draft=false`, `promoted_at`, `promoted_by`); the ZTNA layer subscribes to promoted policies and reconciles them with OpenZiti.
@@ -394,8 +414,12 @@ Auto-certification rate is observable as a campaign-level metric. Operators can 
 |---------|------|
 | `AccessReview` campaign model | `internal/models/access_review.go` |
 | `AccessReviewDecision` per-grant decision model | `internal/models/access_review_decision.go` |
+| `AccessCampaignSchedule` recurring-campaign model | `internal/models/access_campaign_schedule.go` |
 | Migration (creates `access_reviews`, `access_review_decisions`) | `internal/migrations/004_create_access_review_tables.go` |
+| Migration (creates `access_campaign_schedules`) | `internal/migrations/005_create_access_campaign_schedules.go` |
 | `AccessReviewService` (`StartCampaign` / `SubmitDecision` / `CloseCampaign` / `AutoRevoke`) | `internal/services/access/review_service.go` |
+| HTTP handlers (`POST /access/reviews`, `POST /access/reviews/:id/decisions|close|auto-revoke`) | `internal/handlers/access_review_handler.go` |
+| Cron worker driving scheduled campaigns | `internal/cron/campaign_scheduler.go` |
 | Composes `AccessProvisioningService` to revoke grants | `internal/services/access/provisioning_service.go` |
 
 The AI auto-certification path in the sequence diagram above (steps 4–7) is **not** implemented in this repo — `AccessReview.AutoCertifyEnabled` is wired through and the agent will flip pending → certify on its own schedule. `SubmitDecision` decouples DB writes from the upstream `Revoke` call (decision row commits first, then the connector revoke runs); `AutoRevoke` is the idempotent catch-up that reconciles revoke decisions whose upstream side-effect has not yet executed.
@@ -544,6 +568,7 @@ Note explicitly: **all AI inference happens server-side**. The SDKs / extension 
 | `access_grants` | Active entitlements (one row per `(user, resource, role)`) | `id`, `workspace_id`, `user_id`, `connector_id`, `resource_external_id`, `role`, `granted_at`, `expires_at`, `last_used_at`, `revoked_at` |
 | `access_reviews` | Periodic certification campaigns | `id`, `workspace_id`, `name`, `scope_filter jsonb`, `due_at`, `state` |
 | `access_review_decisions` | Per-grant decision in a campaign | `review_id`, `grant_id`, `decision`, `decided_by`, `auto_certified bool`, `reason`, `decided_at` |
+| `access_campaign_schedules` | Recurring access check-up cadence | `id`, `workspace_id`, `name`, `scope_filter jsonb`, `frequency_days`, `next_run_at`, `is_active` |
 | `access_workflows` | Configurable approval chains | `id`, `workspace_id`, `name`, `match_rule jsonb`, `steps jsonb` |
 | `access_sync_state` | Delta-link / checkpoint store per `(connector_id, kind)` | `connector_id`, `kind`, `delta_link`, `updated_at` |
 | `policies` | Existing table — new columns | `is_draft bool`, `draft_impact jsonb`, `promoted_at timestamp` |

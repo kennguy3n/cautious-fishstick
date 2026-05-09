@@ -122,7 +122,43 @@ var (
 // certification is intentionally NOT applied here — the AI agent runs
 // out of band and updates rows from "pending" to "certify" on its own
 // schedule.
+//
+// StartCampaign opens its own transaction. Callers that need to
+// compose the review insert with other writes (e.g. the Phase 5
+// CampaignScheduler bumping access_campaign_schedules.NextRunAt in
+// the same transaction) should use StartCampaignTx instead and pass
+// in their own *gorm.DB.
 func (s *AccessReviewService) StartCampaign(ctx context.Context, in StartCampaignInput) (*models.AccessReview, []models.AccessReviewDecision, error) {
+	var (
+		review    *models.AccessReview
+		decisions []models.AccessReviewDecision
+	)
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var err error
+		review, decisions, err = s.StartCampaignTx(ctx, tx, in)
+		return err
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return review, decisions, nil
+}
+
+// StartCampaignTx is the transaction-aware variant of StartCampaign.
+// All writes (the access_reviews row and every access_review_decisions
+// row enumerated from the scope filter) happen on the supplied tx.
+// The caller owns the transaction lifecycle: StartCampaignTx never
+// commits or rolls back tx, only writes through it. This lets callers
+// compose the campaign insert with other writes (e.g. the Phase 5
+// CampaignScheduler updating access_campaign_schedules.NextRunAt) so
+// the whole unit of work is atomic.
+//
+// tx must not be nil. If you don't already have a transaction, call
+// StartCampaign instead.
+func (s *AccessReviewService) StartCampaignTx(ctx context.Context, tx *gorm.DB, in StartCampaignInput) (*models.AccessReview, []models.AccessReviewDecision, error) {
+	if tx == nil {
+		return nil, nil, errors.New("access: StartCampaignTx: tx is nil")
+	}
 	if err := validateStartCampaign(in); err != nil {
 		return nil, nil, err
 	}
@@ -145,65 +181,61 @@ func (s *AccessReviewService) StartCampaign(ctx context.Context, in StartCampaig
 		return nil, nil, err
 	}
 
+	tx = tx.WithContext(ctx)
+
+	// Use map-mode Create so an explicit AutoCertifyEnabled=false
+	// is sent to the DB. With struct-mode Create GORM omits zero
+	// values and the column's default:true tag would silently
+	// flip the persisted value to true, contradicting the caller.
+	// Same applies to State (always non-zero here) but is included
+	// for completeness.
+	row := map[string]interface{}{
+		"id":                   review.ID,
+		"workspace_id":         review.WorkspaceID,
+		"name":                 review.Name,
+		"scope_filter":         review.ScopeFilter,
+		"due_at":               review.DueAt,
+		"state":                review.State,
+		"auto_certify_enabled": review.AutoCertifyEnabled,
+		"created_at":           review.CreatedAt,
+		"updated_at":           review.UpdatedAt,
+	}
+	if err := tx.Table((&models.AccessReview{}).TableName()).Create(row).Error; err != nil {
+		return nil, nil, fmt.Errorf("access: insert access_review: %w", err)
+	}
+
+	// Enumerate active grants matching the scope filter. We
+	// load every active grant in the workspace and filter in
+	// Go, mirroring ImpactResolver: SQLite has no jsonb-contains
+	// equivalent and the per-workspace grant set is small enough
+	// for in-memory filtering to be acceptable.
+	var grants []models.AccessGrant
+	q := tx.Where("workspace_id = ? AND revoked_at IS NULL", in.WorkspaceID)
+	if v, ok := scope["connector_id"]; ok {
+		q = q.Where("connector_id = ?", v)
+	}
+	if err := q.Find(&grants).Error; err != nil {
+		return nil, nil, fmt.Errorf("access: list access_grants: %w", err)
+	}
+
 	var decisions []models.AccessReviewDecision
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Use map-mode Create so an explicit AutoCertifyEnabled=false
-		// is sent to the DB. With struct-mode Create GORM omits zero
-		// values and the column's default:true tag would silently
-		// flip the persisted value to true, contradicting the caller.
-		// Same applies to State (always non-zero here) but is included
-		// for completeness.
-		row := map[string]interface{}{
-			"id":                   review.ID,
-			"workspace_id":         review.WorkspaceID,
-			"name":                 review.Name,
-			"scope_filter":         review.ScopeFilter,
-			"due_at":               review.DueAt,
-			"state":                review.State,
-			"auto_certify_enabled": review.AutoCertifyEnabled,
-			"created_at":           review.CreatedAt,
-			"updated_at":           review.UpdatedAt,
+	for i := range grants {
+		g := &grants[i]
+		if !grantMatchesScope(g, scope) {
+			continue
 		}
-		if err := tx.Table((&models.AccessReview{}).TableName()).Create(row).Error; err != nil {
-			return fmt.Errorf("access: insert access_review: %w", err)
+		d := models.AccessReviewDecision{
+			ID:        s.newID(),
+			ReviewID:  review.ID,
+			GrantID:   g.ID,
+			Decision:  models.DecisionPending,
+			CreatedAt: now,
+			UpdatedAt: now,
 		}
-
-		// Enumerate active grants matching the scope filter. We
-		// load every active grant in the workspace and filter in
-		// Go, mirroring ImpactResolver: SQLite has no jsonb-contains
-		// equivalent and the per-workspace grant set is small enough
-		// for in-memory filtering to be acceptable.
-		var grants []models.AccessGrant
-		q := tx.Where("workspace_id = ? AND revoked_at IS NULL", in.WorkspaceID)
-		if v, ok := scope["connector_id"]; ok {
-			q = q.Where("connector_id = ?", v)
+		if err := tx.Create(&d).Error; err != nil {
+			return nil, nil, fmt.Errorf("access: insert access_review_decision: %w", err)
 		}
-		if err := q.Find(&grants).Error; err != nil {
-			return fmt.Errorf("access: list access_grants: %w", err)
-		}
-
-		for i := range grants {
-			g := &grants[i]
-			if !grantMatchesScope(g, scope) {
-				continue
-			}
-			d := models.AccessReviewDecision{
-				ID:        s.newID(),
-				ReviewID:  review.ID,
-				GrantID:   g.ID,
-				Decision:  models.DecisionPending,
-				CreatedAt: now,
-				UpdatedAt: now,
-			}
-			if err := tx.Create(&d).Error; err != nil {
-				return fmt.Errorf("access: insert access_review_decision: %w", err)
-			}
-			decisions = append(decisions, d)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, nil, err
+		decisions = append(decisions, d)
 	}
 	return review, decisions, nil
 }
