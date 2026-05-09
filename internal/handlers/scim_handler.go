@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -235,10 +236,27 @@ func (h *SCIMHandler) PatchUser(c *gin.Context) {
 		return
 	}
 
-	hasGroupChanges, hasAttrChanges := classifyPatchOps(payload)
+	hasGroupChanges, hasAttrChanges, deactivated := classifyPatchOps(payload)
+	// Major SCIM providers (Azure AD, Okta) signal user deactivation
+	// inside the Operations array (path="active" with value false, or
+	// a path-less op whose value sub-object contains active=false)
+	// rather than as a top-level "active" JSON field. When the body
+	// has no top-level Active but classifyPatchOps detected such a
+	// deactivation op, synthesise Active=false here so ClassifyChange
+	// routes the request through the leaver lane (revoke all grants,
+	// purge all team memberships) instead of the mover lane (selective
+	// team-diff). Routing a deactivation through the mover lane would
+	// leave the user with active grants after the IdP considers them
+	// deactivated — exactly the JML lifecycle invariant we cannot
+	// violate.
+	active := payload.Active
+	if deactivated && active == nil {
+		falseVal := false
+		active = &falseVal
+	}
 	kind := h.jmlService.ClassifyChange(access.SCIMEvent{
 		Operation:           http.MethodPatch,
-		Active:              payload.Active,
+		Active:              active,
 		HasGroupChanges:     hasGroupChanges,
 		HasAttributeChanges: hasAttrChanges,
 	})
@@ -342,20 +360,50 @@ func scimResponseStatus(r *access.JMLResult) int {
 }
 
 // classifyPatchOps walks the SCIM PATCH operations list and reports
-// whether any operation touches group membership or user attributes
-// (display name, email, ...). Used to drive ClassifyChange in
-// PatchUser.
-func classifyPatchOps(p SCIMUserPayload) (groups, attrs bool) {
+// whether any operation touches group membership, user attributes
+// (display name, email, ...), or signals user deactivation
+// (active=false). Used to drive ClassifyChange in PatchUser.
+//
+// Two SCIM provider conventions for deactivation are handled:
+//
+//   - Azure AD style: explicit path="active" with a stringified
+//     boolean value (e.g. {"op":"Replace","path":"active",
+//     "value":"False"}).
+//   - Okta style: path-less op whose value is a sub-object
+//     containing active=false (e.g. {"op":"replace",
+//     "value":{"active": false}}).
+//
+// In both cases payload.Active stays nil because there is no
+// top-level "active" JSON field; only inspecting Operations
+// reveals the deactivation signal.
+func classifyPatchOps(p SCIMUserPayload) (groups, attrs, deactivation bool) {
 	for _, op := range p.Operations {
 		path := op.Path
-		switch path {
-		case "groups", "Groups", "members":
+		switch {
+		case strings.EqualFold(path, "groups"), strings.EqualFold(path, "members"):
 			groups = true
-		case "":
+		case strings.EqualFold(path, "active"):
+			// active flips are attribute changes (so a re-enable
+			// flows through the mover lane), but explicit
+			// active=false additionally signals deactivation.
+			attrs = true
+			if isFalseValue(op.Value) {
+				deactivation = true
+			}
+		case path == "":
 			// SCIM allows path-less PATCH where the payload value
-			// is a sub-object. Conservatively treat as both.
+			// is a sub-object. Conservatively treat as both
+			// group + attribute changes, then look inside the
+			// sub-object for an explicit active=false toggle.
 			groups = true
 			attrs = true
+			if m, ok := op.Value.(map[string]interface{}); ok {
+				for k, v := range m {
+					if strings.EqualFold(k, "active") && isFalseValue(v) {
+						deactivation = true
+					}
+				}
+			}
 		default:
 			attrs = true
 		}
@@ -369,7 +417,22 @@ func classifyPatchOps(p SCIMUserPayload) (groups, attrs bool) {
 	if p.Name != nil || len(p.Emails) > 0 || p.UserName != "" {
 		attrs = true
 	}
-	return groups, attrs
+	return groups, attrs, deactivation
+}
+
+// isFalseValue reports whether v decodes to a logical false. SCIM
+// providers vary in how they encode the active=false signal: Azure
+// AD historically sends it as the JSON string "False" (note the
+// casing) while strict providers send the JSON boolean false. Both
+// must classify as deactivation.
+func isFalseValue(v interface{}) bool {
+	switch x := v.(type) {
+	case bool:
+		return !x
+	case string:
+		return strings.EqualFold(x, "false")
+	}
+	return false
 }
 
 // ErrSCIMUserNotFound is the sentinel resolvers return when an

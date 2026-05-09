@@ -240,6 +240,108 @@ func TestSCIMHandler_PatchActiveFalseRoutesLeaver(t *testing.T) {
 	}
 }
 
+// TestSCIMHandler_PatchAzureADDeactivationRoutesLeaver asserts
+// that an Azure AD-style SCIM PATCH carrying active=false inside
+// the Operations array (rather than as a top-level "active" JSON
+// field) routes through the leaver lane. Without the
+// classifyPatchOps deactivation detection the handler would
+// classify this as a mover (selective team-diff) and silently
+// leave the user with active grants after the IdP considered them
+// deactivated.
+func TestSCIMHandler_PatchAzureADDeactivationRoutesLeaver(t *testing.T) {
+	resolver := &stubResolver{LeaverID: "01H00000000000000SCIMUSR007"}
+	router, _ := scimRouterStack(t, resolver)
+
+	// Azure AD wire format: path-based active toggle, value is the
+	// JSON string "False" (note the casing). payload.Active stays
+	// nil because there is no top-level "active" field.
+	body := SCIMUserPayload{
+		Schemas: []string{"urn:ietf:params:scim:api:messages:2.0:PatchOp"},
+		Operations: []SCIMPatchOperation{
+			{Op: "Replace", Path: "active", Value: "False"},
+		},
+	}
+	w := doJSON(t, router, http.MethodPatch, "/scim/Users/ext-007?workspace_id=ws", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s); want 200", w.Code, w.Body.String())
+	}
+	if resolver.LeaverCalls != 1 {
+		t.Errorf("ResolveLeaver calls = %d; want 1 (Azure AD active=false PATCH must run leaver)", resolver.LeaverCalls)
+	}
+	if resolver.MoverCalls != 0 {
+		t.Errorf("ResolveMover calls = %d; want 0 (deactivation must not route through mover)", resolver.MoverCalls)
+	}
+}
+
+// TestSCIMHandler_PatchOktaDeactivationRoutesLeaver asserts that
+// an Okta-style SCIM PATCH carrying active=false inside a
+// path-less Operations entry's value sub-object routes through
+// the leaver lane.
+func TestSCIMHandler_PatchOktaDeactivationRoutesLeaver(t *testing.T) {
+	resolver := &stubResolver{LeaverID: "01H00000000000000SCIMUSR008"}
+	router, _ := scimRouterStack(t, resolver)
+
+	// Okta wire format: path-less replace whose value is a
+	// sub-object containing active=false. payload.Active is again
+	// nil because the active flag is nested.
+	body := SCIMUserPayload{
+		Schemas: []string{"urn:ietf:params:scim:api:messages:2.0:PatchOp"},
+		Operations: []SCIMPatchOperation{
+			{Op: "replace", Value: map[string]interface{}{"active": false}},
+		},
+	}
+	w := doJSON(t, router, http.MethodPatch, "/scim/Users/ext-008?workspace_id=ws", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s); want 200", w.Code, w.Body.String())
+	}
+	if resolver.LeaverCalls != 1 {
+		t.Errorf("ResolveLeaver calls = %d; want 1 (Okta active=false PATCH must run leaver)", resolver.LeaverCalls)
+	}
+	if resolver.MoverCalls != 0 {
+		t.Errorf("ResolveMover calls = %d; want 0 (deactivation must not route through mover)", resolver.MoverCalls)
+	}
+}
+
+// TestSCIMHandler_PatchActiveTrueRoutesMover asserts that a
+// SCIM PATCH explicitly re-enabling the user (active=true) does
+// NOT route through the leaver lane. Without distinguishing
+// active=true from active=false in classifyPatchOps a naive
+// "any active op = leaver" rule would lock out re-enabled users.
+func TestSCIMHandler_PatchActiveTrueRoutesMover(t *testing.T) {
+	const provider = "mock_scim_patch_active_true"
+	resolver := &stubResolver{}
+	router, db := scimRouterStack(t, resolver)
+	conn := seedSCIMConnector(t, db, "01H00000000000000SCIMCONN009", provider)
+
+	mock := &access.MockAccessConnector{}
+	access.SwapConnector(t, provider, mock)
+
+	resolver.MoverIn = access.MoverInput{
+		WorkspaceID: "01H000000000000000WORKSPACE",
+		UserID:      "01H00000000000000SCIMUSR009",
+		AddedGrants: []access.JMLAccessGrant{
+			{ConnectorID: conn.ID, ResourceExternalID: "projects/z", Role: "viewer"},
+		},
+	}
+
+	body := SCIMUserPayload{
+		Schemas: []string{"urn:ietf:params:scim:api:messages:2.0:PatchOp"},
+		Operations: []SCIMPatchOperation{
+			{Op: "Replace", Path: "active", Value: true},
+		},
+	}
+	w := doJSON(t, router, http.MethodPatch, "/scim/Users/ext-009?workspace_id=01H000000000000000WORKSPACE", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s); want 200", w.Code, w.Body.String())
+	}
+	if resolver.LeaverCalls != 0 {
+		t.Errorf("ResolveLeaver calls = %d; want 0 (active=true must not route through leaver)", resolver.LeaverCalls)
+	}
+	if resolver.MoverCalls != 1 {
+		t.Errorf("ResolveMover calls = %d; want 1 (active=true should run mover)", resolver.MoverCalls)
+	}
+}
+
 // TestSCIMHandler_PatchEmptyIsBadRequest asserts a PATCH with no
 // JML-relevant changes surfaces 400.
 func TestSCIMHandler_PatchEmptyIsBadRequest(t *testing.T) {
