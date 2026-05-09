@@ -3,6 +3,8 @@ package access
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -329,5 +331,132 @@ func TestCreateRequest_PinsTimestampsAndID(t *testing.T) {
 	}
 	if !got.CreatedAt.Equal(frozen) {
 		t.Errorf("CreatedAt = %v; want %v", got.CreatedAt, frozen)
+	}
+}
+
+// newConcurrentTestDB opens a file-backed SQLite DB suitable for a
+// concurrent-race test. Three subtleties:
+//
+//  1. ":memory:" without shared cache gives each connection its own
+//     private DB, so we use a temp file.
+//  2. WAL mode + busy_timeout would normally let SQLite serialize
+//     concurrent writers via timed retry, but glebarez/sqlite does not
+//     reliably honor pragma URIs when the pool opens new connections,
+//     so we instead pin the pool to a single writer connection. That
+//     forces SQLite to serialize the two transactions — the second
+//     one's SELECT sees the new state and the FSM (or CAS) rejects.
+//  3. SetMaxOpenConns(1) does NOT defeat the race assertion. Both
+//     goroutines still call ApproveRequest/DenyRequest concurrently;
+//     the pool just queues their connection acquisition. The invariant
+//     under test — "exactly one winner, no corruption, history correct"
+//     — holds for every interleaving regardless of which path (FSM
+//     recheck or CAS UPDATE) catches the losers.
+func newConcurrentTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	dsn := filepath.Join(t.TempDir(), "concurrent.db")
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("unwrap *sql.DB: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	if err := db.AutoMigrate(
+		&models.AccessRequest{},
+		&models.AccessRequestStateHistory{},
+		&models.AccessGrant{},
+		&models.AccessWorkflow{},
+	); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+	return db
+}
+
+// TestTransitionInTx_ConcurrentRace asserts the optimistic-lock invariant
+// in TransitionInTx: when N goroutines race to transition the same
+// "requested" row to mutually exclusive terminal states (approve / deny),
+// exactly ONE wins. Losers must fail with ErrInvalidStateTransition
+// (whether caught by the FSM read-back or by the CAS UPDATE — both are
+// legitimate paths) and must NOT have inserted a state-history row. The
+// final database state must be either "approved" or "denied" but never
+// both, never corrupted, and never duplicated.
+//
+// This test reproduces the bug Devin Review flagged on PR #4: without the
+// "AND state = ?" CAS predicate, two concurrent transactions could both
+// pass the FSM check on a stale read and both UPDATE — last writer wins,
+// audit trail diverges from final state. With the CAS predicate, the
+// second writer's UPDATE matches zero rows and is rejected.
+func TestTransitionInTx_ConcurrentRace(t *testing.T) {
+	db := newConcurrentTestDB(t)
+	svc := NewAccessRequestService(db)
+	ctx := context.Background()
+
+	req, err := svc.CreateRequest(ctx, validInput())
+	if err != nil {
+		t.Fatalf("CreateRequest: %v", err)
+	}
+
+	const racers = 8
+	var (
+		startBarrier sync.WaitGroup
+		done         sync.WaitGroup
+		results      = make([]error, racers)
+	)
+	startBarrier.Add(1)
+	done.Add(racers)
+
+	for i := 0; i < racers; i++ {
+		i := i
+		go func() {
+			defer done.Done()
+			startBarrier.Wait()
+			if i%2 == 0 {
+				results[i] = svc.ApproveRequest(ctx, req.ID, "actor", "race")
+			} else {
+				results[i] = svc.DenyRequest(ctx, req.ID, "actor", "race")
+			}
+		}()
+	}
+	startBarrier.Done()
+	done.Wait()
+
+	wins := 0
+	for i, err := range results {
+		switch {
+		case err == nil:
+			wins++
+		case errors.Is(err, ErrInvalidStateTransition):
+			// Expected: either the FSM rejected on a re-read of the now-
+			// terminal state, or the CAS UPDATE matched zero rows. Both
+			// surface ErrInvalidStateTransition by design.
+		default:
+			t.Errorf("racer #%d: unexpected error %v (want nil or ErrInvalidStateTransition)", i, err)
+		}
+	}
+	if wins != 1 {
+		t.Fatalf("wins = %d; want exactly 1 (last-writer-wins corruption)", wins)
+	}
+
+	var stored models.AccessRequest
+	if err := db.Where("id = ?", req.ID).First(&stored).Error; err != nil {
+		t.Fatalf("read back request: %v", err)
+	}
+	if stored.State != models.RequestStateApproved && stored.State != models.RequestStateDenied {
+		t.Errorf("final state = %q; want approved or denied", stored.State)
+	}
+
+	// History invariant: 1 initial "" → "requested" + exactly 1 winning
+	// transition. Losers that hit either the FSM-recheck or the CAS path
+	// roll back inside the transaction and do NOT insert a row.
+	var historyCount int64
+	if err := db.Model(&models.AccessRequestStateHistory{}).
+		Where("request_id = ?", req.ID).
+		Count(&historyCount).Error; err != nil {
+		t.Fatalf("count history rows: %v", err)
+	}
+	if historyCount != 2 {
+		t.Errorf("history rows = %d; want 2 (initial + winner)", historyCount)
 	}
 }

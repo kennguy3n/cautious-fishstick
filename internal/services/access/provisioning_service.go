@@ -66,9 +66,13 @@ func NewAccessProvisioningService(db *gorm.DB) *AccessProvisioningService {
 // callers (typically the workflow engine or the API handler) are
 // responsible for decrypting credentials before invoking the service.
 //
-// Provision is NOT a retry handler — if the request is already in
-// provision_failed state callers transition it back to "provisioning"
-// (legal per the FSM) and call Provision again.
+// Provision handles retry transparently — if the request is in
+// provision_failed state, callers simply call Provision again. The FSM
+// allows provision_failed → provisioning, so the internal transition at
+// step 1 succeeds without any caller-side state mutation. Pre-flipping
+// the state to "provisioning" before calling Provision is incorrect: the
+// FSM will reject "provisioning → provisioning" and return
+// ErrInvalidStateTransition.
 func (s *AccessProvisioningService) Provision(
 	ctx context.Context,
 	request *models.AccessRequest,

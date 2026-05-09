@@ -170,6 +170,14 @@ func (s *AccessRequestService) transitionRequest(ctx context.Context, requestID,
 //
 // The supplied tx must be a *gorm.DB inside Transaction(); passing the
 // service's outer DB will work but loses atomicity.
+//
+// The UPDATE uses the previously-read state as an optimistic lock
+// (compare-and-set on the `state` column). If two transactions race on
+// the same request — both reading "requested", both passing FSM
+// validation — exactly one UPDATE will match. The loser sees
+// RowsAffected == 0 and is rejected with ErrInvalidStateTransition,
+// preventing a denied request from being silently overwritten by a
+// concurrent approve (or vice-versa) under READ COMMITTED isolation.
 func (s *AccessRequestService) TransitionInTx(tx *gorm.DB, requestID, toState, actorUserID, reason string) (*models.AccessRequest, error) {
 	var req models.AccessRequest
 	if err := tx.Where("id = ?", requestID).First(&req).Error; err != nil {
@@ -187,13 +195,20 @@ func (s *AccessRequestService) TransitionInTx(tx *gorm.DB, requestID, toState, a
 	req.State = toState
 	req.UpdatedAt = now
 
-	if err := tx.Model(&models.AccessRequest{}).
-		Where("id = ?", req.ID).
+	result := tx.Model(&models.AccessRequest{}).
+		Where("id = ? AND state = ?", req.ID, fromState).
 		Updates(map[string]interface{}{
 			"state":      toState,
 			"updated_at": now,
-		}).Error; err != nil {
-		return nil, fmt.Errorf("access: update access_request state: %w", err)
+		})
+	if result.Error != nil {
+		return nil, fmt.Errorf("access: update access_request state: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return nil, fmt.Errorf(
+			"%w: request %s was concurrently modified (expected state %q)",
+			ErrInvalidStateTransition, req.ID, fromState,
+		)
 	}
 
 	history := &models.AccessRequestStateHistory{
