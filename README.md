@@ -1,6 +1,6 @@
 # ShieldNet 360 Access Platform
 
-> **Status:** Phase 0 shipped, Phase 1 partial. The `AccessConnector` contract, process-global registry, AES-GCM credential manager, `access_connectors` migration, and **all 10 Tier 1 connectors** (Microsoft Entra ID, Google Workspace, Okta, Auth0, Generic SAML, Generic OIDC, Duo Security, 1Password, LastPass, Ping Identity — each at minimum-capability level) are in `main`. The Phase 1 Admin UI and Keycloak federation exit criteria remain open. See [`docs/PROGRESS.md`](docs/PROGRESS.md) for the per-connector matrix.
+> **Status:** Phase 0 shipped, Phase 1 partial, Phase 2 partial. The `AccessConnector` contract, process-global registry, AES-GCM credential manager, `access_connectors` migration, and **all 10 Tier 1 connectors** (Microsoft Entra ID, Google Workspace, Okta, Auth0, Generic SAML, Generic OIDC, Duo Security, 1Password, LastPass, Ping Identity — each at minimum-capability level) are in `main`. Phase 2 lands the four request-lifecycle tables (`access_requests`, `access_request_state_history`, `access_grants`, `access_workflows`), the request state machine, and the request / provisioning / workflow services — Admin UI, Mobile SDK, and Desktop Extension exit criteria remain open. The Phase 1 Admin UI and Keycloak federation exit criteria also remain open. See [`docs/PROGRESS.md`](docs/PROGRESS.md) for the per-connector matrix.
 
 The ShieldNet 360 Access Platform is the access management product within the SN360 ecosystem. It is a multi-tenant platform that lets small and medium-sized businesses connect, manage, and secure access to **200+ cloud platforms, SaaS applications, and identity systems** from a single control plane.
 
@@ -43,10 +43,14 @@ cautious-fishstick/
 │   └── access-workflow-engine/    # LangGraph orchestrator host (Phase 0 stub)
 ├── internal/
 │   ├── services/access/
-│   │   ├── types.go               # AccessConnector + record types
-│   │   ├── optional_interfaces.go # IdentityDeltaSyncer / GroupSyncer / ...
-│   │   ├── factory.go             # Process-global registry
-│   │   ├── testing.go             # MockAccessConnector + SwapConnector test helper
+│   │   ├── types.go                       # AccessConnector + record types
+│   │   ├── optional_interfaces.go         # IdentityDeltaSyncer / GroupSyncer / ...
+│   │   ├── factory.go                     # Process-global registry
+│   │   ├── testing.go                     # MockAccessConnector + SwapConnector test helper
+│   │   ├── request_state_machine.go       # Phase 2 request lifecycle FSM (pure logic)
+│   │   ├── request_service.go             # AccessRequestService — Create / Approve / Deny / Cancel
+│   │   ├── provisioning_service.go        # AccessProvisioningService — Provision / Revoke
+│   │   ├── workflow_service.go            # WorkflowService — ResolveWorkflow / ExecuteWorkflow
 │   │   └── connectors/
 │   │       ├── microsoft/         # Entra ID — Validate, Connect, Sync, GroupSync, Delta
 │   │       ├── google_workspace/  # Admin SDK Directory — Validate, Connect, Sync, GroupSync
@@ -58,9 +62,16 @@ cautious-fishstick/
 │   │       ├── onepassword/       # 1Password SCIM v2 — Validate, Connect, Sync
 │   │       ├── lastpass/          # LastPass Enterprise API — Validate, Connect, Sync
 │   │       └── ping_identity/     # PingOne v1 (NA/EU/AP) — Validate, Connect, Sync
-│   ├── pkg/credentials/           # AES-GCM credential manager (KeyManager interface stub)
-│   ├── models/                    # GORM models (access_connectors)
-│   └── migrations/                # GORM AutoMigrate migrations (no FK constraints)
+│   ├── pkg/credentials/                   # AES-GCM credential manager (KeyManager interface stub)
+│   ├── models/                            # GORM models
+│   │   ├── access_connector.go            # access_connectors
+│   │   ├── access_request.go              # access_requests + state constants
+│   │   ├── access_request_state_history.go# access_request_state_history (audit trail)
+│   │   ├── access_grant.go                # access_grants
+│   │   └── access_workflow.go             # access_workflows + step-type constants
+│   └── migrations/                        # GORM AutoMigrate migrations (no FK constraints)
+│       ├── 001_create_access_connectors.go
+│       └── 002_create_access_request_tables.go
 └── docs/                          # Proposal, architecture, phases, progress
 ```
 
