@@ -1,6 +1,6 @@
 # ShieldNet 360 Access Platform
 
-> **Status:** Phase 0 shipped, Phase 1 partial, Phase 2 partial. The `AccessConnector` contract, process-global registry, AES-GCM credential manager, `access_connectors` migration, and **all 10 Tier 1 connectors** (Microsoft Entra ID, Google Workspace, Okta, Auth0, Generic SAML, Generic OIDC, Duo Security, 1Password, LastPass, Ping Identity — each at minimum-capability level) are in `main`. Phase 2 lands the four request-lifecycle tables (`access_requests`, `access_request_state_history`, `access_grants`, `access_workflows`), the request state machine, and the request / provisioning / workflow services — Admin UI, Mobile SDK, and Desktop Extension exit criteria remain open. The Phase 1 Admin UI and Keycloak federation exit criteria also remain open. See [`docs/PROGRESS.md`](docs/PROGRESS.md) for the per-connector matrix.
+> **Status:** Phase 0 shipped, Phase 1 partial, Phase 2 partial, **Phase 3 partial, Phase 5 partial**. The `AccessConnector` contract, process-global registry, AES-GCM credential manager, `access_connectors` migration, and **all 10 Tier 1 connectors** (Microsoft Entra ID, Google Workspace, Okta, Auth0, Generic SAML, Generic OIDC, Duo Security, 1Password, LastPass, Ping Identity — each at minimum-capability level) are in `main`. Phase 2 lands the four request-lifecycle tables (`access_requests`, `access_request_state_history`, `access_grants`, `access_workflows`), the request state machine, and the request / provisioning / workflow services. **Phase 3 lands** the `policies` / `teams` / `team_members` / `resources` tables, the `PolicyService` (drafts, simulate, promote, test-access), `ImpactResolver`, and `ConflictDetector`. **Phase 5 lands** the `access_reviews` / `access_review_decisions` tables and `AccessReviewService` (`StartCampaign` / `SubmitDecision` / `CloseCampaign` / `AutoRevoke`). HTTP endpoints, Admin UI, Mobile SDK, Desktop Extension, AI auto-certification, scheduled campaigns, and the Phase 1 Admin UI / Keycloak federation exit criteria remain open. See [`docs/PROGRESS.md`](docs/PROGRESS.md) for the per-connector matrix and [`docs/PHASES.md`](docs/PHASES.md) for per-phase exit criteria.
 
 The ShieldNet 360 Access Platform is the access management product within the SN360 ecosystem. It is a multi-tenant platform that lets small and medium-sized businesses connect, manage, and secure access to **200+ cloud platforms, SaaS applications, and identity systems** from a single control plane.
 
@@ -51,6 +51,10 @@ cautious-fishstick/
 │   │   ├── request_service.go             # AccessRequestService — Create / Approve / Deny / Cancel
 │   │   ├── provisioning_service.go        # AccessProvisioningService — Provision / Revoke
 │   │   ├── workflow_service.go            # WorkflowService — ResolveWorkflow / ExecuteWorkflow
+│   │   ├── policy_service.go              # Phase 3 PolicyService — CreateDraft / Simulate / Promote / TestAccess
+│   │   ├── impact_resolver.go             # Phase 3 ImpactResolver — selector → affected teams / members / resources
+│   │   ├── conflict_detector.go           # Phase 3 ConflictDetector — redundant / contradictory classification
+│   │   ├── review_service.go              # Phase 5 AccessReviewService — StartCampaign / SubmitDecision / CloseCampaign / AutoRevoke
 │   │   └── connectors/
 │   │       ├── microsoft/         # Entra ID — Validate, Connect, Sync, GroupSync, Delta
 │   │       ├── google_workspace/  # Admin SDK Directory — Validate, Connect, Sync, GroupSync
@@ -68,10 +72,17 @@ cautious-fishstick/
 │   │   ├── access_request.go              # access_requests + state constants
 │   │   ├── access_request_state_history.go# access_request_state_history (audit trail)
 │   │   ├── access_grant.go                # access_grants
-│   │   └── access_workflow.go             # access_workflows + step-type constants
+│   │   ├── access_workflow.go             # access_workflows + step-type constants
+│   │   ├── policy.go                      # Phase 3 policies + action / draft helpers
+│   │   ├── team.go                        # Phase 3 teams + team_members
+│   │   ├── resource.go                    # Phase 3 resources
+│   │   ├── access_review.go               # Phase 5 access_reviews + state constants
+│   │   └── access_review_decision.go      # Phase 5 access_review_decisions + decision constants
 │   └── migrations/                        # GORM AutoMigrate migrations (no FK constraints)
 │       ├── 001_create_access_connectors.go
-│       └── 002_create_access_request_tables.go
+│       ├── 002_create_access_request_tables.go
+│       ├── 003_create_policy_tables.go
+│       └── 004_create_access_review_tables.go
 └── docs/                          # Proposal, architecture, phases, progress
 ```
 

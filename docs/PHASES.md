@@ -10,7 +10,7 @@ A phase is **shippable** only when *all* of its exit criteria are demonstrably m
 | 🟡 partial | Some exit criteria met; gaps tracked in `PROGRESS.md` |
 | ⏳ planned | Not yet started |
 
-> **Phase 0 is `✅ shipped`; Phase 1 is `🟡 partial`** (10 of 10 connectors landed with minimum capabilities; Admin UI + Keycloak federation exit criteria still open). **Phase 2 is `🟡 partial`** — the four request-lifecycle tables, request state machine, and the request / provisioning / workflow services have landed; Admin UI / Mobile SDK / Desktop Extension exit criteria remain open. Later phases remain `⏳ planned`. As phases land, flip the marker and move the supporting status row in `PROGRESS.md`.
+> **Phase 0 is `✅ shipped`; Phase 1 is `🟡 partial`** (10 of 10 connectors landed with minimum capabilities; Admin UI + Keycloak federation exit criteria still open). **Phase 2 is `🟡 partial`** — the four request-lifecycle tables, request state machine, and the request / provisioning / workflow services have landed; Admin UI / Mobile SDK / Desktop Extension exit criteria remain open. **Phase 3 is `🟡 partial`** — the policy / team / resource tables, `PolicyService` (drafts, simulate, promote, test-access), `ImpactResolver`, and `ConflictDetector` have landed; HTTP endpoints + Admin UI policy simulator remain open. **Phase 5 is `🟡 partial`** — the access-review tables and `AccessReviewService` (`StartCampaign` / `SubmitDecision` / `CloseCampaign` / `AutoRevoke`) have landed; AI auto-certification, scheduled campaigns, notification fan-out, and the Admin UI dashboard remain open. Later phases remain `⏳ planned`. As phases land, flip the marker and move the supporting status row in `PROGRESS.md`.
 
 ---
 
@@ -73,21 +73,21 @@ A phase is **shippable** only when *all* of its exit criteria are demonstrably m
 
 ---
 
-## Phase 3 — Policy simulation & testing  ⏳
+## Phase 3 — Policy simulation & testing  🟡 partial
 
 **Scope.** Draft policies, impact analysis, and the promotion flow. **No AI yet** — that lands in Phase 4.
 
 **Exit criteria.**
 
-- [ ] `policies.is_draft` and `policies.draft_impact` columns added (with migration).
-- [ ] `POST /workspace/policy/simulate` endpoint.
-- [ ] `GET /workspace/policy/:id/impact` endpoint.
-- [ ] `POST /workspace/policy/:id/promote` endpoint.
-- [ ] `POST /workspace/policy/test-access` endpoint ("Can user X access resource Y under draft P?").
-- [ ] Impact analysis: resolve affected Teams → Members → Resources via attribute / resource selector.
-- [ ] Conflict detection against existing live policies (`redundant`, `contradictory`).
+- [x] `policies.is_draft` and `policies.draft_impact` columns added (with migration `003_create_policy_tables`). Tables `policies`, `teams`, `team_members`, `resources` all landed.
+- [ ] `POST /workspace/policy/simulate` endpoint. *(handler-layer; service `PolicyService.Simulate` shipped.)*
+- [ ] `GET /workspace/policy/:id/impact` endpoint. *(handler-layer; impact is persisted in `policies.draft_impact` by the service.)*
+- [ ] `POST /workspace/policy/:id/promote` endpoint. *(handler-layer; service `PolicyService.Promote` shipped.)*
+- [ ] `POST /workspace/policy/test-access` endpoint ("Can user X access resource Y under draft P?"). *(handler-layer; service `PolicyService.TestAccess` shipped.)*
+- [x] Impact analysis: resolve affected Teams → Members → Resources via attribute / resource selector (`internal/services/access/impact_resolver.go`).
+- [x] Conflict detection against existing live policies (`redundant`, `contradictory`) (`internal/services/access/conflict_detector.go`).
 - [ ] Admin UI: policy simulator page with before / after comparison.
-- [ ] **Drafts do not create OpenZiti `ServicePolicy` until promotion** — verified by an integration test that round-trips a draft → simulate → impact and asserts no Ziti write.
+- [x] **Drafts do not create OpenZiti `ServicePolicy` until promotion** — verified by `TestPromote_DoesNotInvokeOpenZiti` in `policy_service_test.go`.
 
 ---
 
@@ -109,17 +109,17 @@ A phase is **shippable** only when *all* of its exit criteria are demonstrably m
 
 ---
 
-## Phase 5 — Access review campaigns  ⏳
+## Phase 5 — Access review campaigns  🟡 partial
 
 **Scope.** Periodic access certification with AI-assisted automation.
 
 **Exit criteria.**
 
-- [ ] `access_reviews` and `access_review_decisions` tables and migrations.
-- [ ] `AccessReviewService` with `StartCampaign`, `SubmitDecision`, `CloseCampaign`, `AutoRevoke`.
-- [ ] `access_review_automation` agent skill — auto-certifies low-risk grants.
+- [x] `access_reviews` and `access_review_decisions` tables and migrations (`004_create_access_review_tables`).
+- [x] `AccessReviewService` with `StartCampaign`, `SubmitDecision`, `CloseCampaign`, `AutoRevoke` (`internal/services/access/review_service.go`).
+- [ ] `access_review_automation` agent skill — auto-certifies low-risk grants. *(Phase 4-AI dependency; the `AutoCertifyEnabled` column is wired and the agent will flip pending→certify on its own schedule.)*
 - [ ] Scheduled review campaigns with configurable frequency per resource category.
-- [ ] Auto-certification rate observable as a per-campaign metric; operator can disable auto-certification per resource category.
+- [ ] Auto-certification rate observable as a per-campaign metric; operator can disable auto-certification per resource category. *(`access_reviews.auto_certify_enabled` flag is in place; the metrics emitter and admin toggle are still open.)*
 - [ ] Admin UI: review campaign management with bulk approve / revoke and per-grant detail.
 - [ ] Notification system for pending reviews (email + in-app).
 
