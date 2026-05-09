@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -213,5 +214,57 @@ func TestGetCredentialsMetadata_PicksEarliestExpiry(t *testing.T) {
 				t.Errorf("client_secret_expires_at = %v; want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestGetCredentialsMetadata_EscapesClientIDInFilter guards against an OData
+// filter-injection regression where a client_id containing a single quote
+// would break out of the OData string literal in the $filter. The fix
+// doubles single quotes per OData rules and URL-encodes the literal, so the
+// embedded value remains a valid OData string and the underlying request
+// path is well-formed.
+func TestGetCredentialsMetadata_EscapesClientIDInFilter(t *testing.T) {
+	const evilClientID = "abc' or 1 eq 1 or '1' eq '1"
+	var captured string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"value":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.tokenOverride = func(_ context.Context, _ Config, _ Secrets) (string, error) { return "tok", nil }
+	secrets := map[string]interface{}{"client_id": evilClientID, "client_secret": "secret-1234567890"}
+	if _, err := c.GetCredentialsMetadata(context.Background(), validConfig(), secrets); err != nil {
+		t.Fatalf("GetCredentialsMetadata: %v", err)
+	}
+	// Server-side decoded query must contain the original value with single
+	// quotes doubled, and never the unescaped raw value.
+	q, err := url.ParseQuery(captured)
+	if err != nil {
+		t.Fatalf("parse query %q: %v", captured, err)
+	}
+	got := q.Get("$filter")
+	wantDoubled := "abc'' or 1 eq 1 or ''1'' eq ''1"
+	wantFilter := "appId eq '" + wantDoubled + "'"
+	if got != wantFilter {
+		t.Errorf("$filter = %q; want %q", got, wantFilter)
+	}
+	// The decoded literal must start and end with a single quote and have
+	// every embedded quote doubled, so the OData parser treats the entire
+	// payload as one string and never re-enters operator context.
+	if !strings.HasPrefix(got, "appId eq '") || !strings.HasSuffix(got, "'") {
+		t.Errorf("$filter is not bounded by single quotes: %q", got)
+	}
+	inner := strings.TrimSuffix(strings.TrimPrefix(got, "appId eq '"), "'")
+	for i := 0; i < len(inner); i++ {
+		if inner[i] != '\'' {
+			continue
+		}
+		if i+1 >= len(inner) || inner[i+1] != '\'' {
+			t.Errorf("unescaped single quote at position %d in %q", i, inner)
+			break
+		}
+		i++ // skip the paired quote
 	}
 }

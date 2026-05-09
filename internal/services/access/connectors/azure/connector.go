@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -333,7 +334,12 @@ func (c *AzureAccessConnector) GetCredentialsMetadata(ctx context.Context, confi
 		"client_id_short":  shortToken(secrets.ClientID),
 	}
 	client := c.graphClient(ctx, cfg, secrets)
-	body, err := c.doJSON(client, ctx, http.MethodGet, "/applications?$filter=appId+eq+'"+secrets.ClientID+"'&$select=passwordCredentials")
+	// Escape per OData (double single quotes) and URL-encode the literal
+	// before embedding into $filter, so a non-UUID client_id containing
+	// quotes or other special characters cannot break out of the filter.
+	escapedClientID := strings.ReplaceAll(secrets.ClientID, "'", "''")
+	filter := url.QueryEscape("appId eq '" + escapedClientID + "'")
+	body, err := c.doJSON(client, ctx, http.MethodGet, "/applications?$filter="+filter+"&$select=passwordCredentials")
 	if err != nil {
 		return out, nil
 	}
