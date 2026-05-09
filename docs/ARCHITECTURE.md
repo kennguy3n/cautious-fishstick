@@ -43,6 +43,20 @@ flowchart LR
         ONEPW[onepassword/]
         LASTPW[lastpass/]
         PING[ping_identity/]
+        AWS[aws/]
+        AZURE[azure/]
+        GCP[gcp/]
+        CF[cloudflare/]
+        TS[tailscale/]
+        DO[digitalocean/]
+        HEROKU[heroku/]
+        VERCEL[vercel/]
+        NETLIFY[netlify/]
+        SLACK[slack/]
+        MSTEAMS[ms_teams/]
+        ZOOM[zoom/]
+        NOTION[notion/]
+        ASANA[asana/]
         FUTURE[next provider]
     end
 
@@ -113,7 +127,9 @@ Reference points:
 - AccessConnector interface: `internal/services/access/types.go` (implemented; extends `shieldnet360-backend/internal/services/connectors/types.go:21-145`).
 - Optional capability interfaces: `internal/services/access/optional_interfaces.go` (implemented).
 - Mock + registry-swap test helper: `internal/services/access/testing.go` (implemented).
-- Phase 0–1 Tier 1 connectors (all 10 implemented — minimum capabilities): `internal/services/access/connectors/microsoft/`, `internal/services/access/connectors/google_workspace/`, `internal/services/access/connectors/okta/`, `internal/services/access/connectors/auth0/`, `internal/services/access/connectors/generic_saml/`, `internal/services/access/connectors/generic_oidc/`, `internal/services/access/connectors/duo/`, `internal/services/access/connectors/onepassword/`, `internal/services/access/connectors/lastpass/`, `internal/services/access/connectors/ping_identity/`.
+- Phase 0–1 Tier 1 connectors (all 10 implemented — minimum capabilities): `internal/services/access/connectors/microsoft/`, `internal/services/access/connectors/google_workspace/`, `internal/services/access/connectors/okta/`, `internal/services/access/connectors/auth0/`, `internal/services/access/connectors/generic_saml/`, `internal/services/access/connectors/generic_oidc/`, `internal/services/access/connectors/duo/`, `internal/services/access/connectors/onepassword/`, `internal/services/access/connectors/lastpass/`, `internal/services/access/connectors/ping_identity/`. All ten now compose the generic `SCIMClient` via a per-package `scim.go` (`PushSCIMUser` / `PushSCIMGroup` / `DeleteSCIMResource` delegating to the shared `internal/services/access/scim_provisioner.go`); the tier-1 SCIM coverage closes the Phase 6 outbound exit criterion.
+- Phase 7 Cloud Infrastructure connectors (9 implemented — minimum capabilities, PR #9): `internal/services/access/connectors/aws/` (hand-rolled SigV4 IAM `ListUsers` / `GetAccountSummary` / `ListAccessKeys`; `aws/sigv4.go` is the SigV4 helper), `internal/services/access/connectors/azure/` (Microsoft Graph `/users` + `$count` + app-secret expiry via OAuth2 client_credentials), `internal/services/access/connectors/gcp/` (`cloudresourcemanager.projects:getIamPolicy` flattening using JWT-from-service-account), `internal/services/access/connectors/cloudflare/` (`/accounts/{id}/members` page-numbered), `internal/services/access/connectors/tailscale/` (HTTP Basic with API key as username, `/api/v2/tailnet/{tailnet}/users`), `internal/services/access/connectors/digitalocean/` (`/v2/customers/my/teams/{uuid}/users` cursor-paginated), `internal/services/access/connectors/heroku/` (Heroku Platform API `/teams/{name}/members`), `internal/services/access/connectors/vercel/` (`/v2/teams/{teamId}/members` since-cursor pagination), `internal/services/access/connectors/netlify/` (`/api/v1/{account_slug}/members`).
+- Phase 7 Collaboration connectors (5 of 10 implemented — minimum capabilities, PR #9): `internal/services/access/connectors/slack/` (`auth.test` for credentials metadata, `users.list` cursor pagination, Enterprise-Grid SAML metadata when `enterprise_id != ""`), `internal/services/access/connectors/ms_teams/` (Graph `/teams/{id}/members` via OAuth2 client_credentials, Entra-ID SAML federation metadata URL), `internal/services/access/connectors/zoom/` (Server-to-Server OAuth `account_credentials` grant against `https://zoom.us/oauth/token` with TTL caching, `/users?status=active` page-token pagination), `internal/services/access/connectors/notion/` (`/v1/users` with `start_cursor` / `has_more` pagination, `Notion-Version: 2022-06-28` header, type=`bot` → `IdentityTypeServiceAccount`), `internal/services/access/connectors/asana/` (`/workspaces/{gid}/users?limit=100` with `offset` / `next_page.offset` pagination).
 - Phase 2 request lifecycle (implemented):
   - Request lifecycle FSM: `internal/services/access/request_state_machine.go` (pure logic, mirrors `ztna-business-layer/internal/state_machine/`).
   - `AccessRequestService` (`CreateRequest` / `ApproveRequest` / `DenyRequest` / `CancelRequest`, transactional state-history): `internal/services/access/request_service.go`.
