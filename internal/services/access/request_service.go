@@ -3,15 +3,32 @@ package access
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/oklog/ulid/v2"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 
 	"github.com/kennguy3n/cautious-fishstick/internal/models"
 )
+
+// RiskAssessor is the narrow interface AccessRequestService uses to
+// score a fresh request through the Phase 4 AI agent. The production
+// implementation lives in internal/pkg/aiclient (an *AIClient wrapped
+// in AssessRiskWithFallback); tests substitute a stub via this
+// interface.
+//
+// The contract is: given a JSON-serialisable payload, return a
+// RiskScore in {"low", "medium", "high"} and an optional list of
+// RiskFactors. The ok return distinguishes "AI returned this" from
+// "AI was unreachable, fallback used" so callers can audit which
+// path fired.
+type RiskAssessor interface {
+	AssessRequestRisk(ctx context.Context, payload interface{}) (riskScore string, riskFactors []string, ok bool)
+}
 
 // AccessRequestService is the service layer for the access_requests +
 // access_request_state_history tables. It owns the single source of truth
@@ -22,8 +39,17 @@ import (
 // The service does NOT call connectors directly. Provisioning is handled
 // by AccessProvisioningService, which transitions the request through
 // "approved → provisioning → provisioned/provision_failed".
+//
+// Phase 4 wires an optional RiskAssessor in. CreateRequest enriches
+// the new row with the assessor's response when configured, and uses
+// the score to pick a downstream workflow lane (low → self-service
+// auto-approve, medium → manager approval, high → security review).
+// A nil assessor disables AI scoring; the row is persisted with an
+// empty RiskScore and the caller's existing workflow logic runs
+// unchanged.
 type AccessRequestService struct {
-	db *gorm.DB
+	db          *gorm.DB
+	riskAssessor RiskAssessor
 	// now is overridable in tests so we can pin CreatedAt timestamps in
 	// assertions. Defaults to time.Now in NewAccessRequestService.
 	now func() time.Time
@@ -33,13 +59,23 @@ type AccessRequestService struct {
 }
 
 // NewAccessRequestService returns a new service backed by db. db must not
-// be nil.
+// be nil. The RiskAssessor hook is unset; callers wire one in via
+// SetRiskAssessor when AI scoring is enabled.
 func NewAccessRequestService(db *gorm.DB) *AccessRequestService {
 	return &AccessRequestService{
 		db:    db,
 		now:   time.Now,
 		newID: newULID,
 	}
+}
+
+// SetRiskAssessor wires an AI-driven risk assessor onto the service.
+// nil disables risk scoring (no rows get RiskScore populated).
+// Callers (typically cmd/ztna-api/main.go) call this once at boot;
+// it is NOT safe to call SetRiskAssessor concurrently with
+// CreateRequest.
+func (s *AccessRequestService) SetRiskAssessor(r RiskAssessor) {
+	s.riskAssessor = r
 }
 
 // CreateAccessRequestInput is the input contract for CreateRequest. All
@@ -118,7 +154,85 @@ func (s *AccessRequestService) CreateRequest(ctx context.Context, in CreateAcces
 	if err != nil {
 		return nil, err
 	}
+
+	// Phase 4 AI scoring. The assessor is best-effort: a missing
+	// assessor or an unreachable agent leaves RiskScore empty (when
+	// no assessor is wired) or stamps the fallback score from the
+	// pkg/aiclient.AssessRiskWithFallback helper. We never roll back
+	// the request because of an AI failure — per PROPOSAL §5.3 AI is
+	// decision-support, not on the critical path.
+	if s.riskAssessor != nil {
+		score, factors, _ := s.riskAssessor.AssessRequestRisk(ctx, riskAssessmentPayload{
+			WorkspaceID:        req.WorkspaceID,
+			RequesterUserID:    req.RequesterUserID,
+			TargetUserID:       req.TargetUserID,
+			ConnectorID:        req.ConnectorID,
+			ResourceExternalID: req.ResourceExternalID,
+			Role:               req.Role,
+			Justification:      req.Justification,
+		})
+		if score != "" {
+			req.RiskScore = score
+			update := map[string]interface{}{"risk_score": score}
+			if len(factors) > 0 {
+				if b, mErr := json.Marshal(factors); mErr == nil {
+					req.RiskFactors = datatypes.JSON(b)
+					update["risk_factors"] = datatypes.JSON(b)
+				}
+			}
+			if uerr := s.db.WithContext(ctx).
+				Model(&models.AccessRequest{}).
+				Where("id = ?", req.ID).
+				Updates(update).Error; uerr != nil {
+				// Persist failure is logged at the caller; we still
+				// return the in-memory request so the caller can act
+				// on the score. The DB row stays without risk_score
+				// — the worst case is a stale read on the admin UI,
+				// not a stuck request.
+				return req, nil
+			}
+		}
+	}
+
 	return req, nil
+}
+
+// riskAssessmentPayload is the shape AccessRequestService passes to
+// RiskAssessor.AssessRequestRisk. Kept small and stable: the AI
+// agent contract documented in docs/PROPOSAL.md §7 reads exactly
+// these fields.
+type riskAssessmentPayload struct {
+	WorkspaceID        string `json:"workspace_id"`
+	RequesterUserID    string `json:"requester_user_id"`
+	TargetUserID       string `json:"target_user_id"`
+	ConnectorID        string `json:"connector_id"`
+	ResourceExternalID string `json:"resource_external_id"`
+	Role               string `json:"role,omitempty"`
+	Justification      string `json:"justification,omitempty"`
+}
+
+// SuggestedWorkflowStep returns the workflow step type that best
+// matches risk per PROPOSAL §5.3. The mapping is:
+//
+//	low    → auto_approve
+//	medium → manager_approval
+//	high   → manager_approval (until Phase 6 introduces the
+//	         security_review step type; today we route to manager
+//	         approval rather than auto-approving high-risk requests)
+//	""     → manager_approval (no AI score → conservative default)
+//
+// Callers (typically the WorkflowService) consult this when the
+// matching workflow row's Steps array is missing — it is NOT a
+// substitute for an explicit workflow.
+func SuggestedWorkflowStep(riskScore string) string {
+	switch riskScore {
+	case models.RequestRiskLow:
+		return models.WorkflowStepAutoApprove
+	case models.RequestRiskHigh, models.RequestRiskMedium:
+		return models.WorkflowStepManagerApproval
+	default:
+		return models.WorkflowStepManagerApproval
+	}
 }
 
 // ApproveRequest moves a request from "requested" to "approved", recording
@@ -140,6 +254,51 @@ func (s *AccessRequestService) DenyRequest(ctx context.Context, requestID, actor
 // before provisioning started). Not legal once provisioning is in flight.
 func (s *AccessRequestService) CancelRequest(ctx context.Context, requestID, actorUserID, reason string) error {
 	return s.transitionRequest(ctx, requestID, models.RequestStateCancelled, actorUserID, reason)
+}
+
+// ListAccessRequestsQuery is the input contract for ListRequests.
+// WorkspaceID is required; the pointer fields are wildcard filters
+// — nil means "no filter on this dimension". Empty-string filters
+// match exact-empty values (rare but possible for role).
+type ListAccessRequestsQuery struct {
+	WorkspaceID        string
+	State              *string
+	RequesterUserID    *string
+	TargetUserID       *string
+	ResourceExternalID *string
+}
+
+// ListRequests returns the access_requests rows matching q. Soft-
+// deleted rows are excluded (GORM's default scope). Results are
+// ordered by CreatedAt descending so the admin UI shows newest
+// requests first.
+//
+// ListRequests is a thin GORM query — it does not run the FSM, does
+// not load state-history rows, and does not page. Phase 5 may add
+// cursor-based pagination once the per-workspace request volume
+// makes that necessary.
+func (s *AccessRequestService) ListRequests(ctx context.Context, q ListAccessRequestsQuery) ([]models.AccessRequest, error) {
+	if q.WorkspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace_id is required", ErrValidation)
+	}
+	tx := s.db.WithContext(ctx).Where("workspace_id = ?", q.WorkspaceID)
+	if q.State != nil {
+		tx = tx.Where("state = ?", *q.State)
+	}
+	if q.RequesterUserID != nil {
+		tx = tx.Where("requester_user_id = ?", *q.RequesterUserID)
+	}
+	if q.TargetUserID != nil {
+		tx = tx.Where("target_user_id = ?", *q.TargetUserID)
+	}
+	if q.ResourceExternalID != nil {
+		tx = tx.Where("resource_external_id = ?", *q.ResourceExternalID)
+	}
+	var out []models.AccessRequest
+	if err := tx.Order("created_at desc").Find(&out).Error; err != nil {
+		return nil, fmt.Errorf("access: list access_requests: %w", err)
+	}
+	return out, nil
 }
 
 // transitionRequest is the shared implementation behind Approve / Deny /

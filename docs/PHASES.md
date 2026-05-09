@@ -10,7 +10,7 @@ A phase is **shippable** only when *all* of its exit criteria are demonstrably m
 | 🟡 partial | Some exit criteria met; gaps tracked in `PROGRESS.md` |
 | ⏳ planned | Not yet started |
 
-> **Phase 0 is `✅ shipped`; Phase 1 is `🟡 partial`** (10 of 10 connectors landed with minimum capabilities; Admin UI + Keycloak federation exit criteria still open). **Phase 2 is `🟡 partial`** — the four request-lifecycle tables, request state machine, and the request / provisioning / workflow services have landed; Admin UI / Mobile SDK / Desktop Extension exit criteria remain open. **Phase 3 is `🟡 partial`** — the policy / team / resource tables, `PolicyService` (drafts, simulate, promote, test-access), `ImpactResolver`, and `ConflictDetector` have landed; HTTP endpoints + Admin UI policy simulator remain open. **Phase 5 is `🟡 partial`** — the access-review tables and `AccessReviewService` (`StartCampaign` / `SubmitDecision` / `CloseCampaign` / `AutoRevoke`) have landed; AI auto-certification, scheduled campaigns, notification fan-out, and the Admin UI dashboard remain open. Later phases remain `⏳ planned`. As phases land, flip the marker and move the supporting status row in `PROGRESS.md`.
+> **Phase 0 is `✅ shipped`; Phase 1 is `🟡 partial`** (10 of 10 connectors landed with minimum capabilities; Admin UI + Keycloak federation exit criteria still open). **Phase 2 is `🟡 partial`** — the four request-lifecycle tables, request state machine, the request / provisioning / workflow services AND the HTTP handler layer (POST/GET `/access/requests`, approve/deny/cancel, GET `/access/grants`) have landed; Admin UI / Mobile SDK / Desktop Extension exit criteria remain open. **Phase 3 is `🟡 partial`** — the policy / team / resource tables, `PolicyService`, `ImpactResolver`, `ConflictDetector` AND the HTTP handler layer (`POST /workspace/policy`, drafts, `:id/simulate|promote`, `test-access`) have landed; the Admin UI policy simulator remains open. **Phase 4 is `🟡 partial`** — the Go-side A2A AI client (`internal/pkg/aiclient`), env-driven config (`internal/config`), AI risk-scoring integration into `AccessRequestService.CreateRequest` and `PolicyService.Simulate`, and `POST /access/explain` + `POST /access/suggest` endpoints have landed; the Python AI agent skills and Admin UI assistant remain open. **Phase 5 is `🟡 partial`** — the access-review tables, `AccessReviewService` (`StartCampaign` / `SubmitDecision` / `CloseCampaign` / `AutoRevoke`), the HTTP handler layer (`POST /access/reviews`, `:id/decisions|close|auto-revoke`) AND the scheduled-campaigns scaffold (`access_campaign_schedules` table + migration `005` + `internal/cron.CampaignScheduler`) have landed; AI auto-certification, notification fan-out, and the Admin UI dashboard remain open. Later phases remain `⏳ planned`. As phases land, flip the marker and move the supporting status row in `PROGRESS.md`.
 
 ---
 
@@ -67,6 +67,7 @@ A phase is **shippable** only when *all* of its exit criteria are demonstrably m
 - [x] State machine for the request lifecycle (`requested → approved → provisioning → provisioned → active → revoked`), implemented in the pattern of `ztna-business-layer/internal/state_machine/` (`internal/services/access/request_state_machine.go`).
 - [x] Self-service workflow (auto-approve when an active policy match exists) (`internal/services/access/workflow_service.go`).
 - [x] Manager approval workflow (single-step, manager resolved through manager-link pass) (`internal/services/access/workflow_service.go`).
+- [x] HTTP handler layer for access requests: `POST /access/requests`, `GET /access/requests` (filtered by state / requester / target / resource), `POST /access/requests/:id/approve`, `POST /access/requests/:id/deny`, `POST /access/requests/:id/cancel`, `GET /access/grants` (active grants for caller). All handlers use `GetStringParam` / `GetPtrStringQuery` per cross-cutting criteria. (`internal/handlers/access_request_handler.go`, `internal/handlers/access_grant_handler.go`)
 - [ ] Admin UI: access request management page (list / approve / deny / view audit trail).
 - [ ] Mobile SDK: access request API contract defined and published to the internal package registry.
 - [ ] Desktop Extension: access request IPC contract defined and published as an internal npm package.
@@ -80,10 +81,10 @@ A phase is **shippable** only when *all* of its exit criteria are demonstrably m
 **Exit criteria.**
 
 - [x] `policies.is_draft` and `policies.draft_impact` columns added (with migration `003_create_policy_tables`). Tables `policies`, `teams`, `team_members`, `resources` all landed.
-- [ ] `POST /workspace/policy/simulate` endpoint. *(handler-layer; service `PolicyService.Simulate` shipped.)*
-- [ ] `GET /workspace/policy/:id/impact` endpoint. *(handler-layer; impact is persisted in `policies.draft_impact` by the service.)*
-- [ ] `POST /workspace/policy/:id/promote` endpoint. *(handler-layer; service `PolicyService.Promote` shipped.)*
-- [ ] `POST /workspace/policy/test-access` endpoint ("Can user X access resource Y under draft P?"). *(handler-layer; service `PolicyService.TestAccess` shipped.)*
+- [x] `POST /workspace/policy` (creates a draft) and `POST /workspace/policy/:id/simulate` endpoints. (`internal/handlers/policy_handler.go`)
+- [x] `GET /workspace/policy/drafts` (list drafts) and `GET /workspace/policy/:id` (get one) endpoints; the persisted impact is returned on the `:id` row's `draft_impact` field.
+- [x] `POST /workspace/policy/:id/promote` endpoint.
+- [x] `POST /workspace/policy/test-access` endpoint ("Can user X access resource Y under draft P?").
 - [x] Impact analysis: resolve affected Teams → Members → Resources via attribute / resource selector (`internal/services/access/impact_resolver.go`).
 - [x] Conflict detection against existing live policies (`redundant`, `contradictory`) (`internal/services/access/conflict_detector.go`).
 - [ ] Admin UI: policy simulator page with before / after comparison.
@@ -91,18 +92,18 @@ A phase is **shippable** only when *all* of its exit criteria are demonstrably m
 
 ---
 
-## Phase 4 — Server-side AI integration  ⏳
+## Phase 4 — Server-side AI integration  🟡 partial
 
 **Scope.** AI agents for risk assessment, policy recommendation, and connector setup assistance.
 
 **Exit criteria.**
 
-- [ ] `access_risk_assessment` agent skill implemented over A2A protocol (extends `aisoc-ai-agents/server/src/aisoc_agents/aisoc_agent.py`).
+- [ ] `access_risk_assessment` agent skill implemented over A2A protocol (extends `aisoc-ai-agents/server/src/aisoc_agents/aisoc_agent.py`). *(Go-side A2A client + fallback shipped; the Python skill itself is the open piece.)*
 - [ ] `connector_setup_assistant` agent skill.
-- [ ] `policy_recommendation` agent skill.
-- [ ] AI risk scoring integrated into the access request workflow (Phase 2): every new request gets a `risk_score` populated within `T` seconds.
-- [ ] AI risk assessment integrated into policy simulation (Phase 3): every `ImpactReport` carries a `risk_score`.
-- [ ] Natural-language policy explanation endpoint (`POST /access/explain`) backed by the server-side agent.
+- [ ] `policy_recommendation` agent skill. *(Go-side A2A client + fallback shipped; the Python skill itself is the open piece.)*
+- [x] AI risk scoring integrated into the access request workflow (Phase 2): `AccessRequestService.CreateRequest` calls the assessor and persists `risk_score` / `risk_factors`; on AI failure the access-request workflow defaults to `medium` per PROPOSAL §5.3. (`internal/services/access/request_service.go`, `internal/pkg/aiclient/fallback.go`)
+- [x] AI risk assessment integrated into policy simulation (Phase 3): `PolicyService.Simulate` stamps `RiskScore` / `RiskFactors` onto the `ImpactReport` before persisting `draft_impact`. AI failure leaves the report empty rather than synthesising a default. (`internal/services/access/policy_service.go`)
+- [x] Natural-language policy explanation endpoint (`POST /access/explain`) backed by the server-side agent. Pair endpoint `POST /access/suggest` shares the same handler. (`internal/handlers/ai_handler.go`)
 - [ ] Admin UI: AI assistant chat interface for policy and access queries.
 - [ ] Mobile SDK: AI query API contract defined (server-side, **no on-device inference**) — verified by a build-time check that no model files / inference frameworks are bundled.
 - [ ] Desktop Extension: AI query IPC contract defined (server-side, **no on-device inference**) — same build-time check.
@@ -117,8 +118,9 @@ A phase is **shippable** only when *all* of its exit criteria are demonstrably m
 
 - [x] `access_reviews` and `access_review_decisions` tables and migrations (`004_create_access_review_tables`).
 - [x] `AccessReviewService` with `StartCampaign`, `SubmitDecision`, `CloseCampaign`, `AutoRevoke` (`internal/services/access/review_service.go`).
+- [x] HTTP handler layer for review campaigns: `POST /access/reviews`, `POST /access/reviews/:id/decisions`, `POST /access/reviews/:id/close`, `POST /access/reviews/:id/auto-revoke`. (`internal/handlers/access_review_handler.go`)
 - [ ] `access_review_automation` agent skill — auto-certifies low-risk grants. *(Phase 4-AI dependency; the `AutoCertifyEnabled` column is wired and the agent will flip pending→certify on its own schedule.)*
-- [ ] Scheduled review campaigns with configurable frequency per resource category.
+- [x] Scheduled review campaigns with configurable frequency per resource category. The `access_campaign_schedules` table (migration `005`), `AccessCampaignSchedule` model, and `internal/cron.CampaignScheduler` (scans for due rows, calls `StartCampaign`, bumps `NextRunAt` by `FrequencyDays`) are all in place. (`internal/cron/campaign_scheduler.go`)
 - [ ] Auto-certification rate observable as a per-campaign metric; operator can disable auto-certification per resource category. *(`access_reviews.auto_certify_enabled` flag is in place; the metrics emitter and admin toggle are still open.)*
 - [ ] Admin UI: review campaign management with bulk approve / revoke and per-grant detail.
 - [ ] Notification system for pending reviews (email + in-app).
