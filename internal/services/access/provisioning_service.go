@@ -199,6 +199,19 @@ func (s *AccessProvisioningService) Provision(
 // contract) but NOT idempotent on the model side — calling Revoke on an
 // already-revoked grant is a programmer error and surfaces as
 // ErrAlreadyRevoked.
+//
+// Failure handling has three distinct paths:
+//
+//   - Connector returns an error: the upstream change never happened;
+//     the in-memory grant is left alone and a retry is safe.
+//   - Connector returns success but the DB UPDATE returns an error:
+//     the upstream change happened but our write failed; the in-memory
+//     grant is left alone and the wrapped error is returned. Operators
+//     reconcile manually.
+//   - Connector returns success but the DB UPDATE affects 0 rows
+//     (concurrent soft-delete, missing row, etc.): ErrGrantNotFound is
+//     returned. The upstream change happened; the in-memory grant is
+//     left alone so a caller cannot mistake this for a clean revoke.
 func (s *AccessProvisioningService) Revoke(
 	ctx context.Context,
 	grant *models.AccessGrant,
@@ -234,14 +247,27 @@ func (s *AccessProvisioningService) Revoke(
 	}
 
 	now := s.now()
-	if err := s.db.WithContext(ctx).
+	result := s.db.WithContext(ctx).
 		Model(&models.AccessGrant{}).
 		Where("id = ?", grant.ID).
 		Updates(map[string]interface{}{
 			"revoked_at": now,
 			"updated_at": now,
-		}).Error; err != nil {
-		return fmt.Errorf("access: update access_grant revoked_at: %w", err)
+		})
+	if result.Error != nil {
+		return fmt.Errorf("access: update access_grant revoked_at: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		// The connector already revoked upstream — that side effect is
+		// irrecoverable. The DB write affected 0 rows, which means the
+		// grant either never existed under this ID or was concurrently
+		// soft-deleted between the in-memory check and this UPDATE.
+		// Returning nil here would lie to the caller (in-memory grant
+		// gets RevokedAt stamped, DB stays unchanged), so surface a
+		// distinct error that names both conditions and lets operators
+		// reconcile manually. Mirrors the RowsAffected == 0 guard in
+		// AccessRequestService.TransitionInTx.
+		return fmt.Errorf("%w: %s (connector revoke already succeeded upstream)", ErrGrantNotFound, grant.ID)
 	}
 	grant.RevokedAt = &now
 	grant.UpdatedAt = now
@@ -273,6 +299,15 @@ func (s *AccessProvisioningService) lookupProvider(ctx context.Context, connecto
 // RevokedAt. Callers can errors.Is the sentinel and treat it as a
 // no-op success or a 409 depending on the call site.
 var ErrAlreadyRevoked = errors.New("access: grant already revoked")
+
+// ErrGrantNotFound is returned by Revoke when the post-connector DB
+// UPDATE affects zero rows — the grant identified by ID either never
+// existed or was concurrently soft-deleted. Callers must NOT treat this
+// as a clean revoke, because the connector has already succeeded
+// upstream by the time this error fires; the upstream change is real
+// even though the DB doesn't reflect it. Operators reconcile by
+// re-querying the upstream provider.
+var ErrGrantNotFound = errors.New("access: grant not found or already deleted")
 
 // truncateErrorReason caps the Reason string so a verbose connector error
 // does not blow up the access_request_state_history.reason column. The

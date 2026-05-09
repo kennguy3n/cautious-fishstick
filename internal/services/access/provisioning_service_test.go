@@ -366,6 +366,62 @@ func TestRevoke_AlreadyRevokedReturnsErrAlreadyRevoked(t *testing.T) {
 	}
 }
 
+// TestRevoke_RowAffectedZeroReturnsErrorAfterConnectorSuccess pins the
+// post-connector RowsAffected guard. Devin Review flagged that Revoke
+// previously checked only result.Error: if the DB UPDATE affected 0
+// rows (concurrent soft-delete, missing row), Revoke returned nil while
+// the connector had already revoked upstream — the caller would believe
+// the revoke was persisted, but the DB still showed the grant active.
+//
+// The test simulates the race by NOT inserting the grant row into the
+// DB at all: the in-memory grant has a valid ID and a registered
+// connector, so Revoke gets past the early ErrAlreadyRevoked check and
+// the connector lookup, the mock connector returns success (the
+// upstream change "happened"), and then the UPDATE against the missing
+// row affects 0 rows. The fix must surface ErrGrantNotFound and leave
+// grant.RevokedAt nil so the caller can distinguish this from success.
+func TestRevoke_RowAffectedZeroReturnsErrorAfterConnectorSuccess(t *testing.T) {
+	const provider = "mock_revoke_zero_rows"
+	db := newProvisioningTestDB(t)
+	conn := seedConnector(t, db, provider)
+
+	// In-memory grant only — never inserted into access_grants. The ID
+	// is well-formed so the WHERE clause is valid; it just won't match
+	// any row.
+	grant := &models.AccessGrant{
+		ID:                 "01H000000000000000GRANTPHANT",
+		WorkspaceID:        "01H000000000000000WORKSPACE",
+		UserID:             "01H000000000000000USERABCDEF",
+		ConnectorID:        conn.ID,
+		ResourceExternalID: "projects/foo",
+		Role:               "viewer",
+	}
+
+	mock := &MockAccessConnector{
+		FuncRevokeAccess: func(_ context.Context, _, _ map[string]interface{}, _ AccessGrant) error {
+			// Connector succeeded upstream — this is the irrecoverable
+			// side effect we need to defend against silently swallowing.
+			return nil
+		},
+	}
+	SwapConnector(t, provider, mock)
+
+	svc := NewAccessProvisioningService(db)
+	err := svc.Revoke(context.Background(), grant, nil, nil)
+	if err == nil {
+		t.Fatal("Revoke returned nil; want ErrGrantNotFound (post-connector zero-row UPDATE must surface)")
+	}
+	if !errors.Is(err, ErrGrantNotFound) {
+		t.Errorf("err = %v; want it to wrap ErrGrantNotFound", err)
+	}
+	if mock.RevokeAccessCalls != 1 {
+		t.Errorf("RevokeAccess calls = %d; want 1 (connector must be invoked before the DB write)", mock.RevokeAccessCalls)
+	}
+	if grant.RevokedAt != nil {
+		t.Errorf("grant.RevokedAt = %v after zero-row UPDATE; want nil so the caller cannot mistake this for a successful revoke", grant.RevokedAt)
+	}
+}
+
 // TestProvision_PostConnectorDBFailureTransitionsToProvisionFailed asserts
 // that when the connector succeeds upstream but the post-success DB
 // transaction (state flip + access_grants insert) fails, the request is
