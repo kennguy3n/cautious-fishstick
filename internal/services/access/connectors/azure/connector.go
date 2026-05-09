@@ -350,13 +350,15 @@ func (c *AzureAccessConnector) GetCredentialsMetadata(ctx context.Context, confi
 	}
 	if len(resp.Value) > 0 && len(resp.Value[0].PasswordCredentials) > 0 {
 		creds := resp.Value[0].PasswordCredentials
-		earliest := creds[0].EndDateTime
-		for _, c := range creds[1:] {
-			if c.EndDateTime != "" && c.EndDateTime < earliest {
+		earliest := ""
+		for _, c := range creds {
+			if c.EndDateTime != "" && (earliest == "" || c.EndDateTime < earliest) {
 				earliest = c.EndDateTime
 			}
 		}
-		out["client_secret_expires_at"] = earliest
+		if earliest != "" {
+			out["client_secret_expires_at"] = earliest
+		}
 	}
 	return out, nil
 }

@@ -48,6 +48,41 @@ func TestValidate_RejectsBadRegion(t *testing.T) {
 	}
 }
 
+func TestLooksLikeAWSRegion(t *testing.T) {
+	cases := []struct {
+		region string
+		want   bool
+	}{
+		// Existing geos
+		{"us-east-1", true},
+		{"eu-west-2", true},
+		{"ap-southeast-1", true},
+		{"ca-central-1", true},
+		{"sa-east-1", true},
+		{"af-south-1", true},
+		{"me-central-1", true},
+		{"cn-north-1", true},
+		// Newer geos that the old hardcoded allowlist rejected.
+		{"il-central-1", true},
+		// GovCloud still passes — its actual prefix is "us".
+		{"us-gov-west-1", true},
+		{"us-gov-east-1", true},
+		// Bogus values must still be rejected.
+		{"abc", false},
+		{"us-east", false},
+		{"", false},
+		{"x-east-1", false},                // 1-letter prefix
+		{"longprefix-east-1", false},       // >6-letter prefix
+		{"US-EAST-1", false},               // uppercase
+		{"u1-east-1", false},               // digit in prefix
+	}
+	for _, tc := range cases {
+		if got := looksLikeAWSRegion(tc.region); got != tc.want {
+			t.Errorf("looksLikeAWSRegion(%q) = %v; want %v", tc.region, got, tc.want)
+		}
+	}
+}
+
 func TestValidate_PureLocal(t *testing.T) {
 	prev := http.DefaultTransport
 	http.DefaultTransport = noNetworkRoundTripper{}

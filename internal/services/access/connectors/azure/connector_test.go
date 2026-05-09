@@ -147,3 +147,71 @@ func TestGetCredentialsMetadata_NoNetwork(t *testing.T) {
 		t.Errorf("tenant_id = %v", md["tenant_id"])
 	}
 }
+
+// TestGetCredentialsMetadata_PicksEarliestExpiry guards against a regression
+// where the earliest-expiry search would silently emit an empty
+// client_secret_expires_at if the first PasswordCredential happened to have
+// an empty EndDateTime (a non-expiring credential). Microsoft Graph does
+// not guarantee ordering of passwordCredentials, so this scenario is
+// reachable in production whenever an app has a non-expiring + expiring
+// credential pair.
+func TestGetCredentialsMetadata_PicksEarliestExpiry(t *testing.T) {
+	cases := []struct {
+		name            string
+		applicationsResp string
+		want            string // empty => field must be absent
+	}{
+		{
+			name: "first credential has empty endDateTime",
+			applicationsResp: `{"value":[{"passwordCredentials":[
+				{"endDateTime":"","displayName":"perpetual"},
+				{"endDateTime":"2030-01-01T00:00:00Z","displayName":"later"},
+				{"endDateTime":"2027-06-15T00:00:00Z","displayName":"earlier"}
+			]}]}`,
+			want: "2027-06-15T00:00:00Z",
+		},
+		{
+			name: "all credentials have empty endDateTime",
+			applicationsResp: `{"value":[{"passwordCredentials":[
+				{"endDateTime":"","displayName":"a"},
+				{"endDateTime":"","displayName":"b"}
+			]}]}`,
+			want: "",
+		},
+		{
+			name: "single expiring credential",
+			applicationsResp: `{"value":[{"passwordCredentials":[
+				{"endDateTime":"2028-12-31T23:59:59Z","displayName":"only"}
+			]}]}`,
+			want: "2028-12-31T23:59:59Z",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !strings.HasPrefix(r.URL.Path, "/applications") {
+					t.Fatalf("unexpected path %q", r.URL.Path)
+				}
+				_, _ = w.Write([]byte(tc.applicationsResp))
+			}))
+			t.Cleanup(srv.Close)
+			c := New()
+			c.urlOverride = srv.URL
+			c.tokenOverride = func(_ context.Context, _ Config, _ Secrets) (string, error) { return "tok", nil }
+			md, err := c.GetCredentialsMetadata(context.Background(), validConfig(), validSecrets())
+			if err != nil {
+				t.Fatalf("GetCredentialsMetadata: %v", err)
+			}
+			got, present := md["client_secret_expires_at"]
+			if tc.want == "" {
+				if present {
+					t.Errorf("client_secret_expires_at = %v; want field absent", got)
+				}
+				return
+			}
+			if got != tc.want {
+				t.Errorf("client_secret_expires_at = %v; want %q", got, tc.want)
+			}
+		})
+	}
+}

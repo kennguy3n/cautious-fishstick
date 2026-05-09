@@ -100,12 +100,18 @@ func looksLikeAWSRegion(region string) bool {
 		return false
 	}
 	// Reject obviously bogus values; the actual list of regions changes
-	// over time, so we only enforce a syntactic shape.
-	switch parts[0] {
-	case "us", "eu", "ap", "ca", "sa", "af", "me", "cn", "us-gov":
-		return true
+	// over time, so we only enforce a syntactic shape: a 2–6 letter
+	// lowercase geo-prefix, then at least two more dash-separated segments.
+	prefix := parts[0]
+	if len(prefix) < 2 || len(prefix) > 6 {
+		return false
 	}
-	return false
+	for _, ch := range prefix {
+		if ch < 'a' || ch > 'z' {
+			return false
+		}
+	}
+	return true
 }
 
 func (s Secrets) validate() error {
