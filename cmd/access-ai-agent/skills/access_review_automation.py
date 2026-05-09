@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from .access_risk_assessment import PRIVILEGED_ROLES
+
 
 class SkillError(ValueError):
     """Raised when the payload is malformed."""
@@ -41,20 +43,31 @@ def run(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(usage, dict):
         raise SkillError("usage_data must be an object when supplied")
 
+    # bool is a subclass of int; reject explicitly so payload values
+    # like {"days_since_last_use": True} cannot trip the stale-grant
+    # branch.
     days = usage.get("days_since_last_use")
+    if isinstance(days, bool):
+        days = None
     role = (payload.get("role") or "").lower()
+    is_privileged = role in PRIVILEGED_ROLES
 
-    # Stale grants on non-privileged roles are revoke candidates.
-    if isinstance(days, (int, float)) and days >= 90 and role not in {"admin", "owner"}:
-        return {
-            "decision": "revoke",
-            "reason": f"Grant unused for {int(days)} days; auto-revoke recommended.",
-        }
-    # Privileged roles always escalate.
-    if role in {"admin", "owner", "root", "superuser"}:
+    # Privileged roles always escalate, regardless of staleness — the
+    # privileged-role check intentionally precedes the stale-revoke
+    # check so a stale ``root`` / ``superuser`` / ``domain_admin``
+    # grant routes to a human rather than auto-revoke. The two role
+    # sets must stay in sync; both branches read PRIVILEGED_ROLES
+    # from access_risk_assessment so we cannot drift them apart.
+    if is_privileged:
         return {
             "decision": "escalate",
             "reason": "Privileged role requires manual review.",
+        }
+    # Stale grants on non-privileged roles are revoke candidates.
+    if isinstance(days, (int, float)) and days >= 90:
+        return {
+            "decision": "revoke",
+            "reason": f"Grant unused for {int(days)} days; auto-revoke recommended.",
         }
     # Default: certify (the AI agent's "looks fine" verdict).
     return {

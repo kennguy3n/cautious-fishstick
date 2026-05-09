@@ -312,15 +312,17 @@ func (s *JMLService) HandleMover(ctx context.Context, in MoverInput) (*JMLResult
 		justification = "mover: team membership change"
 	}
 
+	// Provision the gained-team grants BEFORE revoking the
+	// lost-team grants. PROPOSAL §5.4 requires "no partial-access
+	// window": when a Mover trades Team A access for Team B
+	// access, the user must always retain access during the swap.
+	// Doing the revokes first opens a window where the user has
+	// neither old nor new access; doing the provisions first means
+	// the user briefly has both, which is the safer over-shoot.
+	// AccessProvisioningService is idempotent on
+	// (user, connector, resource, role) so a re-run does not
+	// double-grant.
 	out := &JMLResult{}
-	for _, g := range in.RemovedGrants {
-		res := s.revokeOneGrantForUser(ctx, in.WorkspaceID, in.UserID, g)
-		if res.Err != nil {
-			out.Failed = append(out.Failed, res)
-			continue
-		}
-		out.Revoked = append(out.Revoked, res)
-	}
 	for _, g := range in.AddedGrants {
 		res := s.driveOneGrant(ctx, in.WorkspaceID, in.UserID, g, justification, "mover: gained team access approved")
 		if res.Err != nil {
@@ -328,6 +330,14 @@ func (s *JMLService) HandleMover(ctx context.Context, in MoverInput) (*JMLResult
 			continue
 		}
 		out.Provisioned = append(out.Provisioned, res)
+	}
+	for _, g := range in.RemovedGrants {
+		res := s.revokeOneGrantForUser(ctx, in.WorkspaceID, in.UserID, g)
+		if res.Err != nil {
+			out.Failed = append(out.Failed, res)
+			continue
+		}
+		out.Revoked = append(out.Revoked, res)
 	}
 	return out, nil
 }

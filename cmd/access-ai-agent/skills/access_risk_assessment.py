@@ -81,7 +81,14 @@ def run(payload: Dict[str, Any]) -> Dict[str, Any]:
             factors.append("production_resource")
             score = _bump(score)
 
+    # bool is a subclass of int, so a payload sending
+    # ``"duration_hours": True`` would otherwise satisfy isinstance
+    # and (since True > 168 is False) silently ignore the field
+    # rather than reject it. Reject explicitly so callers cannot
+    # smuggle a boolean past validation.
     duration = payload.get("duration_hours")
+    if isinstance(duration, bool):
+        duration = None
     if isinstance(duration, (int, float)) and duration > 168:  # >1 week
         factors.append("long_duration")
         score = _bump(score)

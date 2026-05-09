@@ -26,6 +26,7 @@ is needed.
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
 import logging
 import os
@@ -112,8 +113,15 @@ class AgentHandler(BaseHTTPRequestHandler):
             return
 
         if self.expected_api_key:
-            got = self.headers.get("X-API-Key", "")
-            if got != self.expected_api_key:
+            got = self.headers.get("X-API-Key", "") or ""
+            # hmac.compare_digest runs in constant time over the
+            # length of the longer input so an attacker cannot
+            # learn the expected key one character at a time by
+            # measuring response latency. Encoding to bytes keeps
+            # the comparison safe under any locale.
+            if not hmac.compare_digest(
+                got.encode("utf-8"), self.expected_api_key.encode("utf-8")
+            ):
                 self._write_json(HTTPStatus.UNAUTHORIZED, {"error": "X-API-Key mismatch"})
                 return
 

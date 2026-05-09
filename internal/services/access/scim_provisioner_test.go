@@ -297,6 +297,52 @@ func TestSCIMClient_ConfigValidation(t *testing.T) {
 	}
 }
 
+// TestSCIMClient_Truncate_HandlesUTF8Boundary asserts truncate
+// counts runes, not bytes — a multi-byte UTF-8 sequence in the
+// upstream payload must never be sliced mid-rune (or the embedded
+// excerpt would be invalid UTF-8 and crash JSON encoders downstream).
+//
+// Regression: the previous implementation used s[:n] which is a byte
+// slice, so a body of all 3-byte runes (e.g. "你好世界...") would be
+// cut between bytes of one rune and the appended ellipsis would
+// produce invalid UTF-8.
+func TestSCIMClient_Truncate_HandlesUTF8Boundary(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		n    int
+		want string
+	}{
+		{"ascii within bound", "hello", 10, "hello"},
+		{"ascii at bound", "hello", 5, "hello"},
+		{"ascii over bound", "helloworld", 5, "hello\u2026"},
+		{"multi-byte within bound", "你好", 5, "你好"},
+		{"multi-byte at bound", "你好", 2, "你好"},
+		{"multi-byte over bound", "你好世界", 2, "你好\u2026"},
+		{"mixed over bound", "hi你好世", 3, "hi你\u2026"},
+		{"zero n", "hello", 0, ""},
+		{"negative n", "hello", -1, ""},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := truncate(tc.in, tc.n)
+			if got != tc.want {
+				t.Errorf("truncate(%q, %d) = %q; want %q", tc.in, tc.n, got, tc.want)
+			}
+			// Always returns valid UTF-8 — that's the actual
+			// invariant the bug broke.
+			for _, r := range got {
+				if r == '\uFFFD' {
+					t.Errorf("truncate produced replacement rune in %q", got)
+				}
+			}
+		})
+	}
+}
+
 // TestSCIMClient_TimeoutOverride asserts that the scim_timeout
 // config key is respected (the request fails with deadline
 // exceeded against a slow server).

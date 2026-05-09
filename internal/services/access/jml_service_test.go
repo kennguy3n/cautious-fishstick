@@ -318,6 +318,72 @@ func TestHandleMover_GainsAndLosesTeams(t *testing.T) {
 	}
 }
 
+// TestHandleMover_ProvisionsBeforeRevokes asserts the mover lane
+// provisions the gained-team grants BEFORE revoking the lost-team
+// grants. PROPOSAL §5.4 mandates "no partial-access window": doing
+// the revoke first would leave the user with neither old nor new
+// access for the duration of the connector round-trip; doing the
+// provision first means the user briefly has both, which is the
+// safer overshoot.
+//
+// Regression for the original implementation that ran the revoke
+// loop first.
+func TestHandleMover_ProvisionsBeforeRevokes(t *testing.T) {
+	const provider = "mock_jml_mover_order"
+	db := newJMLTestDB(t)
+	conn := seedConnectorWithID(t, db, "01H00000000000000JMLCONNMVR3", provider)
+
+	var ops []string
+	mock := &MockAccessConnector{
+		FuncProvisionAccess: func(_ context.Context, _, _ map[string]interface{}, g AccessGrant) error {
+			ops = append(ops, "provision:"+g.ResourceExternalID)
+			return nil
+		},
+		FuncRevokeAccess: func(_ context.Context, _, _ map[string]interface{}, g AccessGrant) error {
+			ops = append(ops, "revoke:"+g.ResourceExternalID)
+			return nil
+		},
+	}
+	SwapConnector(t, provider, mock)
+
+	provSvc := NewAccessProvisioningService(db)
+	jml := NewJMLService(db, provSvc)
+
+	// Pre-seed: user has an active grant on projects/old.
+	if _, err := jml.HandleJoiner(context.Background(), JoinerInput{
+		WorkspaceID:   "01H000000000000000WORKSPACE",
+		UserID:        "01H00000000000000JMLUSER0X",
+		TeamIDs:       []string{"01H00000000000000JMLTEAMSTUB"},
+		DefaultGrants: []JMLAccessGrant{{ConnectorID: conn.ID, ResourceExternalID: "projects/old", Role: "viewer"}},
+	}); err != nil {
+		t.Fatalf("seed joiner: %v", err)
+	}
+	ops = nil // discard joiner ops, we only care about mover ordering
+
+	if _, err := jml.HandleMover(context.Background(), MoverInput{
+		WorkspaceID: "01H000000000000000WORKSPACE",
+		UserID:      "01H00000000000000JMLUSER0X",
+		AddedGrants: []JMLAccessGrant{
+			{ConnectorID: conn.ID, ResourceExternalID: "projects/new", Role: "viewer"},
+		},
+		RemovedGrants: []JMLAccessGrant{
+			{ConnectorID: conn.ID, ResourceExternalID: "projects/old", Role: "viewer"},
+		},
+	}); err != nil {
+		t.Fatalf("HandleMover: %v", err)
+	}
+
+	if len(ops) != 2 {
+		t.Fatalf("ops = %v; want 2 ops (one provision, one revoke)", ops)
+	}
+	if ops[0] != "provision:projects/new" {
+		t.Errorf("ops[0] = %q; want %q (mover MUST provision before revoking to honor 'no partial-access window')", ops[0], "provision:projects/new")
+	}
+	if ops[1] != "revoke:projects/old" {
+		t.Errorf("ops[1] = %q; want %q", ops[1], "revoke:projects/old")
+	}
+}
+
 // TestHandleMover_NoChangesIsNoop asserts a mover whose old and new
 // team set match — and whose added/removed grants are empty —
 // performs no DB writes and no connector calls.

@@ -269,7 +269,14 @@ func (c *SCIMClient) do(ctx context.Context, cfg resolvedSCIMConfig, method, pat
 		return nil, fmt.Errorf("scim: %s %s: %w", method, endpoint, err)
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		// Surface the read failure rather than silently treating
+		// it as an empty body — callers MUST see that the SCIM
+		// envelope they expected may be incomplete so they can
+		// retry instead of mis-interpreting a partial 2xx.
+		return respBody, fmt.Errorf("scim: read %s %s body: %w", method, endpoint, readErr)
+	}
 
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
@@ -299,12 +306,19 @@ func joinSCIMURL(base, path string) (string, error) {
 }
 
 // truncate caps s at n runes. Used for error messages so a chatty
-// SCIM provider does not blow up the audit log.
+// SCIM provider does not blow up the audit log. Counts runes (not
+// bytes) so a multi-byte UTF-8 sequence is never sliced mid-rune
+// and the resulting string is always valid UTF-8 even on hostile /
+// non-ASCII payloads.
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	if n <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	return string(runes[:n]) + "\u2026"
 }
 
 // scimUserPayload is the wire shape PushSCIMUser sends. The struct

@@ -121,3 +121,66 @@ def test_http_invalid_json(running_server: tuple[str, int]) -> None:
         assert e.code == HTTPStatus.BAD_REQUEST
         return
     pytest.fail("expected HTTPError 400")
+
+
+@pytest.fixture
+def running_server_with_api_key() -> Iterator[tuple[str, int, str]]:
+    """Boot a server that requires an X-API-Key header on /a2a/invoke."""
+    api_key = "s3cret-test-key"
+    handler_cls = main.build_handler(api_key=api_key)
+    httpd = HTTPServer(("127.0.0.1", 0), handler_cls)
+    host, port = httpd.server_address[0], httpd.server_address[1]
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    time.sleep(0.05)
+    try:
+        yield (host, port, api_key)
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_http_api_key_required_when_configured(
+    running_server_with_api_key: tuple[str, int, str]
+) -> None:
+    host, port, _ = running_server_with_api_key
+    status, body = _post(host, port, {
+        "skill_name": "access_risk_assessment",
+        "payload": {"role": "viewer", "resource_external_id": "host-001"},
+    })
+    assert status == HTTPStatus.UNAUTHORIZED
+    assert "X-API-Key" in body["error"]
+
+
+def test_http_api_key_wrong_value_rejected(
+    running_server_with_api_key: tuple[str, int, str]
+) -> None:
+    host, port, _ = running_server_with_api_key
+    status, body = _post(
+        host,
+        port,
+        {
+            "skill_name": "access_risk_assessment",
+            "payload": {"role": "viewer", "resource_external_id": "host-001"},
+        },
+        headers={"X-API-Key": "obviously-wrong"},
+    )
+    assert status == HTTPStatus.UNAUTHORIZED
+    assert "X-API-Key" in body["error"]
+
+
+def test_http_api_key_correct_value_passes(
+    running_server_with_api_key: tuple[str, int, str]
+) -> None:
+    host, port, key = running_server_with_api_key
+    status, body = _post(
+        host,
+        port,
+        {
+            "skill_name": "access_risk_assessment",
+            "payload": {"role": "viewer", "resource_external_id": "host-001"},
+        },
+        headers={"X-API-Key": key},
+    )
+    assert status == HTTPStatus.OK
+    assert body["risk_score"] in {"low", "medium", "high"}
