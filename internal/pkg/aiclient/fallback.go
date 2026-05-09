@@ -100,6 +100,81 @@ func (a *RiskAssessmentAdapter) AssessRequestRisk(
 	return resp.RiskScore, resp.RiskFactors, ok
 }
 
+// ReviewAutomationPayload is the canonical request shape for the
+// access_review_automation skill. The Go service layer marshals one
+// of these per pending decision into a /a2a/invoke call and the
+// Python agent returns SkillResponse.Decision / SkillResponse.Reason.
+//
+// UsageData is intentionally typed as map[string]interface{} so the
+// service layer can pass through whatever recent-usage observations
+// it has (last-seen timestamp, days_since_last_use, sign-in counts,
+// ...) without locking the schema in Go. Mirrors the shape the Python
+// access_review_automation skill consumes.
+type ReviewAutomationPayload struct {
+	GrantID   string                 `json:"grant_id"`
+	UserID    string                 `json:"user_id,omitempty"`
+	Role      string                 `json:"role,omitempty"`
+	Resource  string                 `json:"resource_external_id,omitempty"`
+	UsageData map[string]interface{} `json:"usage_data,omitempty"`
+}
+
+// allowedReviewDecisions is the set of decision strings the Python
+// access_review_automation skill is allowed to return. Anything else
+// is treated as "AI returned an unexpected verdict" and the caller
+// leaves the row pending. Keep this in sync with
+// cmd/access-ai-agent/skills/access_review_automation.py
+// ALLOWED_DECISIONS.
+var allowedReviewDecisions = map[string]struct{}{
+	"certify":  {},
+	"revoke":   {},
+	"escalate": {},
+}
+
+// AutomateReviewWithFallback wraps AIClient.InvokeSkill(
+// "access_review_automation", payload) with the PROPOSAL §5.3
+// fallback semantics:
+//
+//   - On success with a recognised decision: returns (decision,
+//     reason, true).
+//   - On any error or nil client: logs a warning, returns ("", "",
+//     false) so the caller leaves the decision pending.
+//   - On a 2xx response with an unrecognised decision: logs a
+//     warning, returns ("", "", false) so the caller leaves the
+//     decision pending rather than auto-certifying on a bogus
+//     verdict.
+//
+// AI is decision-support, not critical path — a momentarily-down
+// agent must NOT block the access-review campaign's auto-
+// certification pass.
+func AutomateReviewWithFallback(
+	ctx context.Context,
+	client *AIClient,
+	payload ReviewAutomationPayload,
+) (decision string, reason string, ok bool) {
+	if client == nil {
+		log.Printf("aiclient: automate review: client is nil; leaving grant %s pending", payload.GrantID)
+		return "", "", false
+	}
+	resp, err := client.InvokeSkill(ctx, "access_review_automation", payload)
+	if err != nil {
+		if errors.Is(err, ErrAIUnconfigured) {
+			log.Printf("aiclient: automate review: AI unconfigured; leaving grant %s pending", payload.GrantID)
+		} else {
+			log.Printf("aiclient: automate review: AI unavailable (%v); leaving grant %s pending", err, payload.GrantID)
+		}
+		return "", "", false
+	}
+	if resp == nil || resp.Decision == "" {
+		log.Printf("aiclient: automate review: AI returned empty decision; leaving grant %s pending", payload.GrantID)
+		return "", "", false
+	}
+	if _, allowed := allowedReviewDecisions[resp.Decision]; !allowed {
+		log.Printf("aiclient: automate review: AI returned unexpected decision %q; leaving grant %s pending", resp.Decision, payload.GrantID)
+		return "", "", false
+	}
+	return resp.Decision, resp.Reason, true
+}
+
 // DetectAnomaliesWithFallback wraps AIClient.DetectAnomalies with
 // the same PROPOSAL §5.3 fallback semantics as
 // AssessRiskWithFallback:

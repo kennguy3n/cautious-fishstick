@@ -31,6 +31,26 @@ const (
 	// not blocked, but the admin UI surfaces a warning prompting a
 	// re-simulate.
 	DefaultDraftPolicyStaleAfter = 14 * 24 * time.Hour
+
+	// DefaultAnomalyScanInterval is the cadence at which the
+	// access-connector-worker walks every workspace and asks the AI
+	// agent for anomaly observations. Mirrors the access-review
+	// scheduler — 24h is the right default for a Phase 6 stub
+	// (cheap to run, surfaces stale grants quickly enough).
+	DefaultAnomalyScanInterval = 24 * time.Hour
+
+	// DefaultCredentialExpiryWarningDays is the number of days
+	// ahead of credential expiry at which CredentialChecker emits a
+	// notification. 14 days mirrors common SaaS rotation reminders
+	// and gives operators two cycles of weekly review to act on
+	// the warning before access breaks.
+	DefaultCredentialExpiryWarningDays = 14
+
+	// DefaultCredentialCheckerInterval is the cadence at which the
+	// access-connector-worker scans access_connectors for soon-to-
+	// expire credentials. Once daily is plenty for a 14-day warning
+	// horizon.
+	DefaultCredentialCheckerInterval = 24 * time.Hour
 )
 
 // Access is the typed snapshot of the access-platform environment
@@ -65,6 +85,40 @@ type Access struct {
 	// DraftPolicyStaleAfter is the "this draft hasn't been simulated
 	// recently" threshold. Defaults to DefaultDraftPolicyStaleAfter.
 	DraftPolicyStaleAfter time.Duration
+
+	// AnomalyScanInterval is the cadence at which the
+	// access-connector-worker walks every workspace through
+	// AnomalyDetectionService.ScanWorkspace. Defaults to
+	// DefaultAnomalyScanInterval.
+	AnomalyScanInterval time.Duration
+
+	// CredentialExpiryWarningDays is the number of days before a
+	// connector credential expires that the credential-checker cron
+	// emits a notification. Defaults to
+	// DefaultCredentialExpiryWarningDays.
+	CredentialExpiryWarningDays int
+
+	// CredentialCheckerInterval is the cadence at which the
+	// access-connector-worker scans access_connectors for credential
+	// expiry. Defaults to DefaultCredentialCheckerInterval.
+	CredentialCheckerInterval time.Duration
+
+	// Notification SMTP knobs power the email Notifier. All five
+	// must be set for the notifier to dispatch real emails; if SMTPHost
+	// is empty the notifier is in "log-only" mode (it formats the
+	// message and writes it to the log without dialling SMTP).
+	NotificationSMTPHost     string
+	NotificationSMTPPort     int
+	NotificationSMTPFrom     string
+	NotificationSMTPUsername string
+	// NotificationSMTPPassword is the SMTP AUTH password. Never logged.
+	NotificationSMTPPassword string
+
+	// NotificationSlackWebhookURL is the Slack incoming-webhook URL
+	// the slack Notifier posts to. Empty means "Slack channel is
+	// intentionally unconfigured" — the notifier short-circuits to a
+	// log line so dev binaries stay healthy without a webhook.
+	NotificationSlackWebhookURL string
 }
 
 // Load reads the Access* environment variables and returns a
@@ -78,12 +132,21 @@ type Access struct {
 // for the dev binary that runs without AI configured.
 func Load() *Access {
 	return &Access{
-		AIAgentBaseURL:         getEnv("ACCESS_AI_AGENT_BASE_URL"),
-		AIAgentAPIKey:          getEnv("ACCESS_AI_AGENT_API_KEY"),
-		WorkflowEngineBaseURL:  getEnv("ACCESS_WORKFLOW_ENGINE_BASE_URL"),
-		FullResyncInterval:     getDurationEnv("ACCESS_FULL_RESYNC_INTERVAL", DefaultFullResyncInterval),
-		ReviewDefaultFrequency: getDurationEnv("ACCESS_REVIEW_DEFAULT_FREQUENCY", DefaultReviewFrequency),
-		DraftPolicyStaleAfter:  getDurationEnv("ACCESS_DRAFT_POLICY_STALE_AFTER", DefaultDraftPolicyStaleAfter),
+		AIAgentBaseURL:              getEnv("ACCESS_AI_AGENT_BASE_URL"),
+		AIAgentAPIKey:               getEnv("ACCESS_AI_AGENT_API_KEY"),
+		WorkflowEngineBaseURL:       getEnv("ACCESS_WORKFLOW_ENGINE_BASE_URL"),
+		FullResyncInterval:          getDurationEnv("ACCESS_FULL_RESYNC_INTERVAL", DefaultFullResyncInterval),
+		ReviewDefaultFrequency:      getDurationEnv("ACCESS_REVIEW_DEFAULT_FREQUENCY", DefaultReviewFrequency),
+		DraftPolicyStaleAfter:       getDurationEnv("ACCESS_DRAFT_POLICY_STALE_AFTER", DefaultDraftPolicyStaleAfter),
+		AnomalyScanInterval:         getDurationEnv("ACCESS_ANOMALY_SCAN_INTERVAL", DefaultAnomalyScanInterval),
+		CredentialExpiryWarningDays: getIntEnv("ACCESS_CREDENTIAL_EXPIRY_WARNING_DAYS", DefaultCredentialExpiryWarningDays),
+		CredentialCheckerInterval:   getDurationEnv("ACCESS_CREDENTIAL_CHECKER_INTERVAL", DefaultCredentialCheckerInterval),
+		NotificationSMTPHost:        getEnv("NOTIFICATION_SMTP_HOST"),
+		NotificationSMTPPort:        getIntEnv("NOTIFICATION_SMTP_PORT", 587),
+		NotificationSMTPFrom:        getEnv("NOTIFICATION_SMTP_FROM"),
+		NotificationSMTPUsername:    getEnv("NOTIFICATION_SMTP_USERNAME"),
+		NotificationSMTPPassword:    getEnv("NOTIFICATION_SMTP_PASSWORD"),
+		NotificationSlackWebhookURL: getEnv("NOTIFICATION_SLACK_WEBHOOK_URL"),
 	}
 }
 
@@ -125,4 +188,20 @@ func getDurationEnv(key string, def time.Duration) time.Duration {
 		return time.Duration(n) * time.Second
 	}
 	return def
+}
+
+// getIntEnv parses the environment variable named key as a base-10
+// integer. Falls back to def when the variable is unset, empty, or
+// unparseable. Negative values are accepted (callers that want
+// non-negative semantics validate after Load).
+func getIntEnv(key string, def int) int {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return def
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return def
+	}
+	return n
 }

@@ -56,5 +56,7 @@ func All() []Migration {
 		migration003,
 		migration004,
 		migration005,
+		migration006,
+		migration007,
 	}
 }

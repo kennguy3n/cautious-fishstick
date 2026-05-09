@@ -46,8 +46,14 @@ type JMLService struct {
 	db              *gorm.DB
 	requestSvc      *AccessRequestService
 	provisioningSvc *AccessProvisioningService
-	now             func() time.Time
-	newID           func() string
+	// zitiClient is the optional Phase 6 OpenZiti hook. When set,
+	// HandleLeaver calls DisableIdentity AFTER revoking every grant
+	// and removing every team membership. nil means no OpenZiti
+	// integration in this repo — the ZTNA business layer is
+	// responsible for reconciling the identity state.
+	zitiClient OpenZitiClient
+	now        func() time.Time
+	newID      func() string
 }
 
 // NewJMLService returns a new service backed by db. db must not be
@@ -71,6 +77,16 @@ func NewJMLService(db *gorm.DB, provisioningSvc *AccessProvisioningService) *JML
 		now:             provisioningSvc.now,
 		newID:           provisioningSvc.newID,
 	}
+}
+
+// SetOpenZitiClient wires an OpenZitiClient onto the service.
+// HandleLeaver calls DisableIdentity AFTER revoking every grant and
+// removing every team membership. Passing nil restores the default
+// "no OpenZiti integration in this repo" behaviour. Call this once
+// at boot from cmd/ztna-api; it is NOT safe to call concurrently
+// with HandleLeaver.
+func (s *JMLService) SetOpenZitiClient(c OpenZitiClient) {
+	s.zitiClient = c
 }
 
 // JMLEventKind classifies a SCIM event into the JML lane the service
@@ -408,13 +424,24 @@ func (s *JMLService) HandleLeaver(ctx context.Context, workspaceID, userID strin
 	return out, nil
 }
 
-// disableOpenZitiIdentity is a Phase 6 stub. The OpenZiti control-
-// plane lives outside this repo; the hook is intentionally a no-op
-// here so operators can swap in a real client without changing the
-// service contract. Logged so the absence of the integration is
-// visible in test / dev environments.
-func (s *JMLService) disableOpenZitiIdentity(_ context.Context, workspaceID, userID string) {
-	log.Printf("access: leaver %s in workspace %s: openziti identity disable is stubbed (Phase 6+)", userID, workspaceID)
+// disableOpenZitiIdentity dispatches the OpenZiti DisableIdentity
+// call when a Phase 6 OpenZitiClient is wired onto the service.
+// Without a wired client the function logs and returns; the ZTNA
+// business layer is responsible for the integration in that case.
+//
+// The call is best-effort: a DisableIdentity error logs but does not
+// roll back the leaver. By the time we reach this branch every
+// grant has already been revoked and team memberships dropped, so
+// the source-of-truth state is "deactivated"; the OpenZiti control
+// plane reconciles eventually.
+func (s *JMLService) disableOpenZitiIdentity(ctx context.Context, workspaceID, userID string) {
+	if s.zitiClient == nil {
+		log.Printf("access: leaver %s in workspace %s: openziti identity disable is stubbed (no client wired)", userID, workspaceID)
+		return
+	}
+	if err := s.zitiClient.DisableIdentity(ctx, userID); err != nil {
+		log.Printf("access: leaver %s in workspace %s: openziti DisableIdentity failed: %v", userID, workspaceID, err)
+	}
 }
 
 // driveOneGrant runs a single (connector, resource, role) tuple
