@@ -14,14 +14,21 @@ import (
 )
 
 // stubStarter is a tiny CampaignStarter test double that records
-// each StartCampaign call.
+// each StartCampaignTx call. The optional onTx hook lets a test
+// observe (or write through) the same *gorm.DB the scheduler is
+// using — this is what we use to prove the bump UPDATE is rolled
+// back when StartCampaignTx returns an error.
 type stubStarter struct {
 	calls []access.StartCampaignInput
 	err   error
+	onTx  func(tx *gorm.DB)
 }
 
-func (s *stubStarter) StartCampaign(_ context.Context, in access.StartCampaignInput) (*models.AccessReview, []models.AccessReviewDecision, error) {
+func (s *stubStarter) StartCampaignTx(_ context.Context, tx *gorm.DB, in access.StartCampaignInput) (*models.AccessReview, []models.AccessReviewDecision, error) {
 	s.calls = append(s.calls, in)
+	if s.onTx != nil {
+		s.onTx(tx)
+	}
 	if s.err != nil {
 		return nil, nil, s.err
 	}
@@ -120,6 +127,71 @@ func TestRun_StartCampaignErrorPreservesNextRunAt(t *testing.T) {
 	}
 	if !got.NextRunAt.Equal(originalNext) {
 		t.Fatalf("NextRunAt = %v; want unchanged %v (so retry on next Run)", got.NextRunAt, originalNext)
+	}
+}
+
+// TestRun_AtomicityOnStartCampaignFailure proves the scheduler's
+// commit invariant: if StartCampaignTx writes anything to the shared
+// transaction and then returns an error, the entire unit of work
+// (including the NextRunAt bump) MUST roll back. Concretely, we
+// pre-create a sibling AccessCampaignSchedule row inside the
+// scheduler's tx via the starter's onTx hook — because the starter
+// then errors, the sibling insert and the NextRunAt update must
+// both be absent after Run returns.
+func TestRun_AtomicityOnStartCampaignFailure(t *testing.T) {
+	db := newSchedDB(t)
+	now := time.Date(2025, 12, 1, 12, 0, 0, 0, time.UTC)
+	originalNext := now.Add(-1 * time.Hour)
+	seedSchedule(t, db, "01H00000000000000SCHED0001", originalNext, true, 90)
+
+	starter := &stubStarter{
+		err: errors.New("boom"),
+		onTx: func(tx *gorm.DB) {
+			// Write a sibling row *inside* the scheduler's tx.
+			// If the tx commits, this row will exist; if it
+			// rolls back (the correct behaviour), it won't.
+			sibling := &models.AccessCampaignSchedule{
+				ID:            "01H00000000000000SCHEDSIB01",
+				WorkspaceID:   "01H000000000000000WORKSPACE",
+				Name:          "sibling",
+				FrequencyDays: 90,
+				NextRunAt:     now,
+				IsActive:      true,
+				CreatedAt:     now,
+				UpdatedAt:     now,
+			}
+			_ = tx.Create(sibling).Error
+		},
+	}
+
+	s := NewCampaignScheduler(db, starter)
+	s.SetClock(func() time.Time { return now })
+	if err := s.Run(context.Background()); err == nil {
+		t.Fatal("Run returned nil; want non-nil")
+	}
+
+	// 1. NextRunAt must be unchanged — same invariant as the
+	//    "preserves NextRunAt" test, but the point here is that
+	//    it holds even though StartCampaignTx wrote through tx.
+	var got models.AccessCampaignSchedule
+	if err := db.Where("id = ?", "01H00000000000000SCHED0001").First(&got).Error; err != nil {
+		t.Fatalf("read-back: %v", err)
+	}
+	if !got.NextRunAt.Equal(originalNext) {
+		t.Fatalf("NextRunAt = %v; want unchanged %v (rollback failed)", got.NextRunAt, originalNext)
+	}
+
+	// 2. The sibling insert StartCampaignTx made through the
+	//    shared tx must NOT be present — if it is, the bump and
+	//    the campaign insert would have committed together and
+	//    we'd double-fire on the next Run.
+	var sibling models.AccessCampaignSchedule
+	err := db.Where("id = ?", "01H00000000000000SCHEDSIB01").First(&sibling).Error
+	if err == nil {
+		t.Fatal("sibling row was committed; tx did not roll back")
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("unexpected error reading sibling: %v", err)
 	}
 }
 

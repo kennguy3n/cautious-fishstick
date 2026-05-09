@@ -26,8 +26,13 @@ import (
 //   - FrequencyDays is the cadence between runs. Operator-friendly
 //     unit (admins set "every 90 days", not "every 7776000 seconds").
 //   - NextRunAt is the timestamp the scheduler compares against the
-//     wall clock. Updated atomically with the new AccessReview row so
-//     a transient scheduler crash cannot double-fire a campaign.
+//     wall clock. The Phase 5 CampaignScheduler updates this column
+//     in the SAME database transaction that inserts the new
+//     AccessReview row (see cron.CampaignScheduler.runOne and
+//     access.AccessReviewService.StartCampaignTx) so a crash or DB
+//     error between the two writes rolls back BOTH — never just one.
+//     This is what guarantees a transient scheduler crash cannot
+//     double-fire a campaign.
 //   - IsActive is a soft-disable knob; operators can pause a schedule
 //     without deleting it (and losing the historical NextRunAt).
 //   - DeletedAt is the GORM soft-delete column.
