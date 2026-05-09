@@ -29,7 +29,7 @@ func openTestDB(t *testing.T) *gorm.DB {
 // catches "added the file but forgot to wire it into All()" wiring bugs.
 func TestAll_ReturnsAllMigrations(t *testing.T) {
 	got := All()
-	want := []string{"001", "002", "003", "004", "005"}
+	want := []string{"001", "002", "003", "004", "005", "006", "007"}
 	if len(got) != len(want) {
 		t.Fatalf("All() returned %d migrations; want %d", len(got), len(want))
 	}
@@ -70,6 +70,8 @@ func TestRunAll_AutoMigratesEveryTable(t *testing.T) {
 		"access_reviews",
 		"access_review_decisions",
 		"access_campaign_schedules",
+		"access_sync_state",
+		"access_jobs",
 	}
 	mig := db.Migrator()
 	for _, table := range wantTables {
@@ -183,6 +185,44 @@ func TestMigration005_RejectsNilDB(t *testing.T) {
 	}
 }
 
+// TestMigration006_IsIdempotent asserts that running the Phase 6
+// access_sync_state migration a second time is a no-op.
+func TestMigration006_IsIdempotent(t *testing.T) {
+	db := openTestDB(t)
+	if err := Migration006CreateAccessSyncState(db); err != nil {
+		t.Fatalf("first run of migration 006 failed: %v", err)
+	}
+	if err := Migration006CreateAccessSyncState(db); err != nil {
+		t.Fatalf("second run of migration 006 was not idempotent: %v", err)
+	}
+}
+
+// TestMigration006_RejectsNilDB exercises the defensive guard.
+func TestMigration006_RejectsNilDB(t *testing.T) {
+	if err := Migration006CreateAccessSyncState(nil); err == nil {
+		t.Fatal("expected error for nil db, got nil")
+	}
+}
+
+// TestMigration007_IsIdempotent asserts that running the Phase 6
+// access_jobs migration a second time is a no-op.
+func TestMigration007_IsIdempotent(t *testing.T) {
+	db := openTestDB(t)
+	if err := Migration007CreateAccessJobs(db); err != nil {
+		t.Fatalf("first run of migration 007 failed: %v", err)
+	}
+	if err := Migration007CreateAccessJobs(db); err != nil {
+		t.Fatalf("second run of migration 007 was not idempotent: %v", err)
+	}
+}
+
+// TestMigration007_RejectsNilDB exercises the defensive guard.
+func TestMigration007_RejectsNilDB(t *testing.T) {
+	if err := Migration007CreateAccessJobs(nil); err == nil {
+		t.Fatal("expected error for nil db, got nil")
+	}
+}
+
 // TestModelTableNames pins the TableName() overrides so accidental renames
 // surface as a unit-test failure instead of an at-runtime migration mismatch.
 func TestModelTableNames(t *testing.T) {
@@ -202,6 +242,8 @@ func TestModelTableNames(t *testing.T) {
 		{"access_review", (models.AccessReview{}).TableName(), "access_reviews"},
 		{"access_review_decision", (models.AccessReviewDecision{}).TableName(), "access_review_decisions"},
 		{"access_campaign_schedule", (models.AccessCampaignSchedule{}).TableName(), "access_campaign_schedules"},
+		{"access_sync_state", (models.AccessSyncState{}).TableName(), "access_sync_state"},
+		{"access_job", (models.AccessJob{}).TableName(), "access_jobs"},
 	}
 	for _, tc := range cases {
 		if tc.got != tc.want {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"gorm.io/datatypes"
@@ -41,12 +42,37 @@ type PolicyService struct {
 	// disables AI scoring; the report is persisted exactly as the
 	// resolver + conflict detector built it.
 	riskAssessor RiskAssessor
+	// zitiWriter is the optional Phase 3+ OpenZiti hook. When set,
+	// Promote calls WriteServicePolicy AFTER the DB transaction has
+	// committed so a slow Ziti controller does not pin a row-level
+	// lock for the duration of the upstream RTT. nil means no Ziti
+	// integration in this repo — the ZTNA business layer is
+	// responsible for materialising the ServicePolicy in OpenZiti.
+	// CreateDraft and Simulate NEVER call this hook (Phase 3 exit
+	// criterion: drafts must not create OpenZiti ServicePolicy).
+	zitiWriter OpenZitiPolicyWriter
 	// now is overridable in tests so we can pin CreatedAt / PromotedAt
 	// timestamps in assertions. Defaults to time.Now in NewPolicyService.
 	now func() time.Time
 	// newID is overridable in tests so we can pin generated IDs.
 	// Defaults to a Crockford-base32 ULID in NewPolicyService.
 	newID func() string
+}
+
+// OpenZitiPolicyWriter is the narrow contract PolicyService.Promote
+// uses to materialise a promoted policy as an OpenZiti ServicePolicy.
+// The default PolicyService leaves this nil — in that case Promote
+// only flips the DB state and the ZTNA business layer is responsible
+// for the Ziti write. When set (typically at boot in cmd/ztna-api),
+// Promote calls WriteServicePolicy AFTER committing the DB
+// transaction. CreateDraft and Simulate NEVER call this hook.
+//
+// WriteServicePolicy is best-effort: a failure logs a warning but
+// does NOT roll back the promotion, mirroring PHASES Phase 5
+// notification semantics (the source of truth is the DB; downstream
+// effects converge eventually).
+type OpenZitiPolicyWriter interface {
+	WriteServicePolicy(ctx context.Context, policy *models.Policy) error
 }
 
 // NewPolicyService returns a new service backed by db. db must not be
@@ -61,6 +87,15 @@ func NewPolicyService(db *gorm.DB) *PolicyService {
 		now:              time.Now,
 		newID:            newULID,
 	}
+}
+
+// SetOpenZitiPolicyWriter wires a writer onto the service. Promote
+// calls writer.WriteServicePolicy AFTER the DB transaction has
+// committed; passing nil restores the default "no Ziti integration in
+// this repo" behaviour. Call this once at boot from cmd/ztna-api;
+// it is NOT safe to call concurrently with Promote.
+func (s *PolicyService) SetOpenZitiPolicyWriter(w OpenZitiPolicyWriter) {
+	s.zitiWriter = w
 }
 
 // SetRiskAssessor wires an AI-driven risk assessor onto the service.
@@ -368,6 +403,16 @@ func (s *PolicyService) Promote(ctx context.Context, workspaceID, policyID, acto
 	})
 	if err != nil {
 		return nil, err
+	}
+	// Materialise the promoted policy as an OpenZiti ServicePolicy
+	// AFTER commit. Best-effort: a Ziti failure logs but does not
+	// roll back the promotion (the DB row is the source of truth;
+	// the ZTNA business layer reconciles eventually). CreateDraft
+	// and Simulate NEVER reach this branch — Phase 3 exit criterion.
+	if s.zitiWriter != nil {
+		if err := s.zitiWriter.WriteServicePolicy(ctx, &promoted); err != nil {
+			log.Printf("access: policy %s: openziti write failed: %v", promoted.ID, err)
+		}
 	}
 	return &promoted, nil
 }

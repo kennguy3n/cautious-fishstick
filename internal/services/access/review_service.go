@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/kennguy3n/cautious-fishstick/internal/models"
+	"github.com/kennguy3n/cautious-fishstick/internal/pkg/aiclient"
 )
 
 // AccessReviewService is the service layer for the access_reviews and
@@ -41,6 +42,7 @@ type AccessReviewService struct {
 	provisioningSvc *AccessProvisioningService
 	notifier       ReviewNotifier
 	resolver       ReviewerResolver
+	automator      ReviewAutomator
 	now            func() time.Time
 	newID          func() string
 }
@@ -108,6 +110,20 @@ func NewAccessReviewService(db *gorm.DB, provisioningSvc *AccessProvisioningServ
 func (s *AccessReviewService) SetNotifier(notifier ReviewNotifier, resolver ReviewerResolver) {
 	s.notifier = notifier
 	s.resolver = resolver
+}
+
+// SetReviewAutomator wires a ReviewAutomator onto the service.
+// Passing nil disables AI-driven auto-certification — every decision
+// stays in pending state for human review. Mirrors the SetNotifier
+// pattern: the setter exists instead of constructor injection so the
+// existing NewAccessReviewService signature stays stable while Phase
+// 5 adds the optional auto-certification path.
+//
+// Per docs/PHASES.md Phase 5 the wire-in is best-effort: an
+// unreachable AI agent leaves every decision pending and the
+// campaign proceeds normally.
+func (s *AccessReviewService) SetReviewAutomator(automator ReviewAutomator) {
+	s.automator = automator
 }
 
 // StartCampaignInput is the input contract for StartCampaign.
@@ -189,10 +205,17 @@ func (s *AccessReviewService) StartCampaign(ctx context.Context, in StartCampaig
 	if err != nil {
 		return nil, nil, err
 	}
+	// AI-driven auto-certification AFTER commit but BEFORE
+	// notifications. Auto-certified rows are flipped to
+	// decision=certify so the notification fan-out only pings
+	// reviewers about the rows that still need human attention.
+	// Per PHASES Phase 5 the wire-in is best-effort: an
+	// unreachable AI leaves every row pending.
+	decisions = s.applyAutoCertification(ctx, review, decisions)
 	// Fan-out notifications AFTER commit. Per PHASES Phase 5
 	// notifications are best-effort: any error here is logged
 	// inside dispatchPendingNotifications and never returned.
-	s.dispatchPendingNotifications(ctx, review, decisions)
+	s.dispatchPendingNotifications(ctx, review, filterPendingDecisions(decisions))
 	return review, decisions, nil
 }
 
@@ -219,6 +242,121 @@ func (s *AccessReviewService) dispatchPendingNotifications(
 	if err := s.notifier.NotifyReviewersPending(ctx, review.ID, refs); err != nil {
 		log.Printf("access: review %s: notify reviewers failed: %v", review.ID, err)
 	}
+}
+
+// applyAutoCertification dispatches each pending decision through
+// the configured ReviewAutomator and flips matching rows to
+// decision=certify, auto_certified=true, decided_at=now. Decisions
+// the AI flags as escalate / revoke / unknown are left pending for
+// human review.
+//
+// The function is a no-op (returning decisions unmodified) when:
+//
+//   - the review is nil, has zero pending decisions, or is not in
+//     open state;
+//   - AutoCertifyEnabled is false on the review;
+//   - no automator is configured.
+//
+// Each row update is best-effort: a failed UPDATE is logged but does
+// not abort the loop. The campaign proceeds with whatever subset of
+// rows were successfully auto-certified.
+//
+// Per docs/PHASES.md Phase 5: AI is decision-support, not critical
+// path. AI failures (transport / decode / unrecognised verdict) are
+// logged inside AutomateReviewWithFallback and surface here as
+// ok=false; we leave the row pending in that case.
+func (s *AccessReviewService) applyAutoCertification(
+	ctx context.Context,
+	review *models.AccessReview,
+	decisions []models.AccessReviewDecision,
+) []models.AccessReviewDecision {
+	if review == nil || len(decisions) == 0 {
+		return decisions
+	}
+	if review.State != models.ReviewStateOpen || !review.AutoCertifyEnabled {
+		return decisions
+	}
+	if s.automator == nil {
+		return decisions
+	}
+
+	for i := range decisions {
+		d := &decisions[i]
+		if d.Decision != models.DecisionPending {
+			continue
+		}
+		var grant models.AccessGrant
+		if err := s.db.WithContext(ctx).Where("id = ?", d.GrantID).First(&grant).Error; err != nil {
+			log.Printf("access: review %s: load grant %s for auto-cert: %v", review.ID, d.GrantID, err)
+			continue
+		}
+		payload := aiclient.ReviewAutomationPayload{
+			GrantID:   grant.ID,
+			UserID:    grant.UserID,
+			Role:      grant.Role,
+			Resource:  grant.ResourceExternalID,
+			UsageData: snapshotGrantUsage(grant, s.now()),
+		}
+		verdict, reason, ok := s.automator.AutomateReview(ctx, payload)
+		if !ok {
+			// AI unreachable / unconfigured / returned an
+			// unrecognised verdict; leave the row pending.
+			continue
+		}
+		if verdict != models.DecisionCertify {
+			// escalate / revoke verdicts route to human review;
+			// the row stays pending so reviewers see it. Phase
+			// 6+ may want to flip to escalate state directly,
+			// but Phase 5 keeps the human in the loop for
+			// anything other than certify.
+			continue
+		}
+
+		now := s.now()
+		updates := map[string]interface{}{
+			"decision":       models.DecisionCertify,
+			"auto_certified": true,
+			"reason":         reason,
+			"decided_at":     now,
+			"updated_at":     now,
+		}
+		result := s.db.WithContext(ctx).
+			Model(&models.AccessReviewDecision{}).
+			Where("id = ? AND decision = ?", d.ID, models.DecisionPending).
+			Updates(updates)
+		if result.Error != nil {
+			log.Printf("access: review %s: update auto-cert decision %s: %v", review.ID, d.ID, result.Error)
+			continue
+		}
+		if result.RowsAffected == 0 {
+			// A reviewer beat us to it (raced submitting a
+			// decision between StartCampaign commit and the
+			// auto-cert pass). Leave the row as the human
+			// recorded it.
+			continue
+		}
+		d.Decision = models.DecisionCertify
+		d.AutoCertified = true
+		d.Reason = reason
+		decidedAt := now
+		d.DecidedAt = &decidedAt
+		d.UpdatedAt = now
+	}
+	return decisions
+}
+
+// filterPendingDecisions returns a slice containing only the rows
+// from decisions whose Decision is still "pending". Used to scope
+// the post-commit reviewer notification fan-out so reviewers are not
+// pinged about rows the AI auto-certified.
+func filterPendingDecisions(decisions []models.AccessReviewDecision) []models.AccessReviewDecision {
+	out := make([]models.AccessReviewDecision, 0, len(decisions))
+	for _, d := range decisions {
+		if d.Decision == models.DecisionPending {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // StartCampaignTx is the transaction-aware variant of StartCampaign.
