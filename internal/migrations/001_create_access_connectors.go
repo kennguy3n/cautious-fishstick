@@ -52,5 +52,6 @@ func All() []Migration {
 			Name: "create_access_connectors",
 			Up:   Migration001CreateAccessConnectors,
 		},
+		migration002,
 	}
 }

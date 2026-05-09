@@ -114,6 +114,13 @@ Reference points:
 - Optional capability interfaces: `internal/services/access/optional_interfaces.go` (implemented).
 - Mock + registry-swap test helper: `internal/services/access/testing.go` (implemented).
 - Phase 0–1 Tier 1 connectors (all 10 implemented — minimum capabilities): `internal/services/access/connectors/microsoft/`, `internal/services/access/connectors/google_workspace/`, `internal/services/access/connectors/okta/`, `internal/services/access/connectors/auth0/`, `internal/services/access/connectors/generic_saml/`, `internal/services/access/connectors/generic_oidc/`, `internal/services/access/connectors/duo/`, `internal/services/access/connectors/onepassword/`, `internal/services/access/connectors/lastpass/`, `internal/services/access/connectors/ping_identity/`.
+- Phase 2 request lifecycle (implemented):
+  - Request lifecycle FSM: `internal/services/access/request_state_machine.go` (pure logic, mirrors `ztna-business-layer/internal/state_machine/`).
+  - `AccessRequestService` (`CreateRequest` / `ApproveRequest` / `DenyRequest` / `CancelRequest`, transactional state-history): `internal/services/access/request_service.go`.
+  - `AccessProvisioningService` (`Provision` / `Revoke`, connector-backed, with `provision_failed` retry path): `internal/services/access/provisioning_service.go`.
+  - `WorkflowService` (`ResolveWorkflow` + `ExecuteWorkflow` for self-service / manager-approval): `internal/services/access/workflow_service.go`.
+  - Models: `internal/models/access_request.go`, `internal/models/access_request_state_history.go`, `internal/models/access_grant.go`, `internal/models/access_workflow.go`.
+  - Migration: `internal/migrations/002_create_access_request_tables.go`.
 - Service entry: `internal/services/access/service.go` (target; parallels `shieldnet360-backend/internal/services/integration/service.go:188-262`).
 
 ---

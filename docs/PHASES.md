@@ -10,7 +10,7 @@ A phase is **shippable** only when *all* of its exit criteria are demonstrably m
 | 🟡 partial | Some exit criteria met; gaps tracked in `PROGRESS.md` |
 | ⏳ planned | Not yet started |
 
-> **Phase 0 is `✅ shipped`; Phase 1 is `🟡 partial`** (10 of 10 connectors landed with minimum capabilities; Admin UI + Keycloak federation exit criteria still open). Later phases remain `⏳ planned`. As phases land, flip the marker and move the supporting status row in `PROGRESS.md`.
+> **Phase 0 is `✅ shipped`; Phase 1 is `🟡 partial`** (10 of 10 connectors landed with minimum capabilities; Admin UI + Keycloak federation exit criteria still open). **Phase 2 is `🟡 partial`** — the four request-lifecycle tables, request state machine, and the request / provisioning / workflow services have landed; Admin UI / Mobile SDK / Desktop Extension exit criteria remain open. Later phases remain `⏳ planned`. As phases land, flip the marker and move the supporting status row in `PROGRESS.md`.
 
 ---
 
@@ -55,18 +55,18 @@ A phase is **shippable** only when *all* of its exit criteria are demonstrably m
 
 ---
 
-## Phase 2 — Access request workflow  ⏳
+## Phase 2 — Access request workflow  🟡 partial
 
 **Scope.** Basic access request lifecycle without AI in the path. Self-service and manager approval only.
 
 **Exit criteria.**
 
-- [ ] `access_requests`, `access_request_state_history`, `access_grants`, `access_workflows` tables and migrations.
-- [ ] `AccessRequestService` with `CreateRequest`, `ApproveRequest`, `DenyRequest`, `CancelRequest`.
-- [ ] `AccessProvisioningService` with connector-based `ProvisionAccess` / `RevokeAccess`.
-- [ ] State machine for the request lifecycle (`requested → approved → provisioning → provisioned → active → revoked`), implemented in the pattern of `ztna-business-layer/internal/state_machine/`.
-- [ ] Self-service workflow (auto-approve when an active policy match exists).
-- [ ] Manager approval workflow (single-step, manager resolved through manager-link pass).
+- [x] `access_requests`, `access_request_state_history`, `access_grants`, `access_workflows` tables and migrations (`internal/migrations/002_create_access_request_tables.go`).
+- [x] `AccessRequestService` with `CreateRequest`, `ApproveRequest`, `DenyRequest`, `CancelRequest` (`internal/services/access/request_service.go`).
+- [x] `AccessProvisioningService` with connector-based `ProvisionAccess` / `RevokeAccess` (`internal/services/access/provisioning_service.go`).
+- [x] State machine for the request lifecycle (`requested → approved → provisioning → provisioned → active → revoked`), implemented in the pattern of `ztna-business-layer/internal/state_machine/` (`internal/services/access/request_state_machine.go`).
+- [x] Self-service workflow (auto-approve when an active policy match exists) (`internal/services/access/workflow_service.go`).
+- [x] Manager approval workflow (single-step, manager resolved through manager-link pass) (`internal/services/access/workflow_service.go`).
 - [ ] Admin UI: access request management page (list / approve / deny / view audit trail).
 - [ ] Mobile SDK: access request API contract defined and published to the internal package registry.
 - [ ] Desktop Extension: access request IPC contract defined and published as an internal npm package.
