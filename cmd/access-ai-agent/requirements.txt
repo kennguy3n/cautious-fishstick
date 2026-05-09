@@ -1,0 +1,6 @@
+# Phase 4 access-ai-agent dependencies.
+#
+# The Phase 4 server is implemented against the Python stdlib only
+# (http.server + json) so the deployment surface is minimal. pytest
+# is the only third-party dependency, used for the test suite.
+pytest>=8,<9

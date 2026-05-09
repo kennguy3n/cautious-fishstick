@@ -33,6 +33,8 @@ import (
 //
 //   - access_risk_assessment    → RiskScore + RiskFactors
 //   - access_review_automation  → Decision + Reason
+//   - access_anomaly_detection  → Anomalies (slice of structured
+//     observations on a single grant's recent usage)
 //   - policy_recommendation     → Explanation (+ RiskFactors when
 //     surfacing rationale)
 //
@@ -40,11 +42,38 @@ import (
 // (encoding/json default) so server-side schema additions don't break
 // existing Go callers.
 type SkillResponse struct {
-	RiskScore   string   `json:"risk_score,omitempty"`
-	RiskFactors []string `json:"risk_factors,omitempty"`
-	Decision    string   `json:"decision,omitempty"`
-	Reason      string   `json:"reason,omitempty"`
-	Explanation string   `json:"explanation,omitempty"`
+	RiskScore   string         `json:"risk_score,omitempty"`
+	RiskFactors []string       `json:"risk_factors,omitempty"`
+	Decision    string         `json:"decision,omitempty"`
+	Reason      string         `json:"reason,omitempty"`
+	Explanation string         `json:"explanation,omitempty"`
+	Anomalies   []AnomalyEvent `json:"anomalies,omitempty"`
+}
+
+// AnomalyEvent is one entry in the access_anomaly_detection response.
+// Each event carries a kind (taxonomy below), a free-text reason
+// the AI agent generated, a severity bucket, and a confidence score
+// in [0.0, 1.0].
+//
+// Severity uses the same low/medium/high vocabulary as risk score
+// so the admin UI can render a unified "trust signal" badge across
+// risk + anomaly streams. Confidence is informative only — callers
+// SHOULD treat all surfaced anomalies as potentially actionable
+// regardless of confidence.
+type AnomalyEvent struct {
+	// Kind taxonomies the anomaly. Phase 6 stub values:
+	//   "geo_unusual"           – grant used from an unusual region
+	//   "time_unusual"          – grant used at unusual hours
+	//   "frequency_spike"       – usage frequency outside baseline
+	//   "scope_expansion"       – grant role widened beyond baseline
+	//   "stale_grant"           – grant unused for an extended window
+	Kind string `json:"kind"`
+	// Reason is a short human-readable summary the admin UI surfaces.
+	Reason string `json:"reason,omitempty"`
+	// Severity is one of "low", "medium", "high".
+	Severity string `json:"severity,omitempty"`
+	// Confidence is the AI's self-reported confidence in [0.0, 1.0].
+	Confidence float64 `json:"confidence,omitempty"`
 }
 
 // AIClient is the thin HTTP wrapper around the access-ai-agent
@@ -196,4 +225,41 @@ func truncateBody(b []byte) string {
 		return string(b)
 	}
 	return string(b[:maxLen]) + "..."
+}
+
+// AnomalyDetectionPayload is the canonical request shape for the
+// access_anomaly_detection skill. The Go service layer marshals
+// one of these per grant into a /a2a/invoke call and the Python
+// agent returns SkillResponse.Anomalies.
+//
+// UsageData is intentionally typed as map[string]interface{} so
+// the service layer can pass through whatever recent-usage
+// observations it has (sign-in counts, geo histogram, last-seen
+// timestamp, etc.) without locking the schema in Go.
+type AnomalyDetectionPayload struct {
+	GrantID   string                 `json:"grant_id"`
+	UserID    string                 `json:"user_id,omitempty"`
+	Role      string                 `json:"role,omitempty"`
+	Resource  string                 `json:"resource_external_id,omitempty"`
+	UsageData map[string]interface{} `json:"usage_data,omitempty"`
+}
+
+// DetectAnomalies posts an AnomalyDetectionPayload to the
+// access_anomaly_detection skill and returns the (possibly empty)
+// AnomalyEvent slice from the response. Failure modes mirror
+// InvokeSkill — callers wrap with DetectAnomaliesWithFallback to
+// get the PROPOSAL §5.3 fallback (empty list on unreachable AI).
+func (c *AIClient) DetectAnomalies(ctx context.Context, grantID string, usageData map[string]interface{}) ([]AnomalyEvent, error) {
+	payload := AnomalyDetectionPayload{
+		GrantID:   grantID,
+		UsageData: usageData,
+	}
+	resp, err := c.InvokeSkill(ctx, "access_anomaly_detection", payload)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, nil
+	}
+	return resp.Anomalies, nil
 }

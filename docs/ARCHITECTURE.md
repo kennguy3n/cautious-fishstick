@@ -417,12 +417,17 @@ Auto-certification rate is observable as a campaign-level metric. Operators can 
 | `AccessCampaignSchedule` recurring-campaign model | `internal/models/access_campaign_schedule.go` |
 | Migration (creates `access_reviews`, `access_review_decisions`) | `internal/migrations/004_create_access_review_tables.go` |
 | Migration (creates `access_campaign_schedules`) | `internal/migrations/005_create_access_campaign_schedules.go` |
-| `AccessReviewService` (`StartCampaign` / `SubmitDecision` / `CloseCampaign` / `AutoRevoke`) | `internal/services/access/review_service.go` |
-| HTTP handlers (`POST /access/reviews`, `POST /access/reviews/:id/decisions|close|auto-revoke`) | `internal/handlers/access_review_handler.go` |
+| `AccessReviewService` (`StartCampaign` / `SubmitDecision` / `CloseCampaign` / `AutoRevoke` / `GetCampaignMetrics` / `SetAutoCertifyEnabled`) | `internal/services/access/review_service.go` |
+| HTTP handlers (`POST /access/reviews`, `POST /access/reviews/:id/decisions|close|auto-revoke`, `GET /access/reviews/:id/metrics`, `PATCH /access/reviews/:id`) | `internal/handlers/access_review_handler.go` |
 | Cron worker driving scheduled campaigns | `internal/cron/campaign_scheduler.go` |
+| `NotificationService` (best-effort fan-out) | `internal/services/notification/service.go` |
+| `Notifier` interface + `InMemoryNotifier` for dev / tests | `internal/services/notification/service.go` |
+| `ReviewNotifier` adapter wrapping `NotificationService` | `internal/services/access/notification_adapter.go` |
 | Composes `AccessProvisioningService` to revoke grants | `internal/services/access/provisioning_service.go` |
 
-The AI auto-certification path in the sequence diagram above (steps 4–7) is **not** implemented in this repo — `AccessReview.AutoCertifyEnabled` is wired through and the agent will flip pending → certify on its own schedule. `SubmitDecision` decouples DB writes from the upstream `Revoke` call (decision row commits first, then the connector revoke runs); `AutoRevoke` is the idempotent catch-up that reconciles revoke decisions whose upstream side-effect has not yet executed.
+The AI auto-certification path in the sequence diagram above (steps 4–7) is **not yet wired** — the Python `access_review_automation` skill stub now ships under `cmd/access-ai-agent/skills/access_review_automation.py` but the Go-side wire-in that flips pending → certify is still ⏳. `SubmitDecision` decouples DB writes from the upstream `Revoke` call (decision row commits first, then the connector revoke runs); `AutoRevoke` is the idempotent catch-up that reconciles revoke decisions whose upstream side-effect has not yet executed.
+
+The Phase 5 notification scaffold is already exercised: `AccessReviewService.SetNotifier(notifier, resolver)` accepts a `ReviewNotifier` (the access package's narrow contract that the `notification.NotificationService` adapter satisfies) plus a `ReviewerResolver` that maps committed decisions onto reviewer-user-IDs. `StartCampaign` resolves and dispatches **after the transaction commits**; any error from either step is logged and never rolled back per PHASES Phase 5.
 
 ---
 
@@ -468,6 +473,24 @@ sequenceDiagram
 ```
 
 Mover events are the trickiest: the diff between old and new Team membership is computed against the **post-update** SCIM state, and the revoke / provision steps run as a single atomic batch so the user never sees a partial-access window.
+
+### Phase 6 reference points (current backend implementation)
+
+| Concern | File |
+|---------|------|
+| `JMLService` (`ClassifyChange` / `HandleJoiner` / `HandleMover` / `HandleLeaver`) | `internal/services/access/jml_service.go` |
+| Inbound SCIM HTTP handler (`POST /scim/Users`, `PATCH /scim/Users/:id`, `DELETE /scim/Users/:id`) | `internal/handlers/scim_handler.go` |
+| Outbound SCIM v2.0 client (`SCIMClient.PushSCIMUser` / `PushSCIMGroup` / `DeleteSCIMResource`) | `internal/services/access/scim_provisioner.go` |
+| SCIM sentinel errors (`ErrSCIMRemoteConflict` / `ErrSCIMRemoteNotFound` / `ErrSCIMRemoteUnauthorized` / `ErrSCIMRemoteServer` / `ErrSCIMConfigInvalid`) | `internal/services/access/scim_provisioner.go` |
+| Go-side anomaly stub (`AIClient.DetectAnomalies` + `DetectAnomaliesWithFallback`) | `internal/pkg/aiclient/client.go`, `internal/pkg/aiclient/fallback.go` |
+| `AnomalyDetectionService.ScanWorkspace` | `internal/services/access/anomaly_service.go` |
+| `SCIMProvisioner` optional interface (composed by per-connector implementations) | `internal/services/access/optional_interfaces.go` |
+| `SCIMUser` / `SCIMGroup` resource shapes | `internal/services/access/scim_provisioner.go` |
+| Composes `AccessRequestService` + `AccessProvisioningService` for joiner / mover / leaver | `internal/services/access/jml_service.go` |
+
+The leaver flow's "disable user identity" step (the OZ leg in the sequence diagram) is **not yet wired** — `HandleLeaver` revokes every active grant and removes Team memberships but the OpenZiti identity is left enrolled until the per-connector `RevokeIdentity` paths land.
+
+The outbound SCIM client treats 404-on-DELETE as idempotent success and maps 409 / 401 / 403 / 5xx onto sentinel errors; per-connector composition (e.g. `okta`, `onepassword`) is the next step — the underlying client is generic over `BaseURL` + `AuthHeader` + `Timeout`.
 
 ---
 

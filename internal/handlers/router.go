@@ -36,6 +36,18 @@ type Dependencies struct {
 	// be nil in dev / test where the AI agent is intentionally not
 	// configured; the handlers return 503 with a structured error.
 	AIService AIInvoker
+
+	// JMLService backs the /scim/Users endpoints (Phase 6 inbound
+	// SCIM). When nil the SCIM endpoints are not registered — a
+	// dev binary without a JML service stays healthy without
+	// surfacing dummy 503s on every SCIM probe.
+	JMLService *access.JMLService
+
+	// SCIMResolver backs the /scim/Users endpoints alongside
+	// JMLService. Required if JMLService is non-nil. The resolver
+	// translates inbound SCIM payloads into the JML service's
+	// JoinerInput / MoverInput / leaver tuples.
+	SCIMResolver SCIMUserResolver
 }
 
 // Router builds the *gin.Engine that serves the access platform's
@@ -75,6 +87,11 @@ func Router(deps Dependencies) *gin.Engine {
 	// handler itself rather than a 404.
 	aih := NewAIHandler(deps.AIService)
 	aih.Register(r)
+
+	if deps.JMLService != nil && deps.SCIMResolver != nil {
+		sh := NewSCIMHandler(deps.JMLService, deps.SCIMResolver)
+		sh.Register(r)
+	}
 
 	return r
 }
