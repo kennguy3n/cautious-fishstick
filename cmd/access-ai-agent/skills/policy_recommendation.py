@@ -83,10 +83,19 @@ def run(payload: Dict[str, Any]) -> Dict[str, Any]:
         for tmpl in templates:
             rec = dict(tmpl)
             # Personalise to the actual team name when present.
+            # Templates use mixed prefix styles ("Engineering ->" vs.
+            # "SRE -> ..."), so we cannot reconstruct the prefix from
+            # ``kind.title()`` (that only handles single-word title
+            # case and silently no-ops for acronyms like "SRE"). Split
+            # on the canonical " -> " separator instead, which works
+            # for any prefix style and is forwards-compatible with
+            # future template names.
             name = t.get("name")
             if isinstance(name, str) and name:
                 rec["subject_team"] = name
-                rec["name"] = rec["name"].replace(f"{kind.title()} ->", f"{name} ->")
+                _, sep, suffix = rec["name"].partition(" -> ")
+                if sep:
+                    rec["name"] = f"{name} -> {suffix}"
             recs.append(rec)
         if templates:
             explanations.append(f"team {t.get('name')!r} kind={kind!r}: {len(templates)} templates")
