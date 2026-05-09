@@ -56,6 +56,14 @@ type M365AccessConnector struct {
 	// httpClientFor lets tests override the OAuth2-aware HTTP client.
 	// Production paths leave this nil and use the default OAuth2 builder.
 	httpClientFor func(ctx context.Context, cfg Config, secrets Secrets) httpDoer
+	// scimBearerTokenFor lets the SCIM composition skip the OAuth2
+	// dance in tests and return a static token instead. Production
+	// paths leave this nil and acquire a token via the
+	// client-credentials flow.
+	scimBearerTokenFor func(ctx context.Context, cfg Config, secrets Secrets) (string, error)
+	// scimURLOverride redirects the SCIM endpoint base URL to a
+	// local httptest.Server for tests. Empty in production.
+	scimURLOverride string
 }
 
 // New returns a fresh connector instance.

@@ -50,6 +50,14 @@ type httpDoer interface {
 // access.GroupSyncer for Google Workspace.
 type GoogleWorkspaceAccessConnector struct {
 	httpClientFor func(ctx context.Context, cfg Config, secrets Secrets) (httpDoer, error)
+	// scimBearerTokenFor lets the SCIM composition skip the JWT
+	// dance in tests and return a static token. Production paths
+	// leave this nil and acquire a token via the service-account
+	// JWT flow.
+	scimBearerTokenFor func(ctx context.Context, cfg Config, secrets Secrets) (string, error)
+	// scimURLOverride redirects the SCIM endpoint base URL to a
+	// local httptest.Server for tests.
+	scimURLOverride string
 }
 
 // New constructs a fresh connector instance.
