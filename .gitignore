@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+
+# Go
+*.test
+*.out
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store

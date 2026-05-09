@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"gorm.io/datatypes"
@@ -38,8 +39,43 @@ import (
 type AccessReviewService struct {
 	db             *gorm.DB
 	provisioningSvc *AccessProvisioningService
+	notifier       ReviewNotifier
+	resolver       ReviewerResolver
 	now            func() time.Time
 	newID          func() string
+}
+
+// ReviewNotifier is the narrow contract AccessReviewService uses to
+// fan out "you have pending decisions" notifications. The concrete
+// notification.NotificationService satisfies it via a small adapter
+// (see notification_adapter.go).
+//
+// Per docs/PHASES.md Phase 5 exit criteria notifications are
+// best-effort — implementations MUST NOT roll back the underlying
+// campaign transaction. The interface returns an error only for
+// observability; the service ignores it.
+type ReviewNotifier interface {
+	NotifyReviewersPending(ctx context.Context, reviewID string, decisions []ReviewerPendingDecisionRef) error
+}
+
+// ReviewerResolver is the narrow contract AccessReviewService uses to
+// look up reviewer assignments per (reviewID, decisions). Phase 5
+// has no formal reviewer assignment model — Phase 6 introduces
+// access_review_assignees. Tests + dev binaries supply a
+// ReviewerResolver stub that returns a fixed reviewer set; callers
+// MAY pass nil to skip notification fan-out entirely.
+type ReviewerResolver interface {
+	ResolveReviewers(ctx context.Context, reviewID string, decisions []models.AccessReviewDecision) ([]ReviewerPendingDecisionRef, error)
+}
+
+// ReviewerPendingDecisionRef is the per-(reviewer, grant) tuple the
+// review service hands to the notifier. The struct is named "ref"
+// to make it obvious it is a wire shape, not a persisted row.
+type ReviewerPendingDecisionRef struct {
+	ReviewerUserID string
+	GrantID        string
+	GrantSummary   string
+	DueAt          time.Time
 }
 
 // NewAccessReviewService returns a service backed by db and the
@@ -60,6 +96,18 @@ func NewAccessReviewService(db *gorm.DB, provisioningSvc *AccessProvisioningServ
 		now:             now,
 		newID:           id,
 	}
+}
+
+// SetNotifier wires a ReviewNotifier + ReviewerResolver into the
+// service. Both must be non-nil for notifications to fire; passing
+// nil for either skips notification fan-out (the dev / test default).
+//
+// The setter exists instead of constructor injection so the existing
+// NewAccessReviewService signature stays stable while Phase 5 adds
+// the optional notification path.
+func (s *AccessReviewService) SetNotifier(notifier ReviewNotifier, resolver ReviewerResolver) {
+	s.notifier = notifier
+	s.resolver = resolver
 }
 
 // StartCampaignInput is the input contract for StartCampaign.
@@ -141,7 +189,36 @@ func (s *AccessReviewService) StartCampaign(ctx context.Context, in StartCampaig
 	if err != nil {
 		return nil, nil, err
 	}
+	// Fan-out notifications AFTER commit. Per PHASES Phase 5
+	// notifications are best-effort: any error here is logged
+	// inside dispatchPendingNotifications and never returned.
+	s.dispatchPendingNotifications(ctx, review, decisions)
 	return review, decisions, nil
+}
+
+// dispatchPendingNotifications resolves reviewers for the supplied
+// decisions and fans out a "pending decisions" notification to each.
+// All failures are logged and swallowed — notifications must NOT
+// roll back the underlying campaign per PHASES Phase 5.
+func (s *AccessReviewService) dispatchPendingNotifications(
+	ctx context.Context,
+	review *models.AccessReview,
+	decisions []models.AccessReviewDecision,
+) {
+	if s.notifier == nil || s.resolver == nil || review == nil || len(decisions) == 0 {
+		return
+	}
+	refs, err := s.resolver.ResolveReviewers(ctx, review.ID, decisions)
+	if err != nil {
+		log.Printf("access: review %s: resolve reviewers failed: %v", review.ID, err)
+		return
+	}
+	if len(refs) == 0 {
+		return
+	}
+	if err := s.notifier.NotifyReviewersPending(ctx, review.ID, refs); err != nil {
+		log.Printf("access: review %s: notify reviewers failed: %v", review.ID, err)
+	}
 }
 
 // StartCampaignTx is the transaction-aware variant of StartCampaign.
@@ -444,6 +521,113 @@ func (s *AccessReviewService) AutoRevoke(ctx context.Context, reviewID string) e
 			}
 			return fmt.Errorf("access: auto-revoke grant %s: %w", grant.ID, err)
 		}
+	}
+	return nil
+}
+
+// CampaignMetrics is the per-review tally surfaced to the admin
+// UI. The struct is the canonical shape both the service and the
+// HTTP handler return.
+//
+// Per docs/PHASES.md Phase 5 exit criteria the platform tracks an
+// auto-certification rate so operators can see the AI agent's
+// signal-to-noise on a real campaign. AutoCertificationRate is in
+// [0.0, 1.0] and is auto_certified / total_decisions. Total of zero
+// surfaces as 0.0 (not NaN) to keep callers free of edge cases.
+type CampaignMetrics struct {
+	ReviewID              string  `json:"review_id"`
+	TotalDecisions        int     `json:"total_decisions"`
+	AutoCertified         int     `json:"auto_certified"`
+	Pending               int     `json:"pending"`
+	Certified             int     `json:"certified"`
+	Revoked               int     `json:"revoked"`
+	Escalated             int     `json:"escalated"`
+	AutoCertificationRate float64 `json:"auto_certification_rate"`
+}
+
+// GetCampaignMetrics tallies the access_review_decisions rows for the
+// supplied review and returns the per-state breakdown plus the
+// auto-certification rate. The method is read-only and never opens
+// a transaction.
+//
+// Decisions in the "certify" bucket are split into "manual certify"
+// vs "auto certify" using the AutoCertified flag — the AI agent sets
+// AutoCertified=true on every row it touches and the rate is
+// auto_certified / total_decisions.
+//
+// Errors:
+//   - ErrValidation   — review_id is empty
+//   - ErrReviewNotFound — review row does not exist
+//   - any other        — DB read failure
+func (s *AccessReviewService) GetCampaignMetrics(ctx context.Context, reviewID string) (*CampaignMetrics, error) {
+	if reviewID == "" {
+		return nil, fmt.Errorf("%w: review_id is required", ErrValidation)
+	}
+	var review models.AccessReview
+	if err := s.db.WithContext(ctx).Where("id = ?", reviewID).First(&review).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%w: %s", ErrReviewNotFound, reviewID)
+		}
+		return nil, fmt.Errorf("access: select access_review: %w", err)
+	}
+
+	var decisions []models.AccessReviewDecision
+	if err := s.db.WithContext(ctx).
+		Where("review_id = ?", reviewID).
+		Find(&decisions).Error; err != nil {
+		return nil, fmt.Errorf("access: list access_review_decisions: %w", err)
+	}
+
+	out := &CampaignMetrics{ReviewID: reviewID, TotalDecisions: len(decisions)}
+	for _, d := range decisions {
+		switch d.Decision {
+		case models.DecisionPending:
+			out.Pending++
+		case models.DecisionCertify:
+			out.Certified++
+			if d.AutoCertified {
+				out.AutoCertified++
+			}
+		case models.DecisionRevoke:
+			out.Revoked++
+		case models.DecisionEscalate:
+			out.Escalated++
+		}
+	}
+	if out.TotalDecisions > 0 {
+		out.AutoCertificationRate = float64(out.AutoCertified) / float64(out.TotalDecisions)
+	}
+	return out, nil
+}
+
+// SetAutoCertifyEnabled flips the access_reviews.auto_certify_enabled
+// column for the supplied review. Returns ErrReviewNotFound when the
+// row does not exist and ErrReviewClosed when the review is closed
+// or cancelled (operators cannot flip auto-certify on a finished
+// campaign — the AI agent has already run).
+func (s *AccessReviewService) SetAutoCertifyEnabled(ctx context.Context, reviewID string, enabled bool) error {
+	if reviewID == "" {
+		return fmt.Errorf("%w: review_id is required", ErrValidation)
+	}
+	var review models.AccessReview
+	if err := s.db.WithContext(ctx).Where("id = ?", reviewID).First(&review).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("%w: %s", ErrReviewNotFound, reviewID)
+		}
+		return fmt.Errorf("access: select access_review: %w", err)
+	}
+	if review.State == models.ReviewStateClosed || review.State == models.ReviewStateCancelled {
+		return fmt.Errorf("%w: %s (state=%s)", ErrReviewClosed, reviewID, review.State)
+	}
+	now := s.now()
+	res := s.db.WithContext(ctx).Model(&models.AccessReview{}).
+		Where("id = ?", reviewID).
+		Updates(map[string]interface{}{
+			"auto_certify_enabled": enabled,
+			"updated_at":           now,
+		})
+	if res.Error != nil {
+		return fmt.Errorf("access: update auto_certify_enabled: %w", res.Error)
 	}
 	return nil
 }

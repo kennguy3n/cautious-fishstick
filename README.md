@@ -1,6 +1,6 @@
 # ShieldNet 360 Access Platform
 
-> **Status:** Phase 0 shipped, Phases 1–5 partial. The `AccessConnector` contract, process-global registry, AES-GCM credential manager, `access_connectors` migration, and **all 10 Tier 1 connectors** are in `main`. **Phase 2** lands the request-lifecycle tables, the request state machine, and the request / provisioning / workflow services PLUS the HTTP handler layer for access requests and grants. **Phase 3** lands the `policies` / `teams` / `team_members` / `resources` tables, `PolicyService`, `ImpactResolver`, `ConflictDetector` PLUS the HTTP handler layer for policy drafts, simulate, promote, and test-access. **Phase 4 (partial)** lands the Go-side A2A AI client (`internal/pkg/aiclient`), env-driven access platform config (`internal/config`), AI risk-scoring integration in `AccessRequestService.CreateRequest` and `PolicyService.Simulate`, and `POST /access/explain` + `POST /access/suggest` endpoints — the Python AI agent skills themselves remain open. **Phase 5** lands the `access_reviews` / `access_review_decisions` / `access_campaign_schedules` tables, `AccessReviewService`, the Phase 5 HTTP handler layer, AND the `internal/cron.CampaignScheduler` driving recurring campaigns. Admin UI, Mobile SDK, Desktop Extension, AI auto-certification, reviewer notifications, and the Phase 1 Admin UI / Keycloak federation exit criteria remain open. See [`docs/PROGRESS.md`](docs/PROGRESS.md) for the per-connector matrix and [`docs/PHASES.md`](docs/PHASES.md) for per-phase exit criteria.
+> **Status:** Phase 0 shipped, Phases 1–6 partial. The `AccessConnector` contract, process-global registry, AES-GCM credential manager, `access_connectors` migration, and **all 10 Tier 1 connectors** are in `main`. **Phase 2** lands the request-lifecycle tables, the request state machine, and the request / provisioning / workflow services PLUS the HTTP handler layer for access requests and grants. **Phase 3** lands the `policies` / `teams` / `team_members` / `resources` tables, `PolicyService`, `ImpactResolver`, `ConflictDetector` PLUS the HTTP handler layer for policy drafts, simulate, promote, and test-access. **Phase 4 (partial)** lands the Go-side A2A AI client (`internal/pkg/aiclient`), env-driven access platform config (`internal/config`), AI risk-scoring integration in `AccessRequestService.CreateRequest` and `PolicyService.Simulate`, and `POST /access/explain` + `POST /access/suggest` endpoints — and the Python AI agent itself (`cmd/access-ai-agent/`) now ships with stub skills for `access_risk_assessment`, `access_review_automation`, `access_anomaly_detection`, `connector_setup_assistant`, and `policy_recommendation`. **Phase 5** lands the `access_reviews` / `access_review_decisions` / `access_campaign_schedules` tables, `AccessReviewService`, the Phase 5 HTTP handler layer, the `internal/cron.CampaignScheduler` driving recurring campaigns, AND now the auto-certification rate metric (`GET /access/reviews/:id/metrics`), the admin `PATCH /access/reviews/:id` toggle for `auto_certify_enabled`, and the notification-fan-out scaffold (`internal/services/notification`, `Notifier` interface, in-memory channel) wired into `StartCampaign`. **Phase 6 (partial)** lands the JML service (`internal/services/access.JMLService` with `ClassifyChange` / `HandleJoiner` / `HandleMover` / `HandleLeaver`), the SCIM inbound handler (`POST /scim/Users`, `PATCH /scim/Users/:id`, `DELETE /scim/Users/:id`), the outbound SCIM v2.0 client (`SCIMClient.PushSCIMUser` / `PushSCIMGroup` / `DeleteSCIMResource`), and the Go-side anomaly detection stub (`AnomalyDetectionService.ScanWorkspace` + `DetectAnomaliesWithFallback`). Admin UI, Mobile SDK, Desktop Extension, AI auto-certification wire-in, email / Slack channels, real LLM-backed agent skills, and the Phase 1 Admin UI / Keycloak federation exit criteria remain open. See [`docs/PROGRESS.md`](docs/PROGRESS.md) for the per-connector matrix and [`docs/PHASES.md`](docs/PHASES.md) for per-phase exit criteria.
 
 The ShieldNet 360 Access Platform is the access management product within the SN360 ecosystem. It is a multi-tenant platform that lets small and medium-sized businesses connect, manage, and secure access to **200+ cloud platforms, SaaS applications, and identity systems** from a single control plane.
 
@@ -43,26 +43,33 @@ cautious-fishstick/
 ├── cmd/
 │   ├── ztna-api/                  # HTTP API binary (Gin server on ZTNA_API_LISTEN_ADDR, default :8080)
 │   ├── access-connector-worker/   # Queue worker (Phase 0 stub)
-│   └── access-workflow-engine/    # LangGraph orchestrator host (Phase 0 stub)
+│   ├── access-workflow-engine/    # LangGraph orchestrator host (Phase 0 stub)
+│   └── access-ai-agent/           # Phase 4 Python A2A skill server (Tier-1 stubs)
+│       ├── main.py                # stdlib http.server hosting POST /a2a/invoke + GET /healthz
+│       ├── skills/                # access_risk_assessment, access_review_automation, access_anomaly_detection, connector_setup_assistant, policy_recommendation
+│       ├── requirements.txt       # pytest only — runtime is stdlib
+│       ├── Dockerfile             # python:3.12-slim runtime
+│       └── tests/                 # pytest happy-path + error-path per skill + dispatcher e2e
 ├── internal/
 │   ├── config/                                 # Phase 4 env-driven access platform config (ACCESS_AI_AGENT_*, ACCESS_FULL_RESYNC_INTERVAL, ...)
 │   ├── cron/                                   # Phase 5 background workers
 │   │   └── campaign_scheduler.go               # CampaignScheduler — starts due AccessReview campaigns
-│   ├── handlers/                               # Gin HTTP handler layer (Phase 2–5)
+│   ├── handlers/                               # Gin HTTP handler layer (Phase 2–6)
 │   │   ├── router.go                           # Router + Dependencies (DI for services)
 │   │   ├── helpers.go                          # GetStringParam / GetPtrStringQuery (no direct c.Param/c.Query)
 │   │   ├── errors.go                           # service-error → HTTP-status mapping
 │   │   ├── access_request_handler.go           # POST/GET /access/requests, approve|deny|cancel
 │   │   ├── access_grant_handler.go             # GET /access/grants (filtered by user_id / connector_id)
-│   │   ├── access_review_handler.go            # POST /access/reviews, :id/decisions|close|auto-revoke
+│   │   ├── access_review_handler.go            # POST /access/reviews, :id/decisions|close|auto-revoke, GET :id/metrics, PATCH :id
 │   │   ├── policy_handler.go                   # POST /workspace/policy + drafts / simulate / promote / test-access
+│   │   ├── scim_handler.go                     # Phase 6 inbound SCIM v2.0 — POST/PATCH/DELETE /scim/Users routed into JMLService
 │   │   └── ai_handler.go                       # POST /access/explain + /access/suggest (A2A pass-through)
-│   ├── pkg/aiclient/                           # Phase 4 A2A AI client
-│   │   ├── client.go                           # POST {baseURL}/a2a/invoke with X-API-Key
-│   │   └── fallback.go                         # AssessRiskWithFallback (medium per PROPOSAL §5.3) + RiskAssessmentAdapter
+│   ├── pkg/aiclient/                           # Phase 4 / Phase 6 A2A AI client
+│   │   ├── client.go                           # POST {baseURL}/a2a/invoke with X-API-Key + DetectAnomalies
+│   │   └── fallback.go                         # AssessRiskWithFallback + DetectAnomaliesWithFallback + Risk / Anomaly adapters
 │   ├── services/access/
 │   │   ├── types.go                       # AccessConnector + record types
-│   │   ├── optional_interfaces.go         # IdentityDeltaSyncer / GroupSyncer / ...
+│   │   ├── optional_interfaces.go         # IdentityDeltaSyncer / GroupSyncer / SCIMProvisioner / ...
 │   │   ├── factory.go                     # Process-global registry
 │   │   ├── testing.go                     # MockAccessConnector + SwapConnector test helper
 │   │   ├── request_state_machine.go       # Phase 2 request lifecycle FSM (pure logic)
@@ -73,7 +80,11 @@ cautious-fishstick/
 │   │   ├── policy_service.go              # Phase 3 PolicyService — CreateDraft / Simulate / Promote / TestAccess + AI risk scoring
 │   │   ├── impact_resolver.go             # Phase 3 ImpactResolver — selector → affected teams / members / resources
 │   │   ├── conflict_detector.go           # Phase 3 ConflictDetector — redundant / contradictory classification
-│   │   ├── review_service.go              # Phase 5 AccessReviewService — StartCampaign / SubmitDecision / CloseCampaign / AutoRevoke
+│   │   ├── review_service.go              # Phase 5 AccessReviewService — StartCampaign / SubmitDecision / CloseCampaign / AutoRevoke / GetCampaignMetrics / SetAutoCertifyEnabled
+│   │   ├── notification_adapter.go        # Phase 5 ReviewNotifier adapter wrapping notification.NotificationService
+│   │   ├── jml_service.go                 # Phase 6 JMLService — ClassifyChange / HandleJoiner / HandleMover / HandleLeaver
+│   │   ├── scim_provisioner.go            # Phase 6 SCIMClient — generic SCIM v2.0 push (PushSCIMUser / PushSCIMGroup / DeleteSCIMResource)
+│   │   ├── anomaly_service.go             # Phase 6 AnomalyDetectionService — ScanWorkspace through AnomalyDetector
 │   │   └── connectors/
 │   │       ├── microsoft/         # Entra ID — Validate, Connect, Sync, GroupSync, Delta
 │   │       ├── google_workspace/  # Admin SDK Directory — Validate, Connect, Sync, GroupSync
@@ -85,6 +96,8 @@ cautious-fishstick/
 │   │       ├── onepassword/       # 1Password SCIM v2 — Validate, Connect, Sync
 │   │       ├── lastpass/          # LastPass Enterprise API — Validate, Connect, Sync
 │   │       └── ping_identity/     # PingOne v1 (NA/EU/AP) — Validate, Connect, Sync
+│   ├── services/notification/             # Phase 5 NotificationService + Notifier interface + InMemoryNotifier
+│   │   └── service.go                     # NotifyReviewersPending / NotifyRequester (best-effort fan-out)
 │   ├── pkg/credentials/                   # AES-GCM credential manager (KeyManager interface stub)
 │   ├── models/                            # GORM models
 │   │   ├── access_connector.go            # access_connectors

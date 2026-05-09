@@ -99,3 +99,36 @@ func (a *RiskAssessmentAdapter) AssessRequestRisk(
 	resp, ok := AssessRiskWithFallback(ctx, a.Inner, payload)
 	return resp.RiskScore, resp.RiskFactors, ok
 }
+
+// DetectAnomaliesWithFallback wraps AIClient.DetectAnomalies with
+// the same PROPOSAL §5.3 fallback semantics as
+// AssessRiskWithFallback:
+//
+//   - On success: returns the AnomalyEvent slice (possibly empty).
+//   - On any error or nil client: logs a warning, returns an empty
+//     slice and ok=false so the caller sees the fallback fired.
+//
+// AI is decision-support, not critical path — a momentarily-down
+// agent must NOT block the AnomalyDetectionService's periodic
+// scan.
+func DetectAnomaliesWithFallback(
+	ctx context.Context,
+	client *AIClient,
+	grantID string,
+	usageData map[string]interface{},
+) (anomalies []AnomalyEvent, ok bool) {
+	if client == nil {
+		log.Printf("aiclient: detect anomalies: client is nil; using empty fallback for grant %s", grantID)
+		return nil, false
+	}
+	out, err := client.DetectAnomalies(ctx, grantID, usageData)
+	if err != nil {
+		if errors.Is(err, ErrAIUnconfigured) {
+			log.Printf("aiclient: detect anomalies: AI unconfigured; using empty fallback for grant %s", grantID)
+		} else {
+			log.Printf("aiclient: detect anomalies: AI unavailable (%v); using empty fallback for grant %s", err, grantID)
+		}
+		return nil, false
+	}
+	return out, true
+}

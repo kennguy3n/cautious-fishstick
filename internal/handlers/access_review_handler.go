@@ -33,6 +33,8 @@ func (h *AccessReviewHandler) Register(r *gin.Engine) {
 	g.POST("/:id/decisions", h.SubmitDecision)
 	g.POST("/:id/close", h.CloseCampaign)
 	g.POST("/:id/auto-revoke", h.AutoRevoke)
+	g.GET("/:id/metrics", h.GetCampaignMetrics)
+	g.PATCH("/:id", h.PatchCampaign)
 }
 
 // startCampaignRequest mirrors access.StartCampaignInput on the
@@ -159,5 +161,70 @@ func (h *AccessReviewHandler) AutoRevoke(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"review_id":   reviewID,
 		"auto_revoke": "completed",
+	})
+}
+
+// GetCampaignMetrics handles GET /access/reviews/:id/metrics. Returns
+// the per-state decision tally + auto-certification rate.
+func (h *AccessReviewHandler) GetCampaignMetrics(c *gin.Context) {
+	reviewID := GetStringParam(c, "id")
+	if reviewID == "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
+			Error:   "id path parameter is required",
+			Code:    "validation_failed",
+			Message: "id path parameter is required",
+		})
+		return
+	}
+	metrics, err := h.reviewService.GetCampaignMetrics(c.Request.Context(), reviewID)
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, err)
+		return
+	}
+	c.JSON(http.StatusOK, metrics)
+}
+
+// patchCampaignRequest is the wire shape for PATCH /access/reviews/:id.
+// Only auto_certify_enabled is editable today; the field is a pointer
+// so the handler can distinguish "client omitted the field" from
+// "client set it to false".
+type patchCampaignRequest struct {
+	AutoCertifyEnabled *bool `json:"auto_certify_enabled,omitempty"`
+}
+
+// PatchCampaign handles PATCH /access/reviews/:id. Currently the only
+// supported mutation is flipping auto_certify_enabled — Phase 5
+// admins use this to disable AI auto-certification on a per-review
+// basis. Returns 200 with the updated metrics for client convenience.
+func (h *AccessReviewHandler) PatchCampaign(c *gin.Context) {
+	reviewID := GetStringParam(c, "id")
+	if reviewID == "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
+			Error:   "id path parameter is required",
+			Code:    "validation_failed",
+			Message: "id path parameter is required",
+		})
+		return
+	}
+	var req patchCampaignRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, err)
+		return
+	}
+	if req.AutoCertifyEnabled == nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
+			Error:   "no editable fields in payload",
+			Code:    "validation_failed",
+			Message: "auto_certify_enabled is the only editable field; supply it explicitly",
+		})
+		return
+	}
+	if err := h.reviewService.SetAutoCertifyEnabled(c.Request.Context(), reviewID, *req.AutoCertifyEnabled); err != nil {
+		writeError(c, http.StatusInternalServerError, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"review_id":            reviewID,
+		"auto_certify_enabled": *req.AutoCertifyEnabled,
 	})
 }

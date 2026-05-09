@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -184,11 +185,14 @@ func (s *AccessRequestService) CreateRequest(ctx context.Context, in CreateAcces
 				Model(&models.AccessRequest{}).
 				Where("id = ?", req.ID).
 				Updates(update).Error; uerr != nil {
-				// Persist failure is logged at the caller; we still
-				// return the in-memory request so the caller can act
-				// on the score. The DB row stays without risk_score
-				// — the worst case is a stale read on the admin UI,
-				// not a stuck request.
+				// Per PROPOSAL §5.3 the AI agent is decision-support,
+				// not on the request critical path. Log the persist
+				// failure here (operators care about it) and return
+				// the in-memory request with the score populated so
+				// the caller can act on it. The DB row stays without
+				// risk_score — the worst case is a stale read on the
+				// admin UI, not a stuck request.
+				log.Printf("access: failed to persist risk_score for request %s: %v", req.ID, uerr)
 				return req, nil
 			}
 		}
