@@ -4,7 +4,7 @@ Last updated: keep this file in sync as PRs land. The state here should agree wi
 
 For the canonical phase definitions (and what "shipped" means), see `PHASES.md`. For the design contract see `PROPOSAL.md`.
 
-This is a **greenfield project**: every entry is currently `⏳ planned`. As phases land, flip the relevant rows.
+Status: **In progress | ~5 %**. Phase 0 (contract, registry, credential manager, migration) is complete; the first three Tier 1 connectors (Microsoft Entra ID, Google Workspace, Okta) implement the minimum capabilities — `Validate` + `Connect` + `SyncIdentities` — and are wired into the binaries via blank-import. Most rows below remain `⏳ planned`.
 
 | Status legend |  |
 |---------------|--|
@@ -31,9 +31,9 @@ Path is the target directory under `internal/services/access/connectors/` once t
 
 | # | Provider | Category | Path | `sync_identity` | `provision_access` | `list_entitlements` | `get_access_log` | `sso_federation` | Status |
 |---|----------|----------|------|:---------------:|:------------------:|:-------------------:|:----------------:|:----------------:|:------:|
-| 1 | Microsoft Entra ID | IAM/SSO | `microsoft/` | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
-| 2 | Google Workspace | IAM/SSO | `google_workspace/` | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
-| 3 | Okta | IAM/SSO | `okta/` | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
+| 1 | Microsoft Entra ID | IAM/SSO | `microsoft/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ | 🟡 |
+| 2 | Google Workspace | IAM/SSO | `google_workspace/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ | 🟡 |
+| 3 | Okta | IAM/SSO | `okta/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ | 🟡 |
 | 4 | Auth0 | IAM/SSO | `auth0/` | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
 | 5 | Generic SAML | IAM/SSO | `generic_saml/` | n/a | n/a | n/a | n/a | ⏳ | ⏳ |
 | 6 | Generic OIDC | IAM/SSO | `generic_oidc/` | n/a | n/a | n/a | n/a | ⏳ | ⏳ |
@@ -258,7 +258,7 @@ Path is the target directory under `internal/services/access/connectors/` once t
 
 | Feature | Status | Notes / target phase |
 |---------|:------:|----------------------|
-| Access Connector Framework | ⏳ | Phase 0 — interface, registry, AES-GCM credential encryption |
+| Access Connector Framework | ✅ | Phase 0 — interface, registry, AES-GCM credential encryption (PR #2) |
 | Access Request Workflow | ⏳ | Phase 2 — `access_requests`, state machine, self-service + manager approval |
 | Policy Simulation Engine | ⏳ | Phase 3 — drafts, impact analysis, promotion |
 | AI Risk Assessment Agent | ⏳ | Phase 4 — `access_risk_assessment` skill |
@@ -321,7 +321,7 @@ When you ship something from §3, move it here with the merge date and PR link. 
 
 | Date | What | PR | Notes |
 |------|------|----|-------|
-| _add as shipped_ | _e.g. Phase 0 contract & registry_ | `#xxxx` | _e.g. registry + AES-GCM reuse, no connector implementations yet_ |
+| 2026-05-09 | Phase 0 — contract, registry, credential manager, migration | #2 | Full Phase 0 exit criteria met. First 3 connectors (Microsoft, Google Workspace, Okta) with `Validate` + `Connect` + `SyncIdentities` |
 
 ---
 

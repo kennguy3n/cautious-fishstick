@@ -1,10 +1,61 @@
 # ShieldNet 360 Access Platform
 
-> **Status:** Greenfield — interfaces and schema being defined. See [`docs/PROGRESS.md`](docs/PROGRESS.md) for what is and isn't built yet.
+> **Status:** Phase 0 shipped, Phase 1 partial. The `AccessConnector` contract, process-global registry, AES-GCM credential manager, `access_connectors` migration, and the first three Tier 1 connectors (Microsoft Entra ID, Google Workspace, Okta) are in `main`. See [`docs/PROGRESS.md`](docs/PROGRESS.md) for the per-connector matrix.
 
 The ShieldNet 360 Access Platform is the access management product within the SN360 ecosystem. It is a multi-tenant platform that lets small and medium-sized businesses connect, manage, and secure access to **200+ cloud platforms, SaaS applications, and identity systems** from a single control plane.
 
 The platform is designed for companies with little or no in-house IT/security headcount. Founders, operations leads, and people-managers can run access end-to-end without writing policy DSLs, decoding SAML metadata, or hand-rolling SCIM payloads.
+
+---
+
+## Quick start
+
+Requirements: Go 1.22+.
+
+```bash
+# Pull dependencies
+go mod download
+
+# Build every package and binary
+go build ./...
+
+# Run the full test suite
+go test ./...
+
+# Start any of the three binaries (Phase 0 stubs that just log the
+# registered connectors and exit; full handler wiring lands in Phase 2+)
+go run ./cmd/ztna-api
+go run ./cmd/access-connector-worker
+go run ./cmd/access-workflow-engine
+```
+
+Each binary blank-imports the connector packages so their `init()` functions register against the access-platform registry; if you add a new connector, also add it to the blank-import list of every `cmd/*/main.go` that needs it.
+
+---
+
+## Project structure
+
+```
+cautious-fishstick/
+├── cmd/
+│   ├── ztna-api/                  # HTTP API binary (Phase 0 stub)
+│   ├── access-connector-worker/   # Queue worker (Phase 0 stub)
+│   └── access-workflow-engine/    # LangGraph orchestrator host (Phase 0 stub)
+├── internal/
+│   ├── services/access/
+│   │   ├── types.go               # AccessConnector + record types
+│   │   ├── optional_interfaces.go # IdentityDeltaSyncer / GroupSyncer / ...
+│   │   ├── factory.go             # Process-global registry
+│   │   ├── testing.go             # MockAccessConnector + SwapConnector test helper
+│   │   └── connectors/
+│   │       ├── microsoft/         # Entra ID — Validate, Connect, Sync, GroupSync, Delta
+│   │       ├── google_workspace/  # Admin SDK Directory — Validate, Connect, Sync, GroupSync
+│   │       └── okta/              # Okta API — Validate, Connect, Sync, Delta via system log
+│   ├── pkg/credentials/           # AES-GCM credential manager (KeyManager interface stub)
+│   ├── models/                    # GORM models (access_connectors)
+│   └── migrations/                # GORM AutoMigrate migrations (no FK constraints)
+└── docs/                          # Proposal, architecture, phases, progress
+```
 
 ---
 

@@ -10,37 +10,37 @@ A phase is **shippable** only when *all* of its exit criteria are demonstrably m
 | 🟡 partial | Some exit criteria met; gaps tracked in `PROGRESS.md` |
 | ⏳ planned | Not yet started |
 
-> **All phases below are currently `⏳ planned`** — this is a greenfield project. As phases land, flip the marker and move the supporting status row in `PROGRESS.md`.
+> **Phase 0 is `✅ shipped`; Phase 1 is `🟡 partial`** (3 of 10 connectors landed with minimum capabilities). Later phases remain `⏳ planned`. As phases land, flip the marker and move the supporting status row in `PROGRESS.md`.
 
 ---
 
-## Phase 0 — Access Connector contract & registry  ⏳
+## Phase 0 — Access Connector contract & registry  ✅ shipped
 
 **Scope.** Define the `AccessConnector` interface and the global registry; every binary that needs access connectors imports the provider packages for their `init()` side-effects.
 
 **Exit criteria.**
 
-- [ ] `AccessConnector` interface with `Validate / Connect / VerifyPermissions / CountIdentities / SyncIdentities / ProvisionAccess / RevokeAccess / ListEntitlements / GetSSOMetadata / GetCredentialsMetadata`.
-- [ ] Optional `IdentityDeltaSyncer`, `GroupSyncer`, `AccessAuditor`, `SCIMProvisioner` interfaces.
-- [ ] Process-global registry with `RegisterAccessConnector` / `GetAccessConnector` (mirror of `shieldnet360-backend/internal/services/connectors/factory.go:9-32`).
-- [ ] AES-GCM credential encryption reused from SN360's `internal/pkg/credentials/manager.go`.
-- [ ] Blank-import wiring in `cmd/ztna-api`, `cmd/access-connector-worker`, `cmd/access-workflow-engine`.
-- [ ] Unit-test pattern for swapping registry entries safely (`t.Cleanup` restoring the previous instance).
-- [ ] `access_connectors` table and migration.
+- [x] `AccessConnector` interface with `Validate / Connect / VerifyPermissions / CountIdentities / SyncIdentities / ProvisionAccess / RevokeAccess / ListEntitlements / GetSSOMetadata / GetCredentialsMetadata`.
+- [x] Optional `IdentityDeltaSyncer`, `GroupSyncer`, `AccessAuditor`, `SCIMProvisioner` interfaces.
+- [x] Process-global registry with `RegisterAccessConnector` / `GetAccessConnector` (mirror of `shieldnet360-backend/internal/services/connectors/factory.go:9-32`).
+- [x] AES-GCM credential encryption reused from SN360's `internal/pkg/credentials/manager.go`.
+- [x] Blank-import wiring in `cmd/ztna-api`, `cmd/access-connector-worker`, `cmd/access-workflow-engine`.
+- [x] Unit-test pattern for swapping registry entries safely (`t.Cleanup` restoring the previous instance).
+- [x] `access_connectors` table and migration.
 
 **Reference.** `internal/services/access/types.go`, `internal/services/access/factory.go` (target paths).
 
 ---
 
-## Phase 1 — Core Identity connectors (top 10)  ⏳
+## Phase 1 — Core Identity connectors (top 10)  🟡 partial
 
 **Scope.** First 10 identity connectors, each with the minimum capability needed to power access requests downstream.
 
 **Exit criteria.**
 
-- [ ] **Microsoft Entra ID** connector (extends existing ZTNA IdP integration).
-- [ ] **Google Workspace** connector.
-- [ ] **Okta** connector.
+- [x] **Microsoft Entra ID** connector (extends existing ZTNA IdP integration). — 🟡 minimum capabilities only (`Validate`, `Connect`, `VerifyPermissions`, `CountIdentities`, `SyncIdentities`, `SyncIdentitiesDelta`, `GroupSyncer`, `GetSSOMetadata`, `GetCredentialsMetadata`).
+- [x] **Google Workspace** connector. — 🟡 minimum capabilities only.
+- [x] **Okta** connector. — 🟡 minimum capabilities only (`SyncIdentitiesDelta` via system log polling).
 - [ ] **Auth0** connector.
 - [ ] **Generic SAML** connector (covers 60 %+ of enterprise SaaS that have no custom API).
 - [ ] **Generic OIDC** connector.
@@ -48,8 +48,8 @@ A phase is **shippable** only when *all* of its exit criteria are demonstrably m
 - [ ] **1Password** connector.
 - [ ] **LastPass** connector.
 - [ ] **Ping Identity** connector.
-- [ ] Each connector implements at minimum: `Validate`, `Connect`, `SyncIdentities`, `GetCredentialsMetadata`.
-- [ ] Each connector's `Validate` is pure-local (no I/O), enforced by a per-connector unit test.
+- [x] Each landed connector implements at minimum: `Validate`, `Connect`, `SyncIdentities`, `GetCredentialsMetadata`.
+- [x] Each landed connector's `Validate` is pure-local (no I/O), enforced by a per-connector unit test.
 - [ ] Admin UI: connector marketplace page with a setup wizard per connector.
 - [ ] First-class SSO federation via Keycloak for SAML / OIDC / Microsoft Entra ID / Google Workspace.
 
