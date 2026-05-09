@@ -103,11 +103,14 @@ flowchart LR
     PSVC --> OZ
 ```
 
-Reference points (target):
+Reference points:
 
-- Registry + factory: `internal/services/access/factory.go` (mirrors `shieldnet360-backend/internal/services/connectors/factory.go:9-32`).
-- AccessConnector interface: `internal/services/access/types.go` (extends `shieldnet360-backend/internal/services/connectors/types.go:21-145`).
-- Service entry: `internal/services/access/service.go` (parallels `shieldnet360-backend/internal/services/integration/service.go:188-262`).
+- Registry + factory: `internal/services/access/factory.go` (implemented; mirrors `shieldnet360-backend/internal/services/connectors/factory.go:9-32`).
+- AccessConnector interface: `internal/services/access/types.go` (implemented; extends `shieldnet360-backend/internal/services/connectors/types.go:21-145`).
+- Optional capability interfaces: `internal/services/access/optional_interfaces.go` (implemented).
+- Mock + registry-swap test helper: `internal/services/access/testing.go` (implemented).
+- Phase 0 connectors: `internal/services/access/connectors/microsoft/`, `internal/services/access/connectors/google_workspace/`, `internal/services/access/connectors/okta/` (implemented — minimum capabilities).
+- Service entry: `internal/services/access/service.go` (target; parallels `shieldnet360-backend/internal/services/integration/service.go:188-262`).
 
 ---
 
