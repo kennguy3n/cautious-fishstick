@@ -247,42 +247,52 @@ func (c *VercelAccessConnector) SyncIdentities(
 			Status:      "active",
 		}}, "")
 	}
-	path := "/v2/teams/" + cfg.TeamID + "/members?limit=50"
+	basePath := "/v2/teams/" + cfg.TeamID + "/members?limit=50"
+	path := basePath
 	if checkpoint != "" {
-		path += "&until=" + checkpoint
+		path = basePath + "&until=" + checkpoint
 	}
-	req, err := c.newRequest(ctx, secrets, http.MethodGet, path)
-	if err != nil {
-		return err
-	}
-	body, err := c.do(req)
-	if err != nil {
-		return err
-	}
-	var resp vercelMembersResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return fmt.Errorf("vercel: decode members: %w", err)
-	}
-	identities := make([]*access.Identity, 0, len(resp.Members))
-	for _, m := range resp.Members {
-		display := m.Name
-		if display == "" {
-			display = m.Username
+	for {
+		req, err := c.newRequest(ctx, secrets, http.MethodGet, path)
+		if err != nil {
+			return err
 		}
-		status := "active"
-		if !m.Confirmed {
-			status = "pending"
+		body, err := c.do(req)
+		if err != nil {
+			return err
 		}
-		identities = append(identities, &access.Identity{
-			ExternalID:  m.UID,
-			Type:        access.IdentityTypeUser,
-			DisplayName: display,
-			Email:       m.Email,
-			Status:      status,
-			RawData:     map[string]interface{}{"role": m.Role},
-		})
+		var resp vercelMembersResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return fmt.Errorf("vercel: decode members: %w", err)
+		}
+		identities := make([]*access.Identity, 0, len(resp.Members))
+		for _, m := range resp.Members {
+			display := m.Name
+			if display == "" {
+				display = m.Username
+			}
+			status := "active"
+			if !m.Confirmed {
+				status = "pending"
+			}
+			identities = append(identities, &access.Identity{
+				ExternalID:  m.UID,
+				Type:        access.IdentityTypeUser,
+				DisplayName: display,
+				Email:       m.Email,
+				Status:      status,
+				RawData:     map[string]interface{}{"role": m.Role},
+			})
+		}
+		next := resp.Pagination.Next
+		if err := handler(identities, next); err != nil {
+			return err
+		}
+		if next == "" {
+			return nil
+		}
+		path = basePath + "&until=" + next
 	}
-	return handler(identities, resp.Pagination.Next)
 }
 
 func (c *VercelAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {

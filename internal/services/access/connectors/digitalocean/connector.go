@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -209,55 +210,81 @@ func (c *DigitalOceanAccessConnector) SyncIdentities(
 	}
 	path := "/v2/team/members?per_page=50"
 	if checkpoint != "" {
-		path = strings.TrimPrefix(checkpoint, c.baseURL())
+		path = nextPath(checkpoint)
 	}
-	req, err := c.newRequest(ctx, secrets, http.MethodGet, path)
-	if err != nil {
-		return err
-	}
-	body, err := c.do(req)
-	if err != nil {
-		// Fallback: list a single account when team membership is
-		// unavailable for the token.
-		req2, err2 := c.newRequest(ctx, secrets, http.MethodGet, "/v2/account")
-		if err2 != nil {
-			return err2
-		}
-		body2, err := c.do(req2)
+	first := true
+	for {
+		req, err := c.newRequest(ctx, secrets, http.MethodGet, path)
 		if err != nil {
 			return err
 		}
-		var acct doAccount
-		if err := json.Unmarshal(body2, &acct); err != nil {
-			return fmt.Errorf("digitalocean: decode account: %w", err)
+		body, err := c.do(req)
+		if err != nil {
+			if first {
+				req2, err2 := c.newRequest(ctx, secrets, http.MethodGet, "/v2/account")
+				if err2 != nil {
+					return err2
+				}
+				body2, err := c.do(req2)
+				if err != nil {
+					return err
+				}
+				var acct doAccount
+				if err := json.Unmarshal(body2, &acct); err != nil {
+					return fmt.Errorf("digitalocean: decode account: %w", err)
+				}
+				return handler([]*access.Identity{{
+					ExternalID:  acct.Account.UUID,
+					Type:        access.IdentityTypeUser,
+					DisplayName: acct.Account.Email,
+					Email:       acct.Account.Email,
+					Status:      strings.ToLower(acct.Account.Status),
+				}}, "")
+			}
+			return err
 		}
-		return handler([]*access.Identity{{
-			ExternalID:  acct.Account.UUID,
-			Type:        access.IdentityTypeUser,
-			DisplayName: acct.Account.Email,
-			Email:       acct.Account.Email,
-			Status:      strings.ToLower(acct.Account.Status),
-		}}, "")
-	}
-	var resp doMembersResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return fmt.Errorf("digitalocean: decode members: %w", err)
-	}
-	identities := make([]*access.Identity, 0, len(resp.Members))
-	for _, m := range resp.Members {
-		display := strings.TrimSpace(m.FirstName + " " + m.LastName)
-		if display == "" {
-			display = m.Email
+		first = false
+		var resp doMembersResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return fmt.Errorf("digitalocean: decode members: %w", err)
 		}
-		identities = append(identities, &access.Identity{
-			ExternalID:  m.UUID,
-			Type:        access.IdentityTypeUser,
-			DisplayName: display,
-			Email:       m.Email,
-			Status:      strings.ToLower(m.Status),
-		})
+		identities := make([]*access.Identity, 0, len(resp.Members))
+		for _, m := range resp.Members {
+			display := strings.TrimSpace(m.FirstName + " " + m.LastName)
+			if display == "" {
+				display = m.Email
+			}
+			identities = append(identities, &access.Identity{
+				ExternalID:  m.UUID,
+				Type:        access.IdentityTypeUser,
+				DisplayName: display,
+				Email:       m.Email,
+				Status:      strings.ToLower(m.Status),
+			})
+		}
+		next := resp.Links.Pages.Next
+		if err := handler(identities, next); err != nil {
+			return err
+		}
+		if next == "" {
+			return nil
+		}
+		path = nextPath(next)
 	}
-	return handler(identities, resp.Links.Pages.Next)
+}
+
+func nextPath(next string) string {
+	if next == "" {
+		return ""
+	}
+	if u, err := url.Parse(next); err == nil && u.IsAbs() {
+		p := u.Path
+		if u.RawQuery != "" {
+			p += "?" + u.RawQuery
+		}
+		return p
+	}
+	return next
 }
 
 func (c *DigitalOceanAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {

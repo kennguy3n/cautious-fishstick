@@ -128,6 +128,57 @@ func TestSyncIdentities_FallsBackToAccount(t *testing.T) {
 	}
 }
 
+func TestSyncIdentities_PaginatesAcrossPages(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		switch calls {
+		case 1:
+			if !strings.Contains(r.URL.RawQuery, "per_page=50") {
+				t.Errorf("page1 query = %q", r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`{
+				"members":[{"uuid":"u1","email":"a@b.com","first_name":"A","status":"active"}],
+				"meta":{"total":2},
+				"links":{"pages":{"next":"https://example.com/v2/team/members?per_page=50&page=2"}}
+			}`))
+		case 2:
+			if !strings.Contains(r.URL.RawQuery, "page=2") {
+				t.Errorf("page2 query = %q; want page=2", r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`{
+				"members":[{"uuid":"u2","email":"c@d.com","first_name":"C","status":"active"}],
+				"meta":{"total":2}
+			}`))
+		default:
+			t.Fatalf("unexpected request #%d to %s", calls, r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	var got []*access.Identity
+	var lastNext string
+	err := c.SyncIdentities(context.Background(), nil, validSecrets(), "", func(b []*access.Identity, next string) error {
+		got = append(got, b...)
+		lastNext = next
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("expected 2 round trips, got %d", calls)
+	}
+	if len(got) != 2 || got[0].Email != "a@b.com" || got[1].Email != "c@d.com" {
+		t.Fatalf("got = %+v", got)
+	}
+	if lastNext != "" {
+		t.Errorf("final next = %q; want empty", lastNext)
+	}
+}
+
 func TestGetCredentialsMetadata_RedactsToken(t *testing.T) {
 	md, err := New().GetCredentialsMetadata(context.Background(), nil, validSecrets())
 	if err != nil {
