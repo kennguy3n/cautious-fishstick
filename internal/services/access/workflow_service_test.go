@@ -114,6 +114,78 @@ func TestResolveWorkflow_ReturnsMatchingWorkflow(t *testing.T) {
 	_ = wfNarrow
 }
 
+// TestResolveWorkflow_NarrowerLaterWorkflowDoesNotOverrideWildcard pins
+// the chronological-only ordering contract. An admin who reads the
+// (now-corrected) godoc and inserts a more specific workflow LATER must
+// see the older wildcard still win — there is no priority/specificity
+// scoring in Phase 2.
+//
+// This test exists to catch regressions that try to add a longest-prefix
+// or specificity tiebreaker without simultaneously updating the godoc.
+// If a future change introduces specificity ordering, this test should
+// be updated alongside the godoc to describe the new contract.
+func TestResolveWorkflow_NarrowerLaterWorkflowDoesNotOverrideWildcard(t *testing.T) {
+	db := newTestDB(t)
+	const workspace = "01H000000000000000WORKSPACE"
+	const connectorID = "01H000000000000000CONNECTOR"
+
+	now := time.Now()
+	// Day 1: admin sets a broad manager-approval rule for the whole
+	// workspace.
+	wfBroad := seedWorkflow(t, db, workspace,
+		map[string]interface{}{},
+		[]map[string]string{{"type": models.WorkflowStepManagerApproval}},
+		now,
+	)
+	// Day 30: admin tries to add a narrower auto-approve rule for one
+	// connector + role, expecting it to override the broad rule for
+	// matching requests. Per the corrected ResolveWorkflow contract,
+	// this DOES NOT WORK — the older row is found first.
+	wfNarrow := seedWorkflow(t, db, workspace,
+		map[string]interface{}{
+			"connector_id": connectorID,
+			"role":         "viewer",
+		},
+		[]map[string]string{{"type": models.WorkflowStepAutoApprove}},
+		now.Add(30*24*time.Hour),
+	)
+
+	svc := NewWorkflowService(db, &fakeApprover{})
+
+	// A request that the narrow rule WOULD match if specificity were
+	// honoured. Today, the wildcard wins because it was created first.
+	req := &models.AccessRequest{
+		WorkspaceID:        workspace,
+		ConnectorID:        connectorID,
+		Role:               "viewer",
+		ResourceExternalID: "projects/foo",
+	}
+	got, err := svc.ResolveWorkflow(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ResolveWorkflow: %v", err)
+	}
+	if got == nil {
+		t.Fatal("ResolveWorkflow returned nil; want the older wildcard rule")
+	}
+	if got.ID != wfBroad.ID {
+		t.Errorf("got workflow %q (%q); want %q (%q) — oldest matching wins, narrower-later does NOT override",
+			got.ID, "narrow", wfBroad.ID, "broad")
+	}
+
+	// Documented workaround: deactivate the broad rule, then the narrow
+	// rule wins.
+	if err := db.Model(&models.AccessWorkflow{}).Where("id = ?", wfBroad.ID).Update("is_active", false).Error; err != nil {
+		t.Fatalf("deactivate broad workflow: %v", err)
+	}
+	got, err = svc.ResolveWorkflow(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ResolveWorkflow after deactivate: %v", err)
+	}
+	if got == nil || got.ID != wfNarrow.ID {
+		t.Errorf("after deactivating broad rule: got %v; want narrow rule %q", got, wfNarrow.ID)
+	}
+}
+
 // TestResolveWorkflow_ResourcePatternMatching exercises the path.Match-
 // based pattern.
 func TestResolveWorkflow_ResourcePatternMatching(t *testing.T) {

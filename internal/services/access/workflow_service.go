@@ -74,10 +74,19 @@ var ErrWorkflowExecution = errors.New("access: workflow execution failed")
 // no workflow matches — that is a valid result and means "no auto-routing
 // rule applies, escalate per default policy".
 //
-// Workflows are evaluated in CreatedAt order — earlier workflows win, so
-// admins can override broad rules by inserting a more specific workflow
-// later. This mirrors the CIDR longest-prefix-match shape callers expect
-// from policy systems.
+// Workflows are evaluated in CreatedAt order (oldest first) and the
+// FIRST match wins. This is strictly chronological — there is no
+// priority/specificity scoring in Phase 2. Admins who want a narrower
+// rule to override a broader, older one MUST either:
+//
+//   - delete the older workflow, or
+//   - deactivate it (IsActive = false) so the query skips it.
+//
+// Inserting a more specific workflow LATER does NOT override an earlier
+// broad rule, because the older row is found first and the loop returns
+// on first match. Phase 4 will introduce explicit priority/specificity
+// ordering (longest-prefix-match style); until then ResolveWorkflow's
+// behaviour is "oldest active matching rule wins, full stop".
 func (s *WorkflowService) ResolveWorkflow(ctx context.Context, request *models.AccessRequest) (*models.AccessWorkflow, error) {
 	if request == nil {
 		return nil, fmt.Errorf("%w: request is required", ErrValidation)

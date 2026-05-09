@@ -73,6 +73,22 @@ func NewAccessProvisioningService(db *gorm.DB) *AccessProvisioningService {
 // the state to "provisioning" before calling Provision is incorrect: the
 // FSM will reject "provisioning → provisioning" and return
 // ErrInvalidStateTransition.
+//
+// Failure handling has two distinct paths:
+//
+//   - Connector returns an error: the upstream change never happened.
+//     The request is transitioned provisioning → provision_failed and
+//     a retry of Provision is safe and cheap.
+//   - Connector returns success but the post-success DB transaction
+//     (state flip + access_grants insert) fails: the upstream grant
+//     ALREADY EXISTS but our DB has no record of it. We still
+//     transition to provision_failed so the documented retry path
+//     works. Connectors are required to be idempotent on
+//     ProvisionAccess (a re-call with the same grant tuple is a no-op
+//     for an already-provisioned grant) — Phase 1 Tier-1 connectors
+//     all satisfy this. If a future connector cannot be made
+//     idempotent, retries from this path will need explicit upstream
+//     reconciliation before the second ProvisionAccess call.
 func (s *AccessProvisioningService) Provision(
 	ctx context.Context,
 	request *models.AccessRequest,
@@ -154,7 +170,21 @@ func (s *AccessProvisioningService) Provision(
 		return nil
 	})
 	if err != nil {
-		return err
+		// The connector already provisioned access upstream but our DB
+		// commit failed (e.g., dropped connection, deadlock, disk full).
+		// Without this fallback the request stays in "provisioning"
+		// forever — the FSM rejects provisioning → provisioning, so a
+		// caller-side retry of Provision would fail with
+		// ErrInvalidStateTransition and the upstream grant would leak
+		// without a corresponding access_grants row. Transition to
+		// provision_failed so the documented retry contract (call
+		// Provision again from provision_failed) actually works. See
+		// the connector-idempotency note in the Provision godoc.
+		reason := "post-provision db commit failed: " + truncateDBErr(err)
+		if recordErr := s.requestSvc.transitionRequest(ctx, request.ID, models.RequestStateProvisionFailed, "", reason); recordErr != nil {
+			return fmt.Errorf("provision succeeded but db commit failed (%v); also failed to record provision_failed: %w", err, recordErr)
+		}
+		return fmt.Errorf("access: post-provision db commit failed (connector grant exists upstream, request marked provision_failed): %w", err)
 	}
 	return nil
 }
@@ -253,6 +283,22 @@ func truncateErrorReason(err error) string {
 	}
 	const maxLen = 512
 	s := "provision error: " + err.Error()
+	if len(s) > maxLen {
+		return s[:maxLen]
+	}
+	return s
+}
+
+// truncateDBErr returns the err.Error() string capped at 480 chars so the
+// surrounding "post-provision db commit failed: …" prefix still fits
+// inside the 512-char audit window enforced by truncateErrorReason for
+// the connector-error path. Defensive only — TEXT has no hard limit.
+func truncateDBErr(err error) string {
+	if err == nil {
+		return ""
+	}
+	const maxLen = 480
+	s := err.Error()
 	if len(s) > maxLen {
 		return s[:maxLen]
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/glebarez/sqlite"
@@ -362,6 +363,101 @@ func TestRevoke_AlreadyRevokedReturnsErrAlreadyRevoked(t *testing.T) {
 	err := svc.Revoke(context.Background(), grant, nil, nil)
 	if !errors.Is(err, ErrAlreadyRevoked) {
 		t.Errorf("err = %v; want ErrAlreadyRevoked", err)
+	}
+}
+
+// TestProvision_PostConnectorDBFailureTransitionsToProvisionFailed asserts
+// that when the connector succeeds upstream but the post-success DB
+// transaction (state flip + access_grants insert) fails, the request is
+// moved to provision_failed instead of being wedged in "provisioning".
+//
+// Why this matters: the FSM rejects "provisioning → provisioning", so
+// without this fallback a caller-side retry of Provision from the wedged
+// state would fail with ErrInvalidStateTransition forever, while the
+// upstream connector grant exists with no DB record. This test
+// reproduces the bug Devin Review flagged on PR #4.
+//
+// The test simulates the post-success DB failure by having the mock
+// connector drop the access_grants table mid-call: the connector returns
+// nil, then the wrapping db.Transaction tries to INSERT into a table
+// that no longer exists. The transaction rolls back, Provision catches
+// the error, and the fallback transition to provision_failed runs in a
+// separate tx that touches only access_requests / access_request_state_history.
+func TestProvision_PostConnectorDBFailureTransitionsToProvisionFailed(t *testing.T) {
+	const provider = "mock_provision_post_db_fail"
+	db := newProvisioningTestDB(t)
+	conn := seedConnector(t, db, provider)
+	req := approvedRequest(t, db, conn.ID)
+
+	mock := &MockAccessConnector{
+		FuncProvisionAccess: func(_ context.Context, _, _ map[string]interface{}, _ AccessGrant) error {
+			// Connector succeeded upstream. Now break the DB so the
+			// post-connector transaction fails on the access_grants
+			// insert — this is the wedge condition we're testing.
+			if err := db.Migrator().DropTable(&models.AccessGrant{}); err != nil {
+				t.Fatalf("setup: drop access_grants: %v", err)
+			}
+			return nil
+		},
+	}
+	SwapConnector(t, provider, mock)
+
+	svc := NewAccessProvisioningService(db)
+	err := svc.Provision(context.Background(), req, nil, nil)
+	if err == nil {
+		t.Fatal("Provision returned nil; want post-provision db commit error")
+	}
+	if mock.ProvisionAccessCalls != 1 {
+		t.Errorf("ProvisionAccess calls = %d; want 1 (connector should have been invoked)", mock.ProvisionAccessCalls)
+	}
+
+	// Re-migrate access_grants so we can read the state cleanly. (The
+	// access_requests / access_request_state_history tables were never
+	// dropped, so the post-failure transition can land before this.)
+	if err := db.AutoMigrate(&models.AccessGrant{}); err != nil {
+		t.Fatalf("re-migrate access_grants: %v", err)
+	}
+
+	var stored models.AccessRequest
+	if err := db.Where("id = ?", req.ID).First(&stored).Error; err != nil {
+		t.Fatalf("reload request: %v", err)
+	}
+	if stored.State != models.RequestStateProvisionFailed {
+		t.Errorf("State = %q; want %q (request must not be wedged in provisioning)", stored.State, models.RequestStateProvisionFailed)
+	}
+
+	var grants []models.AccessGrant
+	if err := db.Where("request_id = ?", req.ID).Find(&grants).Error; err != nil {
+		t.Fatalf("read grants: %v", err)
+	}
+	if len(grants) != 0 {
+		t.Errorf("grants = %d; want 0 (post-failure rollback should leave no row)", len(grants))
+	}
+
+	// The most recent history row should record the post-provision DB
+	// failure reason — distinct from the connector-error reason so
+	// operators can tell the two failure modes apart.
+	var latest []models.AccessRequestStateHistory
+	if err := db.Where("request_id = ?", req.ID).Order("created_at desc").Limit(1).Find(&latest).Error; err != nil {
+		t.Fatalf("read history: %v", err)
+	}
+	if len(latest) == 0 {
+		t.Fatal("expected at least one history row")
+	}
+	if latest[0].ToState != models.RequestStateProvisionFailed {
+		t.Errorf("latest history ToState = %q; want %q", latest[0].ToState, models.RequestStateProvisionFailed)
+	}
+	if !strings.Contains(latest[0].Reason, "post-provision db commit failed") {
+		t.Errorf("latest history Reason = %q; want it to contain \"post-provision db commit failed\"", latest[0].Reason)
+	}
+
+	// The retry contract: from provision_failed the FSM allows
+	// provision_failed → provisioning, so a caller can call Provision
+	// again. Verify by transitioning manually here (a full retry would
+	// also exercise connector idempotency, which is out of scope for
+	// this test — the connector mock has been swapped already).
+	if err := Transition(stored.State, models.RequestStateProvisioning); err != nil {
+		t.Errorf("FSM rejects provision_failed → provisioning: %v (retry contract broken)", err)
 	}
 }
 
