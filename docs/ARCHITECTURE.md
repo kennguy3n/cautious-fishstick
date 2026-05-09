@@ -39,6 +39,10 @@ flowchart LR
         AUTH0[auth0/]
         SAML[generic_saml/]
         OIDC[generic_oidc/]
+        DUO[duo/]
+        ONEPW[onepassword/]
+        LASTPW[lastpass/]
+        PING[ping_identity/]
         FUTURE[next provider]
     end
 
@@ -82,7 +86,7 @@ flowchart LR
     AH --> SVC
     PH --> PSVC
     SVC --> REG
-    REG --- M365 & GW & OKTA & AUTH0 & SAML & OIDC & FUTURE
+    REG --- M365 & GW & OKTA & AUTH0 & SAML & OIDC & DUO & ONEPW & LASTPW & PING & FUTURE
     SVC --> PG
     PSVC --> PG
     SVC -->|enqueue| REDIS
@@ -109,7 +113,7 @@ Reference points:
 - AccessConnector interface: `internal/services/access/types.go` (implemented; extends `shieldnet360-backend/internal/services/connectors/types.go:21-145`).
 - Optional capability interfaces: `internal/services/access/optional_interfaces.go` (implemented).
 - Mock + registry-swap test helper: `internal/services/access/testing.go` (implemented).
-- Phase 0 connectors: `internal/services/access/connectors/microsoft/`, `internal/services/access/connectors/google_workspace/`, `internal/services/access/connectors/okta/` (implemented — minimum capabilities).
+- Phase 0–1 Tier 1 connectors (all 10 implemented — minimum capabilities): `internal/services/access/connectors/microsoft/`, `internal/services/access/connectors/google_workspace/`, `internal/services/access/connectors/okta/`, `internal/services/access/connectors/auth0/`, `internal/services/access/connectors/generic_saml/`, `internal/services/access/connectors/generic_oidc/`, `internal/services/access/connectors/duo/`, `internal/services/access/connectors/onepassword/`, `internal/services/access/connectors/lastpass/`, `internal/services/access/connectors/ping_identity/`.
 - Service entry: `internal/services/access/service.go` (target; parallels `shieldnet360-backend/internal/services/integration/service.go:188-262`).
 
 ---
