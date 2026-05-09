@@ -327,6 +327,21 @@ sequenceDiagram
 
 Crucially: **drafts never touch OpenZiti.** Promotion is the only path that creates a `ServicePolicy`. There is no "create live policy directly" code path — every live policy was a draft for at least one transaction.
 
+### Phase 3 reference points (current backend implementation)
+
+| Concern | File |
+|---------|------|
+| Policy model + lifecycle helpers | `internal/models/policy.go` |
+| Team / membership stub model | `internal/models/team.go` |
+| Resource stub model | `internal/models/resource.go` |
+| Migration (creates `policies`, `teams`, `team_members`, `resources`) | `internal/migrations/003_create_policy_tables.go` |
+| `PolicyService` (`CreateDraft` / `GetDraft` / `ListDrafts` / `GetPolicy` / `Simulate` / `Promote` / `TestAccess`) | `internal/services/access/policy_service.go` |
+| `ImpactResolver` (selector → affected teams / members / resources) | `internal/services/access/impact_resolver.go` |
+| `ConflictDetector` (redundant / contradictory classification) | `internal/services/access/conflict_detector.go` |
+| "Drafts do not call OpenZiti" integration test | `internal/services/access/policy_service_test.go::TestPromote_DoesNotInvokeOpenZiti` |
+
+The OpenZiti `ServicePolicy` write that appears in the sequence diagram above (step 23) is **not** implemented in this repo — that integration lives in the `ztna-business-layer`. `PolicyService.Promote` flips the DB state (`is_draft=false`, `promoted_at`, `promoted_by`); the ZTNA layer subscribes to promoted policies and reconciles them with OpenZiti.
+
 ---
 
 ## 6. Access review campaign flow
@@ -372,6 +387,18 @@ sequenceDiagram
 ```
 
 Auto-certification rate is observable as a campaign-level metric. Operators can disable auto-certification per resource category if they want full human-in-the-loop review.
+
+### Phase 5 reference points (current backend implementation)
+
+| Concern | File |
+|---------|------|
+| `AccessReview` campaign model | `internal/models/access_review.go` |
+| `AccessReviewDecision` per-grant decision model | `internal/models/access_review_decision.go` |
+| Migration (creates `access_reviews`, `access_review_decisions`) | `internal/migrations/004_create_access_review_tables.go` |
+| `AccessReviewService` (`StartCampaign` / `SubmitDecision` / `CloseCampaign` / `AutoRevoke`) | `internal/services/access/review_service.go` |
+| Composes `AccessProvisioningService` to revoke grants | `internal/services/access/provisioning_service.go` |
+
+The AI auto-certification path in the sequence diagram above (steps 4–7) is **not** implemented in this repo — `AccessReview.AutoCertifyEnabled` is wired through and the agent will flip pending → certify on its own schedule. `SubmitDecision` decouples DB writes from the upstream `Revoke` call (decision row commits first, then the connector revoke runs); `AutoRevoke` is the idempotent catch-up that reconciles revoke decisions whose upstream side-effect has not yet executed.
 
 ---
 

@@ -4,7 +4,7 @@ Last updated: keep this file in sync as PRs land. The state here should agree wi
 
 For the canonical phase definitions (and what "shipped" means), see `PHASES.md`. For the design contract see `PROPOSAL.md`.
 
-Status: **In progress | ~25 %**. Phase 0 (contract, registry, credential manager, migration) is complete; Phase 1 Tier 1 is now feature-complete on the connector axis — all 10 Tier 1 connectors (Microsoft Entra ID, Google Workspace, Okta, Auth0, Generic SAML, Generic OIDC, Duo Security, 1Password, LastPass, Ping Identity) ship the minimum capabilities and are wired into the binaries via blank-import. Phase 1 stays 🟡 partial: the Admin UI and Keycloak SSO federation exit criteria are still unchecked. **Phase 2 is now 🟡 partial**: the four request-lifecycle tables, the request lifecycle FSM, and the request / provisioning / workflow services have landed (PR #4); Admin UI / Mobile SDK / Desktop Extension exit criteria remain open. Most rows below remain `⏳ planned`.
+Status: **In progress | ~40 %**. Phase 0 (contract, registry, credential manager, migration) is complete; Phase 1 Tier 1 is now feature-complete on the connector axis — all 10 Tier 1 connectors (Microsoft Entra ID, Google Workspace, Okta, Auth0, Generic SAML, Generic OIDC, Duo Security, 1Password, LastPass, Ping Identity) ship the minimum capabilities and are wired into the binaries via blank-import. Phase 1 stays 🟡 partial: the Admin UI and Keycloak SSO federation exit criteria are still unchecked. **Phase 2 is now 🟡 partial**: the four request-lifecycle tables, the request lifecycle FSM, and the request / provisioning / workflow services have landed (PR #4); Admin UI / Mobile SDK / Desktop Extension exit criteria remain open. **Phase 3 is now 🟡 partial**: the `policies` / `teams` / `team_members` / `resources` tables, the Policy + Team + Resource models, `PolicyService` (`CreateDraft` / `GetDraft` / `ListDrafts` / `GetPolicy` / `Simulate` / `Promote` / `TestAccess`), `ImpactResolver`, and `ConflictDetector` have landed (PR #5); the Admin UI's policy simulator and the four HTTP endpoints remain open. **Phase 5 is now 🟡 partial**: the `access_reviews` / `access_review_decisions` tables, the matching models, and `AccessReviewService` (`StartCampaign` / `SubmitDecision` / `CloseCampaign` / `AutoRevoke`) have landed (PR #5); AI auto-certification, scheduled campaigns, and notification fan-out remain open. Most rows below remain `⏳ planned`.
 
 | Status legend |  |
 |---------------|--|
@@ -260,13 +260,13 @@ Path is the target directory under `internal/services/access/connectors/` once t
 |---------|:------:|----------------------|
 | Access Connector Framework | ✅ | Phase 0 — interface, registry, AES-GCM credential encryption (PR #2) |
 | Access Request Workflow | 🟡 | Phase 2 — tables, state machine, request service, provisioning service, self-service + manager workflows (PR #4); Admin UI / Mobile SDK / Desktop Extension still ⏳ |
-| Policy Simulation Engine | ⏳ | Phase 3 — drafts, impact analysis, promotion |
+| Policy Simulation Engine | 🟡 | Phase 3 — drafts, impact analysis, conflict detection, promotion, test-access (PR #5); Admin UI policy simulator and HTTP endpoints still ⏳ |
 | AI Risk Assessment Agent | ⏳ | Phase 4 — `access_risk_assessment` skill |
 | AI Review Automation Agent | ⏳ | Phase 5 — `access_review_automation` skill |
 | AI Setup Assistant Agent | ⏳ | Phase 4 — `connector_setup_assistant` skill |
 | AI Anomaly Detection Agent | ⏳ | Phase 6 — `access_anomaly_detection` skill |
 | AI Policy Recommendation Agent | ⏳ | Phase 4 — `policy_recommendation` skill |
-| Access Review Campaigns | ⏳ | Phase 5 |
+| Access Review Campaigns | 🟡 | Phase 5 — tables, models, `StartCampaign` / `SubmitDecision` / `CloseCampaign` / `AutoRevoke` (PR #5); AI auto-certification, scheduled campaigns, and reviewer notification still ⏳ |
 | JML Automation | ⏳ | Phase 6 — joiner / mover / leaver flows over SCIM |
 | Outbound SCIM | ⏳ | Phase 6 — SCIM v2.0 push to SaaS |
 | Workflow Orchestration | ⏳ | Phase 8 — LangGraph engine |
@@ -308,10 +308,15 @@ These are explicit, sized, and ready to be picked up once Phase 0 lands. Each sh
 - **Why.** End-user product surface; everything in mobile / desktop SDK depends on it.
 - **Scope.** All four tables; state machine; self-service + manager workflows; admin UI; SDK API contracts.
 
-### 3.5 Policy simulation engine (Phase 3)
+### 3.5 Policy simulation engine (Phase 3 — remaining work)
 
-- **Why.** The flagship "safe to test" feature. SMEs are scared to change rules without it.
-- **Scope.** Draft column on `policies`; simulate / promote / test-access endpoints; impact resolver; admin UI before/after diff.
+- **What landed in PR #5.** `policies` table with `is_draft` + `draft_impact` columns; `teams` / `team_members` / `resources` stub tables; `PolicyService` with `CreateDraft` / `GetDraft` / `ListDrafts` / `GetPolicy` / `Simulate` / `Promote` / `TestAccess`; `ImpactResolver` with attribute-selector matching for teams and tag/external_id-selector matching for resources; `ConflictDetector` with redundant / contradictory classification against live policies. Drafts never create OpenZiti `ServicePolicy` until promotion (integration test enforces this).
+- **Still open.** The four HTTP endpoints (`POST /policies/draft`, `POST /policies/{id}/simulate`, `POST /policies/{id}/promote`, `POST /policies/test-access`) are handler-layer work; the Admin UI's policy simulator (before/after diff, AI-narrated highlights, conflict surfacing) is a separate frontend deliverable.
+
+### 3.6 Access review campaigns (Phase 5 — remaining work)
+
+- **What landed in PR #5.** `access_reviews` and `access_review_decisions` tables; `AccessReview` + `AccessReviewDecision` models; `AccessReviewService` with `StartCampaign` (enrols matching active grants in a single transaction), `SubmitDecision` (commits decision row, then drives upstream `Revoke` for revoke decisions), `CloseCampaign` (auto-escalates pending decisions), and `AutoRevoke` (idempotent catch-up for revoke decisions whose upstream side-effect has not yet been executed).
+- **Still open.** AI auto-certification (Phase 5 needs the `access_review_automation` skill to flip pending → certify based on usage signals); scheduled campaign templates (cron + workspace-scoped recurrence); reviewer notification fan-out (email / Slack / Mobile push); the Admin UI's campaign dashboard.
 
 ---
 
@@ -321,6 +326,7 @@ When you ship something from §3, move it here with the merge date and PR link. 
 
 | Date | What | PR | Notes |
 |------|------|----|-------|
+| 2026-05-09 | Phase 3 + Phase 5 — policy simulation engine + access review campaigns (backend) | #5 | Adds migrations `003_create_policy_tables` (`policies`, `teams`, `team_members`, `resources`) and `004_create_access_review_tables` (`access_reviews`, `access_review_decisions`). Adds `Policy` / `Team` / `TeamMember` / `Resource` / `AccessReview` / `AccessReviewDecision` models. Adds `PolicyService` (`CreateDraft` / `GetDraft` / `ListDrafts` / `GetPolicy` / `Simulate` / `Promote` / `TestAccess`), `ImpactResolver` (attribute-selector matching for teams; tag / external_id matching for resources), `ConflictDetector` (redundant / contradictory classification against live policies), and `AccessReviewService` (`StartCampaign` / `SubmitDecision` / `CloseCampaign` / `AutoRevoke`). Drafts never create OpenZiti `ServicePolicy` until promotion (integration test). Admin UI for policy simulator + access review dashboard remains ⏳; HTTP endpoints for both phases (handler layer) are open follow-ups. |
 | 2026-05-09 | Phase 2 — access request tables, state machine, request / provisioning / workflow services | #4 | Adds `access_requests`, `access_request_state_history`, `access_grants`, `access_workflows` tables and migration `002_create_access_request_tables`. Adds `request_state_machine.go` (pure FSM, mirrors `ztna-business-layer/internal/state_machine/`), `request_service.go` (`CreateRequest` / `ApproveRequest` / `DenyRequest` / `CancelRequest`), `provisioning_service.go` (connector-based `Provision` / `Revoke` with `provision_failed` retry path), and `workflow_service.go` (`ResolveWorkflow` + `ExecuteWorkflow` with auto-approve / manager-approval steps). Admin UI, Mobile SDK, Desktop Extension exit criteria remain ⏳. |
 | 2026-05-09 | Phase 1 — remaining 7 Tier 1 connectors | #N | Auth0, Generic SAML, Generic OIDC, Duo Security, 1Password, LastPass, Ping Identity. Each ships `Validate` (pure-local) + `Connect` + `SyncIdentities`/`CountIdentities` (or no-op for SSO-only providers) + `GetSSOMetadata`/`GetCredentialsMetadata`. `ProvisionAccess` / `RevokeAccess` / `ListEntitlements` remain Phase 1 stubs. |
 | 2026-05-09 | Phase 0 — contract, registry, credential manager, migration | #2 | Full Phase 0 exit criteria met. First 3 connectors (Microsoft, Google Workspace, Okta) with `Validate` + `Connect` + `SyncIdentities` |

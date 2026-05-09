@@ -29,7 +29,7 @@ func openTestDB(t *testing.T) *gorm.DB {
 // catches "added the file but forgot to wire it into All()" wiring bugs.
 func TestAll_ReturnsAllMigrations(t *testing.T) {
 	got := All()
-	want := []string{"001", "002"}
+	want := []string{"001", "002", "003", "004"}
 	if len(got) != len(want) {
 		t.Fatalf("All() returned %d migrations; want %d", len(got), len(want))
 	}
@@ -63,6 +63,12 @@ func TestRunAll_AutoMigratesEveryTable(t *testing.T) {
 		"access_request_state_history",
 		"access_grants",
 		"access_workflows",
+		"policies",
+		"teams",
+		"team_members",
+		"resources",
+		"access_reviews",
+		"access_review_decisions",
 	}
 	mig := db.Migrator()
 	for _, table := range wantTables {
@@ -97,6 +103,66 @@ func TestMigration002_RejectsNilDB(t *testing.T) {
 	}
 }
 
+// TestMigration003_IsIdempotent asserts that running the Phase 3 migration
+// a second time is a no-op. AutoMigrate is idempotent by contract; we
+// regression-test it because losing that property silently is one of the
+// scarier ways a migration can go wrong in production.
+func TestMigration003_IsIdempotent(t *testing.T) {
+	db := openTestDB(t)
+	if err := Migration001CreateAccessConnectors(db); err != nil {
+		t.Fatalf("migration 001 failed: %v", err)
+	}
+	if err := Migration002CreateAccessRequestTables(db); err != nil {
+		t.Fatalf("migration 002 failed: %v", err)
+	}
+	if err := Migration003CreatePolicyTables(db); err != nil {
+		t.Fatalf("first run of migration 003 failed: %v", err)
+	}
+	if err := Migration003CreatePolicyTables(db); err != nil {
+		t.Fatalf("second run of migration 003 was not idempotent: %v", err)
+	}
+}
+
+// TestMigration003_RejectsNilDB exercises the defensive guard so we are
+// notified if a future refactor accidentally drops it.
+func TestMigration003_RejectsNilDB(t *testing.T) {
+	if err := Migration003CreatePolicyTables(nil); err == nil {
+		t.Fatal("expected error for nil db, got nil")
+	}
+}
+
+// TestMigration004_IsIdempotent asserts that running the Phase 5
+// migration a second time is a no-op. AutoMigrate is idempotent by
+// contract; we regression-test it because losing that property
+// silently is one of the scarier ways a migration can go wrong in
+// production.
+func TestMigration004_IsIdempotent(t *testing.T) {
+	db := openTestDB(t)
+	if err := Migration001CreateAccessConnectors(db); err != nil {
+		t.Fatalf("migration 001 failed: %v", err)
+	}
+	if err := Migration002CreateAccessRequestTables(db); err != nil {
+		t.Fatalf("migration 002 failed: %v", err)
+	}
+	if err := Migration003CreatePolicyTables(db); err != nil {
+		t.Fatalf("migration 003 failed: %v", err)
+	}
+	if err := Migration004CreateAccessReviewTables(db); err != nil {
+		t.Fatalf("first run of migration 004 failed: %v", err)
+	}
+	if err := Migration004CreateAccessReviewTables(db); err != nil {
+		t.Fatalf("second run of migration 004 was not idempotent: %v", err)
+	}
+}
+
+// TestMigration004_RejectsNilDB exercises the defensive guard so we are
+// notified if a future refactor accidentally drops it.
+func TestMigration004_RejectsNilDB(t *testing.T) {
+	if err := Migration004CreateAccessReviewTables(nil); err == nil {
+		t.Fatal("expected error for nil db, got nil")
+	}
+}
+
 // TestModelTableNames pins the TableName() overrides so accidental renames
 // surface as a unit-test failure instead of an at-runtime migration mismatch.
 func TestModelTableNames(t *testing.T) {
@@ -109,6 +175,12 @@ func TestModelTableNames(t *testing.T) {
 		{"state_history", (models.AccessRequestStateHistory{}).TableName(), "access_request_state_history"},
 		{"access_grant", (models.AccessGrant{}).TableName(), "access_grants"},
 		{"access_workflow", (models.AccessWorkflow{}).TableName(), "access_workflows"},
+		{"policy", (models.Policy{}).TableName(), "policies"},
+		{"team", (models.Team{}).TableName(), "teams"},
+		{"team_member", (models.TeamMember{}).TableName(), "team_members"},
+		{"resource", (models.Resource{}).TableName(), "resources"},
+		{"access_review", (models.AccessReview{}).TableName(), "access_reviews"},
+		{"access_review_decision", (models.AccessReviewDecision{}).TableName(), "access_review_decisions"},
 	}
 	for _, tc := range cases {
 		if tc.got != tc.want {
