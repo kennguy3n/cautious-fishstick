@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -42,6 +43,29 @@ type RequestApprover interface {
 // approver — typically an *AccessRequestService.
 func NewWorkflowService(db *gorm.DB, requestSvc RequestApprover) *WorkflowService {
 	return &WorkflowService{db: db, requestSvc: requestSvc}
+}
+
+// SensitiveResourceRiskFactor is the canonical RiskFactors entry the
+// AI agent emits when a request targets a resource tagged sensitive.
+// Phase 8 risk routing treats this factor as a forced escalation to
+// security_review regardless of risk score (mirrors workflow_engine.SensitiveTag).
+const SensitiveResourceRiskFactor = "sensitive_resource"
+
+// WorkflowResolution is the result of risk-aware workflow resolution.
+// One of `Workflow` (a row in access_workflows) or `SyntheticType` is
+// populated; the latter encodes "no DB workflow matched, but risk
+// routing has spoken — synthesize a workflow of this type at execute
+// time".
+type WorkflowResolution struct {
+	// Workflow is the matched access_workflows row, or nil.
+	Workflow *models.AccessWorkflow
+	// SyntheticType is the step type a fall-through risk router
+	// suggested when no DB workflow matched. Empty when Workflow is
+	// non-nil.
+	SyntheticType string
+	// Reason is a human-readable string explaining the resolution
+	// (e.g. "matched workflow X", "risk=high → security_review").
+	Reason string
 }
 
 // matchRule encodes the JSON shape understood by Phase 2's matcher. All
@@ -113,6 +137,81 @@ func (s *WorkflowService) ResolveWorkflow(ctx context.Context, request *models.A
 	return nil, nil
 }
 
+// ResolveWorkflowWithRisk wraps ResolveWorkflow with the Phase 8 risk
+// router: when no DB workflow matches, the router classifies the
+// request by RiskScore + RiskFactors and picks a synthetic step type.
+//
+// Routing table (mirrors workflow_engine.RiskRouter.Route):
+//
+//	risk_factors contains "sensitive_resource"  → security_review (forced)
+//	risk_score = "high"                         → security_review
+//	risk_score = "medium" or unknown            → manager_approval (fail-safe)
+//	risk_score = "low"                          → auto_approve   (self_service)
+//
+// Returns a WorkflowResolution. Callers ExecuteWorkflow against
+// resolution.Workflow when non-nil; otherwise they synthesize a
+// single-step workflow with type = resolution.SyntheticType.
+func (s *WorkflowService) ResolveWorkflowWithRisk(ctx context.Context, request *models.AccessRequest) (*WorkflowResolution, error) {
+	wf, err := s.ResolveWorkflow(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	if wf != nil {
+		return &WorkflowResolution{
+			Workflow: wf,
+			Reason:   fmt.Sprintf("matched workflow %s", wf.ID),
+		}, nil
+	}
+	if request == nil {
+		return nil, fmt.Errorf("%w: request is required", ErrValidation)
+	}
+	tags := decodeRiskFactors(request.RiskFactors)
+	stepType, reason := riskRoute(request.RiskScore, tags)
+	return &WorkflowResolution{
+		SyntheticType: stepType,
+		Reason:        reason,
+	}, nil
+}
+
+// decodeRiskFactors safely decodes AccessRequest.RiskFactors into a
+// []string. Empty / malformed payloads decode to nil.
+func decodeRiskFactors(raw []byte) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var factors []string
+	if err := json.Unmarshal(raw, &factors); err != nil {
+		return nil
+	}
+	return factors
+}
+
+// riskRoute maps (riskScore, factors) to the workflow step type the
+// Phase 8 router would choose. Kept package-internal so external
+// callers go through ResolveWorkflowWithRisk.
+//
+// The string returned is one of:
+//   - models.WorkflowStepAutoApprove     (low → self_service)
+//   - models.WorkflowStepManagerApproval (medium / unknown)
+//   - models.WorkflowStepSecurityReview  (high or sensitive)
+func riskRoute(riskScore string, factors []string) (string, string) {
+	for _, f := range factors {
+		if strings.EqualFold(strings.TrimSpace(f), SensitiveResourceRiskFactor) {
+			return models.WorkflowStepSecurityReview, "risk_factor=sensitive_resource → security_review"
+		}
+	}
+	switch strings.TrimSpace(strings.ToLower(riskScore)) {
+	case models.RequestRiskLow:
+		return models.WorkflowStepAutoApprove, "risk=low → self_service"
+	case models.RequestRiskHigh:
+		return models.WorkflowStepSecurityReview, "risk=high → security_review"
+	case models.RequestRiskMedium:
+		return models.WorkflowStepManagerApproval, "risk=medium → manager_approval"
+	default:
+		return models.WorkflowStepManagerApproval, "risk=unknown → manager_approval (fail-safe)"
+	}
+}
+
 // ExecuteWorkflow runs the matched workflow's first step. Phase 2 only
 // honours auto_approve and manager_approval; an unrecognised step type
 // returns ErrWorkflowExecution so misconfigured workflows fail loudly.
@@ -156,9 +255,15 @@ func (s *WorkflowService) ExecuteWorkflow(
 	switch step {
 	case models.WorkflowStepAutoApprove:
 		return s.requestSvc.ApproveRequest(ctx, request.ID, actorUserID, reason)
-	case models.WorkflowStepManagerApproval:
-		// Leave the request in RequestStateRequested. The manager will
-		// flip it via API when they act. Nothing to do here.
+	case models.WorkflowStepManagerApproval,
+		models.WorkflowStepSecurityReview,
+		models.WorkflowStepMultiLevel:
+		// Leave the request in RequestStateRequested. The manager,
+		// security reviewer, or first multi_level approver will flip
+		// it via API when they act. Phase 8 introduces escalation
+		// timers that may rewrite this row later via
+		// EscalationChecker, but ExecuteWorkflow is synchronous and
+		// has nothing to do here.
 		return nil
 	default:
 		return fmt.Errorf("%w: unknown step type %q", ErrWorkflowExecution, step)
