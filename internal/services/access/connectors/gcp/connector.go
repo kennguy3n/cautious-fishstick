@@ -24,9 +24,17 @@ import (
 )
 
 const (
-	ProviderName        = "gcp"
-	defaultBaseURL      = "https://cloudresourcemanager.googleapis.com"
-	cloudPlatformScope  = "https://www.googleapis.com/auth/cloud-platform.read-only"
+	ProviderName   = "gcp"
+	defaultBaseURL = "https://cloudresourcemanager.googleapis.com"
+	// cloudPlatformReadScope grants read-only access to GCP project
+	// metadata and IAM policies — sufficient for SyncIdentities,
+	// CountIdentities, and ListEntitlements.
+	cloudPlatformReadScope = "https://www.googleapis.com/auth/cloud-platform.read-only"
+	// cloudPlatformWriteScope is required for IAM mutations
+	// (setIamPolicy). ProvisionAccess and RevokeAccess use the
+	// write-capable client; the read-only client continues to power
+	// non-mutating paths.
+	cloudPlatformWriteScope = "https://www.googleapis.com/auth/cloud-platform"
 )
 
 // ErrNotImplemented is retained for any future capability that is not yet
@@ -47,9 +55,15 @@ type Secrets struct {
 }
 
 type GCPAccessConnector struct {
-	httpClient    func(ctx context.Context, cfg Config, secrets Secrets) (httpDoer, error)
-	urlOverride   string
-	tokenOverride func(ctx context.Context, cfg Config, secrets Secrets) (string, error)
+	httpClient func(ctx context.Context, cfg Config, secrets Secrets) (httpDoer, error)
+	// httpWriteClient mirrors httpClient for tests that want to assert
+	// ProvisionAccess / RevokeAccess pick the write-capable client. When
+	// nil, write paths fall back to httpClient (so existing tests keep
+	// working). In production, both fields are nil and the JWT-config
+	// builder runs with the appropriate scope.
+	httpWriteClient func(ctx context.Context, cfg Config, secrets Secrets) (httpDoer, error)
+	urlOverride     string
+	tokenOverride   func(ctx context.Context, cfg Config, secrets Secrets) (string, error)
 }
 
 func New() *GCPAccessConnector { return &GCPAccessConnector{} }
@@ -134,14 +148,39 @@ func (c *GCPAccessConnector) decodeBoth(configRaw, secretsRaw map[string]interfa
 	return cfg, s, nil
 }
 
+// cloudResourceClient returns a read-only client used by all
+// non-mutating paths (Connect probe, SyncIdentities, CountIdentities,
+// ListEntitlements, and the initial getIamPolicy step of
+// modifyBinding).
 func (c *GCPAccessConnector) cloudResourceClient(ctx context.Context, cfg Config, secrets Secrets) (httpDoer, error) {
+	return c.cloudResourceClientWithScope(ctx, cfg, secrets, cloudPlatformReadScope)
+}
+
+// cloudResourceWriteClient returns a write-capable client used
+// exclusively by ProvisionAccess and RevokeAccess (which call
+// setIamPolicy). The write scope subsumes the read scope, so the
+// embedded getIamPolicy call still works. Tests may inject
+// httpWriteClient to observe write traffic separately from read
+// traffic.
+func (c *GCPAccessConnector) cloudResourceWriteClient(ctx context.Context, cfg Config, secrets Secrets) (httpDoer, error) {
+	if c.httpWriteClient != nil {
+		return c.httpWriteClient(ctx, cfg, secrets)
+	}
+	return c.cloudResourceClientWithScope(ctx, cfg, secrets, cloudPlatformWriteScope)
+}
+
+// cloudResourceClientWithScope is the underlying builder. Test
+// overrides (httpClient / tokenOverride) bypass the JWT exchange
+// entirely; the scope argument only matters for the production path
+// that minted a real OAuth2 access token.
+func (c *GCPAccessConnector) cloudResourceClientWithScope(ctx context.Context, cfg Config, secrets Secrets, scope string) (httpDoer, error) {
 	if c.httpClient != nil {
 		return c.httpClient(ctx, cfg, secrets)
 	}
 	if c.tokenOverride != nil {
 		return &bearerTransportClient{ctx: ctx, cfg: cfg, secrets: secrets, token: c.tokenOverride, inner: &http.Client{Timeout: 30 * time.Second}}, nil
 	}
-	jwtConfig, err := google.JWTConfigFromJSON([]byte(secrets.ServiceAccountJSON), cloudPlatformScope)
+	jwtConfig, err := google.JWTConfigFromJSON([]byte(secrets.ServiceAccountJSON), scope)
 	if err != nil {
 		return nil, fmt.Errorf("gcp: parse service account: %w", err)
 	}
@@ -399,7 +438,7 @@ func (c *GCPAccessConnector) modifyBinding(
 	if err != nil {
 		return err
 	}
-	client, err := c.cloudResourceClient(ctx, cfg, secrets)
+	client, err := c.cloudResourceWriteClient(ctx, cfg, secrets)
 	if err != nil {
 		return err
 	}

@@ -421,3 +421,132 @@ func TestSyncIdentities_PaginatesAndMaps(t *testing.T) {
 func drainBody(r io.Reader) {
 	_, _ = io.Copy(io.Discard, r)
 }
+
+// TestAdminSDKWriteScopes pins the scopes the connector mints for write
+// paths. ProvisionAccess and RevokeAccess POST/DELETE against
+// /groups/{id}/members and the Licensing API; both require non-readonly
+// scopes. A regression here would cause production writes to 403 against
+// real Google APIs while local tests (which bypass OAuth2 via httpClientFor)
+// continue to pass.
+func TestAdminSDKWriteScopes(t *testing.T) {
+	want := map[string]bool{
+		"https://www.googleapis.com/auth/admin.directory.group.member": true,
+		"https://www.googleapis.com/auth/apps.licensing":               true,
+	}
+	got := make(map[string]bool, len(adminSDKWriteScopes))
+	for _, s := range adminSDKWriteScopes {
+		got[s] = true
+		if strings.HasSuffix(s, ".readonly") && (strings.Contains(s, "group.member") || strings.Contains(s, "apps.licensing")) {
+			t.Errorf("write scopes must not include readonly variant of %q", s)
+		}
+	}
+	for k := range want {
+		if !got[k] {
+			t.Errorf("adminSDKWriteScopes missing required scope %q", k)
+		}
+	}
+	// Read scopes must remain readonly-only.
+	for _, s := range adminSDKScopes {
+		if !strings.HasSuffix(s, ".readonly") {
+			t.Errorf("adminSDKScopes must be read-only; got %q", s)
+		}
+	}
+}
+
+// TestProvisionAccess_UsesWriteClient asserts ProvisionAccess routes through
+// directoryWriteClient (i.e. the writeHTTPClientFor hook) and not the
+// read-only directoryClient. Read-only paths (Connect, SyncIdentities,
+// ListEntitlements) must not be observed by the write hook.
+func TestProvisionAccess_UsesWriteClient(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(server.Close)
+
+	var readCalls, writeCalls int
+	c := New()
+	c.httpClientFor = func(_ context.Context, _ Config, _ Secrets) (httpDoer, error) {
+		readCalls++
+		return &fakeDirectoryClient{base: server.URL, c: server.Client()}, nil
+	}
+	c.writeHTTPClientFor = func(_ context.Context, _ Config, _ Secrets) (httpDoer, error) {
+		writeCalls++
+		return &fakeDirectoryClient{base: server.URL, c: server.Client()}, nil
+	}
+
+	err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(t), access.AccessGrant{
+		UserExternalID: "alice@example.com", ResourceExternalID: "engineering@example.com", Role: "MEMBER",
+	})
+	if err != nil {
+		t.Fatalf("ProvisionAccess: %v", err)
+	}
+	if readCalls != 0 {
+		t.Errorf("read client builder invoked %d times; ProvisionAccess must use the write client only", readCalls)
+	}
+	if writeCalls != 1 {
+		t.Errorf("write client builder invoked %d times; want 1", writeCalls)
+	}
+}
+
+// TestRevokeAccess_UsesWriteClient mirrors TestProvisionAccess_UsesWriteClient.
+func TestRevokeAccess_UsesWriteClient(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+
+	var readCalls, writeCalls int
+	c := New()
+	c.httpClientFor = func(_ context.Context, _ Config, _ Secrets) (httpDoer, error) {
+		readCalls++
+		return &fakeDirectoryClient{base: server.URL, c: server.Client()}, nil
+	}
+	c.writeHTTPClientFor = func(_ context.Context, _ Config, _ Secrets) (httpDoer, error) {
+		writeCalls++
+		return &fakeDirectoryClient{base: server.URL, c: server.Client()}, nil
+	}
+
+	err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(t), access.AccessGrant{
+		UserExternalID: "alice@example.com", ResourceExternalID: "engineering@example.com", Role: "MEMBER",
+	})
+	if err != nil {
+		t.Fatalf("RevokeAccess: %v", err)
+	}
+	if readCalls != 0 {
+		t.Errorf("read client builder invoked %d times; RevokeAccess must use the write client only", readCalls)
+	}
+	if writeCalls != 1 {
+		t.Errorf("write client builder invoked %d times; want 1", writeCalls)
+	}
+}
+
+// TestListEntitlements_UsesReadClient asserts that ListEntitlements stays on
+// the read-only directoryClient (least privilege).
+func TestListEntitlements_UsesReadClient(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"groups":[]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	var readCalls, writeCalls int
+	c := New()
+	c.httpClientFor = func(_ context.Context, _ Config, _ Secrets) (httpDoer, error) {
+		readCalls++
+		return &fakeDirectoryClient{base: server.URL, c: server.Client()}, nil
+	}
+	c.writeHTTPClientFor = func(_ context.Context, _ Config, _ Secrets) (httpDoer, error) {
+		writeCalls++
+		return &fakeDirectoryClient{base: server.URL, c: server.Client()}, nil
+	}
+
+	if _, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(t), "alice@example.com"); err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if writeCalls != 0 {
+		t.Errorf("write client builder invoked %d times; ListEntitlements must use the read-only client", writeCalls)
+	}
+	if readCalls != 1 {
+		t.Errorf("read client builder invoked %d times; want 1", readCalls)
+	}
+}

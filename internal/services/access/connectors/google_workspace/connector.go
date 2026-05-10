@@ -41,11 +41,25 @@ const (
 )
 
 // adminSDKScopes are the Admin SDK Directory scopes required for read-only
-// identity / group sync.
+// identity / group sync. Used by directoryClient (Connect probe, identity
+// sync, group sync, ListEntitlements).
 var adminSDKScopes = []string{
 	"https://www.googleapis.com/auth/admin.directory.user.readonly",
 	"https://www.googleapis.com/auth/admin.directory.group.readonly",
 	"https://www.googleapis.com/auth/admin.directory.group.member.readonly",
+}
+
+// adminSDKWriteScopes are required for ProvisionAccess / RevokeAccess: the
+// non-readonly group.member scope authorizes POST / DELETE on
+// /groups/{id}/members, and apps.licensing authorizes the Licensing API
+// product/sku assign + unassign endpoints. The read-only directory.user
+// scope is retained so the same client can still drive ListEntitlements
+// pagination if a caller chooses to share it.
+var adminSDKWriteScopes = []string{
+	"https://www.googleapis.com/auth/admin.directory.user.readonly",
+	"https://www.googleapis.com/auth/admin.directory.group.readonly",
+	"https://www.googleapis.com/auth/admin.directory.group.member",
+	"https://www.googleapis.com/auth/apps.licensing",
 }
 
 type httpDoer interface {
@@ -56,6 +70,11 @@ type httpDoer interface {
 // access.GroupSyncer for Google Workspace.
 type GoogleWorkspaceAccessConnector struct {
 	httpClientFor func(ctx context.Context, cfg Config, secrets Secrets) (httpDoer, error)
+	// writeHTTPClientFor mirrors httpClientFor for tests that want to
+	// assert that ProvisionAccess / RevokeAccess use the write-capable
+	// client. When nil, write paths fall back to httpClientFor (so
+	// existing tests continue to work without modification).
+	writeHTTPClientFor func(ctx context.Context, cfg Config, secrets Secrets) (httpDoer, error)
 	// scimBearerTokenFor lets the SCIM composition skip the JWT
 	// dance in tests and return a static token. Production paths
 	// leave this nil and acquire a token via the service-account
@@ -373,7 +392,7 @@ func (c *GoogleWorkspaceAccessConnector) ProvisionAccess(
 	if err != nil {
 		return err
 	}
-	client, err := c.directoryClient(ctx, cfg, secrets)
+	client, err := c.directoryWriteClient(ctx, cfg, secrets)
 	if err != nil {
 		return err
 	}
@@ -426,7 +445,7 @@ func (c *GoogleWorkspaceAccessConnector) RevokeAccess(
 	if err != nil {
 		return err
 	}
-	client, err := c.directoryClient(ctx, cfg, secrets)
+	client, err := c.directoryWriteClient(ctx, cfg, secrets)
 	if err != nil {
 		return err
 	}
@@ -631,13 +650,34 @@ func decodeBoth(configRaw, secretsRaw map[string]interface{}) (Config, Secrets, 
 }
 
 // directoryClient builds a JWT-config OAuth2 client that impersonates
-// AdminEmail via domain-wide delegation. Tests inject a stub via
-// httpClientFor so they never reach Google.
+// AdminEmail via domain-wide delegation. Used for read-only paths
+// (Connect probe, identity sync, group sync, ListEntitlements). Tests
+// inject a stub via httpClientFor so they never reach Google.
 func (c *GoogleWorkspaceAccessConnector) directoryClient(ctx context.Context, cfg Config, secrets Secrets) (httpDoer, error) {
 	if c.httpClientFor != nil {
 		return c.httpClientFor(ctx, cfg, secrets)
 	}
-	jwtConfig, err := google.JWTConfigFromJSON([]byte(secrets.ServiceAccountKey), adminSDKScopes...)
+	return c.buildDirectoryClient(ctx, cfg, secrets, adminSDKScopes)
+}
+
+// directoryWriteClient is the write-capable counterpart used by
+// ProvisionAccess and RevokeAccess (group member POST/DELETE and the
+// Licensing API). It mints a token under adminSDKWriteScopes so the
+// production OAuth2 path is authorized to mutate state. Tests can
+// inject writeHTTPClientFor to observe write traffic separately, or
+// rely on httpClientFor as the shared fallback.
+func (c *GoogleWorkspaceAccessConnector) directoryWriteClient(ctx context.Context, cfg Config, secrets Secrets) (httpDoer, error) {
+	if c.writeHTTPClientFor != nil {
+		return c.writeHTTPClientFor(ctx, cfg, secrets)
+	}
+	if c.httpClientFor != nil {
+		return c.httpClientFor(ctx, cfg, secrets)
+	}
+	return c.buildDirectoryClient(ctx, cfg, secrets, adminSDKWriteScopes)
+}
+
+func (c *GoogleWorkspaceAccessConnector) buildDirectoryClient(ctx context.Context, cfg Config, secrets Secrets, scopes []string) (httpDoer, error) {
+	jwtConfig, err := google.JWTConfigFromJSON([]byte(secrets.ServiceAccountKey), scopes...)
 	if err != nil {
 		return nil, fmt.Errorf("google_workspace: parse service account key: %w", err)
 	}

@@ -307,3 +307,145 @@ func readAll(r *http.Request) []byte {
 	}
 	return b
 }
+
+// TestScopeConstants pins the OAuth2 scopes the connector mints. The write
+// scope must be the un-suffixed `cloud-platform` (which is required for
+// setIamPolicy); the read scope must be the `.read-only` variant. A
+// regression here would cause production ProvisionAccess / RevokeAccess
+// calls to 403 against real GCP, while local tests (which bypass OAuth2
+// via tokenOverride / httpClient) continue to pass.
+func TestScopeConstants(t *testing.T) {
+	if cloudPlatformWriteScope != "https://www.googleapis.com/auth/cloud-platform" {
+		t.Errorf("cloudPlatformWriteScope = %q; want %q",
+			cloudPlatformWriteScope,
+			"https://www.googleapis.com/auth/cloud-platform")
+	}
+	if !strings.HasSuffix(cloudPlatformReadScope, ".read-only") {
+		t.Errorf("cloudPlatformReadScope must end in .read-only; got %q", cloudPlatformReadScope)
+	}
+	if cloudPlatformWriteScope == cloudPlatformReadScope {
+		t.Error("write and read scopes must differ")
+	}
+	if strings.Contains(cloudPlatformWriteScope, ".read-only") {
+		t.Errorf("cloudPlatformWriteScope must not be a read-only scope; got %q", cloudPlatformWriteScope)
+	}
+}
+
+type recordingClient struct {
+	inner *http.Client
+	calls *int
+}
+
+func (r *recordingClient) Do(req *http.Request) (*http.Response, error) {
+	*r.calls++
+	return r.inner.Do(req)
+}
+
+// TestProvisionAccess_UsesWriteClient asserts that ProvisionAccess routes
+// through cloudResourceWriteClient (i.e. the httpWriteClient hook) rather
+// than the read-only cloudResourceClient. It does so by injecting two
+// distinct httpDoers — one for read (httpClient) and one for write
+// (httpWriteClient) — and verifying only the write hook was invoked.
+func TestProvisionAccess_UsesWriteClient(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, ":getIamPolicy"):
+			_, _ = w.Write([]byte(`{"etag":"BwXX","bindings":[]}`))
+		case strings.HasSuffix(r.URL.Path, ":setIamPolicy"):
+			_, _ = w.Write([]byte(`{"etag":"BwYY","bindings":[]}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	var readCalls, writeCalls int
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func(_ context.Context, _ Config, _ Secrets) (httpDoer, error) {
+		return &recordingClient{inner: srv.Client(), calls: &readCalls}, nil
+	}
+	c.httpWriteClient = func(_ context.Context, _ Config, _ Secrets) (httpDoer, error) {
+		return &recordingClient{inner: srv.Client(), calls: &writeCalls}, nil
+	}
+
+	err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "alice@example.com", ResourceExternalID: "roles/editor",
+	})
+	if err != nil {
+		t.Fatalf("ProvisionAccess: %v", err)
+	}
+	if readCalls != 0 {
+		t.Errorf("read client invoked %d times; ProvisionAccess must use the write client only", readCalls)
+	}
+	if writeCalls < 2 {
+		t.Errorf("write client invoked %d times; expected >=2 (getIamPolicy + setIamPolicy)", writeCalls)
+	}
+}
+
+// TestRevokeAccess_UsesWriteClient mirrors the assertion for RevokeAccess.
+func TestRevokeAccess_UsesWriteClient(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, ":getIamPolicy"):
+			_, _ = w.Write([]byte(`{"etag":"BwXX","bindings":[{"role":"roles/viewer","members":["user:alice@example.com"]}]}`))
+		case strings.HasSuffix(r.URL.Path, ":setIamPolicy"):
+			_, _ = w.Write([]byte(`{"etag":"BwYY","bindings":[]}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	var readCalls, writeCalls int
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func(_ context.Context, _ Config, _ Secrets) (httpDoer, error) {
+		return &recordingClient{inner: srv.Client(), calls: &readCalls}, nil
+	}
+	c.httpWriteClient = func(_ context.Context, _ Config, _ Secrets) (httpDoer, error) {
+		return &recordingClient{inner: srv.Client(), calls: &writeCalls}, nil
+	}
+
+	err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "alice@example.com", ResourceExternalID: "roles/viewer",
+	})
+	if err != nil {
+		t.Fatalf("RevokeAccess: %v", err)
+	}
+	if readCalls != 0 {
+		t.Errorf("read client invoked %d times; RevokeAccess must use the write client only", readCalls)
+	}
+	if writeCalls < 2 {
+		t.Errorf("write client invoked %d times; expected >=2 (getIamPolicy + setIamPolicy)", writeCalls)
+	}
+}
+
+// TestListEntitlements_UsesReadClient asserts that ListEntitlements stays
+// on the read-only client (least privilege).
+func TestListEntitlements_UsesReadClient(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"etag":"BwXX","bindings":[{"role":"roles/viewer","members":["user:alice@example.com"]}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	var readCalls, writeCalls int
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func(_ context.Context, _ Config, _ Secrets) (httpDoer, error) {
+		return &recordingClient{inner: srv.Client(), calls: &readCalls}, nil
+	}
+	c.httpWriteClient = func(_ context.Context, _ Config, _ Secrets) (httpDoer, error) {
+		return &recordingClient{inner: srv.Client(), calls: &writeCalls}, nil
+	}
+
+	if _, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "alice@example.com"); err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if writeCalls != 0 {
+		t.Errorf("write client invoked %d times; ListEntitlements must use the read-only client", writeCalls)
+	}
+	if readCalls < 1 {
+		t.Error("read client never invoked")
+	}
+}
