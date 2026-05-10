@@ -92,6 +92,21 @@ def run(payload: Dict[str, Any]) -> Dict[str, Any]:
     return llm_out
 
 
+# Substrings used to scrub credential-bearing wizard fields before the
+# state is sent to the LLM. Connectors commonly use names like
+# ``api_key``, ``aws_access_key_id``, ``scim_auth_header``, and
+# ``password`` — none of which contain "secret"/"token" — so the
+# deny-list has to cover the broader set of patterns.
+_SECRET_KEY_SUBSTRINGS = (
+    "secret",
+    "token",
+    "password",
+    "key",
+    "auth",
+    "credential",
+)
+
+
 def _llm_assistant(
     kind: str, user_question: str, wizard_state: Dict[str, Any], baseline: Dict[str, Any]
 ) -> Dict[str, Any]:
@@ -99,7 +114,11 @@ def _llm_assistant(
     # smuggling long prompt-injection payloads from end users.
     if len(user_question) > 1000:
         user_question = user_question[:1000] + "\u2026"
-    safe_state = {k: v for k, v in wizard_state.items() if isinstance(k, str) and "secret" not in k.lower() and "token" not in k.lower()}
+    safe_state = {
+        k: v
+        for k, v in wizard_state.items()
+        if isinstance(k, str) and not any(s in k.lower() for s in _SECRET_KEY_SUBSTRINGS)
+    }
     prompt = (
         "Help the admin configure a connector. Respond with strict JSON"
         " {\"explanation\": one-paragraph natural-language answer,"
