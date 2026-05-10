@@ -75,3 +75,62 @@ def test_run_raises_on_missing_teams() -> None:
 def test_run_raises_on_non_list_teams() -> None:
     with pytest.raises(skill.SkillError):
         skill.run({"teams": "engineering"})
+
+
+# Phase 5 — LLM-augmented recommendations.
+import pytest
+
+from skills import llm as llm_mod
+
+
+@pytest.fixture
+def llm_provider(monkeypatch):
+    monkeypatch.setenv("ACCESS_AI_LLM_PROVIDER", "fake_policy")
+    yield
+    llm_mod.set_test_provider("fake_policy", None)
+
+
+def test_llm_appends_recommendations(llm_provider) -> None:
+    from skills import policy_recommendation as skill
+    def fake(_prompt, _kwargs):
+        return (
+            '{"explanation": "merged", "recommendations": ['
+            '{"name": "Engineering -> custom", "subject_team": "engineering",'
+            ' "resource_kind": "github_repo", "action": "admin",'
+            ' "auto_provision": false, "rationale": "custom rule"}]}'
+        )
+    llm_mod.set_test_provider("fake_policy", fake)
+    result = skill.run({
+        "teams": [{"name": "engineering", "kind": "engineering"}],
+    })
+    names = [r["name"] for r in result["recommendations"]]
+    # Deterministic templates still present.
+    assert any("github write" in n for n in names)
+    # LLM-suggested rec appended.
+    assert any("custom" in n for n in names)
+    assert result["explanation"] == "merged"
+
+
+def test_llm_failure_uses_deterministic(llm_provider) -> None:
+    from skills import policy_recommendation as skill
+    def fake(_prompt, _kwargs):
+        raise RuntimeError("model down")
+    llm_mod.set_test_provider("fake_policy", fake)
+    result = skill.run({
+        "teams": [{"name": "engineering", "kind": "engineering"}],
+    })
+    # Should be the deterministic templates only.
+    assert len(result["recommendations"]) >= 1
+    assert "Phase 4 stub" in result["explanation"] or "engineering" in result["explanation"].lower()
+
+
+def test_llm_invalid_recommendations_falls_back(llm_provider) -> None:
+    from skills import policy_recommendation as skill
+    def fake(_prompt, _kwargs):
+        return '{"explanation": "bad", "recommendations": "not a list"}'
+    llm_mod.set_test_provider("fake_policy", fake)
+    result = skill.run({
+        "teams": [{"name": "engineering", "kind": "engineering"}],
+    })
+    # Falls back to deterministic.
+    assert all(isinstance(r, dict) for r in result["recommendations"])

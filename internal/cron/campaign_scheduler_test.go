@@ -2,6 +2,7 @@ package cron
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -12,6 +13,13 @@ import (
 	"github.com/kennguy3n/cautious-fishstick/internal/models"
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
+
+// testJSONMarshal is the internal helper that the skip-date tests
+// use to materialise SkipDates payloads. Defined as a top-level alias
+// so the test file's helper indirection stays trivial.
+func testJSONMarshal(v interface{}) ([]byte, error) {
+	return json.Marshal(v)
+}
 
 // stubStarter is a tiny CampaignStarter test double that records
 // each StartCampaignTx call. The optional onTx hook lets a test
@@ -81,7 +89,7 @@ func TestRun_StartsDueSchedules(t *testing.T) {
 	now := time.Date(2025, 12, 1, 12, 0, 0, 0, time.UTC)
 
 	seedSchedule(t, db, "01H00000000000000SCHED0001", now.Add(-1*time.Hour), true, 90)
-	seedSchedule(t, db, "01H00000000000000SCHED0002", now.Add(1*time.Hour), true, 90) // future
+	seedSchedule(t, db, "01H00000000000000SCHED0002", now.Add(1*time.Hour), true, 90)   // future
 	seedSchedule(t, db, "01H00000000000000SCHED0003", now.Add(-1*time.Hour), false, 90) // inactive
 
 	s := NewCampaignScheduler(db, starter)
@@ -253,5 +261,129 @@ func TestSetDefaultDueWindow_IgnoresZero(t *testing.T) {
 	s.SetDefaultDueWindow(7 * 24 * time.Hour)
 	if s.defaultDue != 7*24*time.Hour {
 		t.Fatalf("defaultDue = %v; want 7d", s.defaultDue)
+	}
+}
+
+// seedScheduleWithSkipDates is like seedSchedule but also sets the
+// SkipDates JSON column. Used by the Phase 5 skip-date tests.
+func seedScheduleWithSkipDates(t *testing.T, db *gorm.DB, id string, nextRunAt time.Time, skipDates []string) {
+	t.Helper()
+	raw, err := jsonMarshal(skipDates)
+	if err != nil {
+		t.Fatalf("marshal skip_dates: %v", err)
+	}
+	row := &models.AccessCampaignSchedule{
+		ID:            id,
+		WorkspaceID:   "01H000000000000000WORKSPACE",
+		Name:          "Q4 access check-up",
+		FrequencyDays: 90,
+		NextRunAt:     nextRunAt,
+		IsActive:      true,
+		SkipDates:     raw,
+	}
+	if err := db.Create(row).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+}
+
+// jsonMarshal is a thin wrapper around encoding/json.Marshal used by
+// the skip-date tests below. We import encoding/json at the top of
+// the file (added alongside the new tests).
+func jsonMarshal(v interface{}) ([]byte, error) {
+	return testJSONMarshal(v)
+}
+
+// TestRun_SkipsCampaignOnSkipDate validates that a schedule whose
+// SkipDates list contains today bumps NextRunAt without starting a
+// campaign.
+func TestRun_SkipsCampaignOnSkipDate(t *testing.T) {
+	db := newSchedDB(t)
+	starter := &stubStarter{}
+	now := time.Date(2026, 12, 25, 8, 0, 0, 0, time.UTC) // Christmas
+	originalNext := now.Add(-1 * time.Hour)
+	seedScheduleWithSkipDates(t, db, "01HSCHED0000000000SKIP1", originalNext, []string{"2026-12-25"})
+
+	s := NewCampaignScheduler(db, starter)
+	s.SetClock(func() time.Time { return now })
+	if err := s.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(starter.calls) != 0 {
+		t.Errorf("StartCampaign calls = %d; want 0 (today is a skip date)", len(starter.calls))
+	}
+	var got models.AccessCampaignSchedule
+	if err := db.Where("id = ?", "01HSCHED0000000000SKIP1").First(&got).Error; err != nil {
+		t.Fatalf("read-back: %v", err)
+	}
+	want := now.Add(90 * 24 * time.Hour)
+	if !got.NextRunAt.Equal(want) {
+		t.Errorf("NextRunAt = %v; want bumped to %v", got.NextRunAt, want)
+	}
+}
+
+// TestRun_SkipDatesNotMatchingTodayRunsNormally exercises the
+// non-skip path: schedules with a SkipDates list that does NOT
+// contain today still start a campaign.
+func TestRun_SkipDatesNotMatchingTodayRunsNormally(t *testing.T) {
+	db := newSchedDB(t)
+	starter := &stubStarter{}
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	originalNext := now.Add(-1 * time.Hour)
+	seedScheduleWithSkipDates(t, db, "01HSCHED0000000000SKIP2", originalNext, []string{"2026-12-25", "2027-01-01"})
+
+	s := NewCampaignScheduler(db, starter)
+	s.SetClock(func() time.Time { return now })
+	if err := s.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(starter.calls) != 1 {
+		t.Errorf("StartCampaign calls = %d; want 1", len(starter.calls))
+	}
+}
+
+// TestRun_EmptySkipDatesAlwaysRuns covers the boundary case of a
+// JSON-null / empty SkipDates column — never skip.
+func TestRun_EmptySkipDatesAlwaysRuns(t *testing.T) {
+	db := newSchedDB(t)
+	starter := &stubStarter{}
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	seedSchedule(t, db, "01HSCHED0000000000SKIP3", now.Add(-1*time.Hour), true, 90)
+	s := NewCampaignScheduler(db, starter)
+	s.SetClock(func() time.Time { return now })
+	if err := s.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(starter.calls) != 1 {
+		t.Errorf("StartCampaign calls = %d; want 1", len(starter.calls))
+	}
+}
+
+// TestRun_MalformedSkipDatesProceedsAsRun covers the operator-error
+// path: a corrupt SkipDates JSON should NOT strand the campaign — we
+// log the decode error and continue with a normal run.
+func TestRun_MalformedSkipDatesProceedsAsRun(t *testing.T) {
+	db := newSchedDB(t)
+	starter := &stubStarter{}
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	row := &models.AccessCampaignSchedule{
+		ID:            "01HSCHED0000000000SKIP4",
+		WorkspaceID:   "01H000000000000000WORKSPACE",
+		Name:          "Q4 access check-up",
+		FrequencyDays: 90,
+		NextRunAt:     now.Add(-1 * time.Hour),
+		IsActive:      true,
+		SkipDates:     []byte("not-json"),
+	}
+	if err := db.Create(row).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	s := NewCampaignScheduler(db, starter)
+	s.SetClock(func() time.Time { return now })
+	if err := s.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(starter.calls) != 1 {
+		t.Errorf("StartCampaign calls = %d; want 1 (malformed skip dates → run normally)", len(starter.calls))
 	}
 }

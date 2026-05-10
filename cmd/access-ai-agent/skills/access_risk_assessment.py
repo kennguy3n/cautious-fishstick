@@ -12,7 +12,13 @@ the same ``run(payload)`` signature.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List
+
+from .llm import LLMUnavailable, call_llm, parse_json_response
+
+
+logger = logging.getLogger(__name__)
 
 
 # Roles the platform considers privileged. A request for any of
@@ -97,11 +103,78 @@ def run(payload: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(justification, str) and len(justification.strip()) < 10:
         factors.append("weak_justification")
 
-    return {
+    deterministic = {
         "risk_score": score,
         "risk_factors": factors,
         "reason": f"Phase 4 stub scorer flagged {len(factors)} risk factor(s)",
     }
+
+    # Phase 5: try the LLM scorer, fall back to deterministic on
+    # any failure. The deterministic result is also handed to the
+    # LLM as ``baseline`` context so the model has the rule-based
+    # signals it can corroborate or override.
+    try:
+        llm_out = _llm_score(payload, deterministic)
+    except LLMUnavailable as exc:
+        logger.debug("llm risk scoring unavailable: %s", exc)
+        return deterministic
+    return llm_out
+
+
+def _llm_score(payload: Dict[str, Any], deterministic: Dict[str, Any]) -> Dict[str, Any]:
+    """Invoke the configured LLM and parse its structured response.
+
+    The model is instructed to return JSON with the same schema as
+    the deterministic scorer; on any deviation we surface
+    :class:`LLMUnavailable` so the caller falls back.
+    """
+    prompt = _build_prompt(payload, deterministic)
+    result = call_llm(
+        prompt,
+        system=(
+            "You are a security risk-scoring assistant. Respond with strict"
+            " JSON: {\"risk_score\": one of [low, medium, high], \"risk_factors\":"
+            " array of short strings, \"reason\": one sentence}."
+        ),
+    )
+    parsed = parse_json_response(result.text)
+    score = parsed.get("risk_score")
+    if score not in ALLOWED_SCORES:
+        raise LLMUnavailable(f"llm returned unknown risk_score {score!r}")
+    factors = parsed.get("risk_factors") or []
+    if not isinstance(factors, list):
+        raise LLMUnavailable("llm risk_factors is not a list")
+    factors = [f for f in factors if isinstance(f, str)]
+    reason = parsed.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        reason = deterministic["reason"]
+    return {"risk_score": score, "risk_factors": factors, "reason": reason}
+
+
+def _build_prompt(payload: Dict[str, Any], deterministic: Dict[str, Any]) -> str:
+    """Render the LLM prompt without leaking secrets.
+
+    Only fields the deterministic stub already inspected are
+    forwarded. Free-text justifications are truncated to 500 chars
+    so a malicious requester cannot smuggle a long prompt-injection
+    payload through.
+    """
+    role = payload.get("role")
+    resource = payload.get("resource_external_id")
+    tags = payload.get("resource_tags") or []
+    duration = payload.get("duration_hours")
+    justification = payload.get("justification") or ""
+    if isinstance(justification, str) and len(justification) > 500:
+        justification = justification[:500] + "\u2026"
+    return (
+        "Score this access request:\n"
+        f"role: {role}\n"
+        f"resource_external_id: {resource}\n"
+        f"resource_tags: {tags}\n"
+        f"duration_hours: {duration}\n"
+        f"justification: {justification}\n\n"
+        f"Deterministic baseline (corroborate or override): {deterministic}\n"
+    )
 
 
 def _bump(score: str) -> str:

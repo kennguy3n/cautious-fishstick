@@ -45,3 +45,29 @@ func (a *NotificationAdapter) NotifyReviewersPending(ctx context.Context, review
 	_, err := a.Inner.NotifyReviewersPending(ctx, reviewID, out)
 	return err
 }
+
+// NotifyRequester forwards a per-request status notification to the
+// inner notification service. Used by the Phase 8 workflow engine's
+// ServiceStepPerformer to ping the requester when their access
+// request enters a pending step (manager_approval / security_review
+// / multi_level).
+//
+// A nil adapter / nil Inner is a no-op success — keeps the workflow
+// engine's wiring trivial in dev and test binaries that don't have
+// any channel configured.
+func (a *NotificationAdapter) NotifyRequester(ctx context.Context, requestID, requesterUserID, message string) error {
+	if a == nil || a.Inner == nil {
+		return nil
+	}
+	_, err := a.Inner.NotifyRequester(ctx, requestID, requesterUserID, message)
+	return err
+}
+
+// NewNotificationServiceAdapter is a constructor convenience that
+// wraps the supplied *notification.NotificationService into a
+// *NotificationAdapter. Identical to manually setting Inner; the
+// constructor exists so cmd/* binaries can wire the adapter inline
+// without importing the field-init syntax.
+func NewNotificationServiceAdapter(inner *notification.NotificationService) *NotificationAdapter {
+	return &NotificationAdapter{Inner: inner}
+}

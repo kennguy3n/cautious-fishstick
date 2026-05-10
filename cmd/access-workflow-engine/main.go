@@ -29,6 +29,7 @@ import (
 	"github.com/kennguy3n/cautious-fishstick/internal/models"
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access/workflow_engine"
+	"github.com/kennguy3n/cautious-fishstick/internal/services/notification"
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/activecampaign"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/airtable"
@@ -241,7 +242,11 @@ func main() {
 	}
 	log.Printf("access-workflow-engine: %s", dbDescription)
 
-	executor := workflow_engine.NewWorkflowExecutor(db, workflow_engine.NoOpPerformer{})
+	requestSvc := access.NewAccessRequestService(db)
+	notifSvc := notification.NewNotificationService()
+	notifAdapter := access.NewNotificationServiceAdapter(notifSvc)
+	performer := workflow_engine.NewServiceStepPerformer(db, requestSvc, notifAdapter)
+	executor := workflow_engine.NewWorkflowExecutor(db, performer)
 	srv := workflow_engine.NewServer(executor)
 
 	addr := os.Getenv("ACCESS_WORKFLOW_ENGINE_LISTEN_ADDR")
@@ -256,10 +261,12 @@ func main() {
 
 	// Phase 8 escalation cron — every minute scan pending approval
 	// steps and emit Escalate calls for any past their timeout. The
-	// production wiring lives behind the noOpEscalator until
-	// notification + state-history side-effects land in Phase 9.
+	// production NotifyingEscalator writes a state-history row + fans
+	// out a notification per escalation; on a notifier failure the
+	// state-history row is still written (best-effort semantics).
+	escalator := workflow_engine.NewNotifyingEscalator(db, notifAdapter)
 	checkerCtx, cancelChecker := context.WithCancel(context.Background())
-	go runEscalationChecker(checkerCtx, db)
+	go runEscalationChecker(checkerCtx, db, escalator)
 
 	go func() {
 		log.Printf("access-workflow-engine: HTTP server listening on %s", addr)
@@ -297,7 +304,12 @@ func openDatabase() (*gorm.DB, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	if err := db.AutoMigrate(&models.AccessRequest{}, &models.AccessWorkflow{}); err != nil {
+	if err := db.AutoMigrate(
+		&models.AccessRequest{},
+		&models.AccessWorkflow{},
+		&models.AccessRequestStateHistory{},
+		&models.AccessWorkflowStepHistory{},
+	); err != nil {
 		return nil, "", err
 	}
 	desc := "in-memory sqlite (workflows will not persist)"
@@ -307,20 +319,10 @@ func openDatabase() (*gorm.DB, string, error) {
 	return db, desc, nil
 }
 
-// loggingEscalator records escalations to the structured log without
-// mutating any state. Phase 9 wires this to the notification service
-// and AccessRequestStateHistory writer.
-type loggingEscalator struct{}
-
-func (loggingEscalator) Escalate(_ context.Context, req *models.AccessRequest, wf *models.AccessWorkflow, from, to string) error {
-	log.Printf("access-workflow-engine: escalate request=%s workflow=%s %s → %s", req.ID, wf.ID, from, to)
-	return nil
-}
-
 // runEscalationChecker polls every minute until ctx is cancelled. The
 // initial delay keeps the cron from firing during startup boot tests.
-func runEscalationChecker(ctx context.Context, db *gorm.DB) {
-	checker := workflow_engine.NewEscalationChecker(db, loggingEscalator{}, time.Now)
+func runEscalationChecker(ctx context.Context, db *gorm.DB, escalator workflow_engine.Escalator) {
+	checker := workflow_engine.NewEscalationChecker(db, escalator, time.Now)
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {

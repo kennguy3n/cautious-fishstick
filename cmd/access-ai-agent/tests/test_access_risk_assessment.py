@@ -64,3 +64,75 @@ def test_run_raises_on_missing_role() -> None:
 def test_run_raises_on_non_dict_payload() -> None:
     with pytest.raises(skill.SkillError):
         skill.run("nope")  # type: ignore[arg-type]
+
+
+# Phase 5 — LLM scoring tests. The deterministic stub is exercised
+# by the tests above; these cover the LLM wire-in.
+import os
+import pytest
+
+from skills import llm
+
+
+@pytest.fixture
+def llm_provider(monkeypatch):
+    monkeypatch.setenv("ACCESS_AI_LLM_PROVIDER", "fake_risk")
+    yield
+    llm.set_test_provider("fake_risk", None)
+
+
+def test_llm_overrides_deterministic_score(llm_provider) -> None:
+    def fake(_prompt, _kwargs):
+        return '{"risk_score": "high", "risk_factors": ["llm_inferred"], "reason": "test"}'
+    llm.set_test_provider("fake_risk", fake)
+    result = skill.run({
+        "role": "viewer",  # deterministic would be low
+        "resource_external_id": "host-001",
+    })
+    assert result["risk_score"] == "high"
+    assert "llm_inferred" in result["risk_factors"]
+    assert result["reason"] == "test"
+
+
+def test_llm_failure_falls_back_to_deterministic(llm_provider) -> None:
+    def fake(_prompt, _kwargs):
+        raise RuntimeError("model timed out")
+    llm.set_test_provider("fake_risk", fake)
+    result = skill.run({
+        "role": "admin",
+        "resource_external_id": "host-001",
+    })
+    assert result["risk_score"] == "high"
+    assert any(f.startswith("privileged_role") for f in result["risk_factors"])
+
+
+def test_llm_invalid_json_falls_back(llm_provider) -> None:
+    def fake(_prompt, _kwargs):
+        return "this is not json"
+    llm.set_test_provider("fake_risk", fake)
+    result = skill.run({
+        "role": "viewer",
+        "resource_external_id": "host-001",
+    })
+    assert result["risk_score"] == "low"
+
+
+def test_llm_invalid_score_falls_back(llm_provider) -> None:
+    def fake(_prompt, _kwargs):
+        return '{"risk_score": "extreme", "risk_factors": [], "reason": ""}'
+    llm.set_test_provider("fake_risk", fake)
+    result = skill.run({
+        "role": "viewer",
+        "resource_external_id": "host-001",
+    })
+    assert result["risk_score"] == "low"
+
+
+def test_no_provider_uses_deterministic(monkeypatch) -> None:
+    monkeypatch.delenv("ACCESS_AI_LLM_PROVIDER", raising=False)
+    result = skill.run({
+        "role": "viewer",
+        "resource_external_id": "host-001",
+    })
+    assert result["risk_score"] == "low"
+    assert "stub scorer" in result["reason"]

@@ -47,11 +47,27 @@ type AccessCampaignSchedule struct {
 	ScopeFilter   datatypes.JSON `gorm:"type:jsonb" json:"scope_filter,omitempty"`
 	FrequencyDays int            `gorm:"not null" json:"frequency_days"`
 	NextRunAt     time.Time      `gorm:"not null;index:idx_access_campaign_schedules_next_run_at" json:"next_run_at"`
-	IsActive      bool           `gorm:"not null;default:true;index:idx_access_campaign_schedules_workspace_active,priority:2" json:"is_active"`
-	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
+	// SkipDates is a JSON array of "YYYY-MM-DD" strings (UTC). When
+	// CampaignScheduler.Run sees today in this list, it bumps
+	// NextRunAt forward by FrequencyDays WITHOUT starting a new
+	// campaign. Operators populate this with company holidays /
+	// freeze-window dates. Empty / unset means "never skip".
+	//
+	// Stored as JSON rather than a separate table because the list
+	// is short (a few dates per year) and the cron only ever reads
+	// the row holistically. The string format is RFC 3339 date-only
+	// so cross-timezone interpretation is unambiguous.
+	SkipDates datatypes.JSON `gorm:"type:jsonb" json:"skip_dates,omitempty"`
+	IsActive  bool           `gorm:"not null;default:true;index:idx_access_campaign_schedules_workspace_active,priority:2" json:"is_active"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }
+
+// SkipDateLayout is the canonical format for entries in
+// AccessCampaignSchedule.SkipDates. Operators write
+// "2026-12-25" / "2027-01-01" etc.
+const SkipDateLayout = "2006-01-02"
 
 // TableName overrides the default plural so the table name is exactly
 // access_campaign_schedules (matching the migration and the schema in
