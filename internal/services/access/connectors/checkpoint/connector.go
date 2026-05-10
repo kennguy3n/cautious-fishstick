@@ -166,11 +166,15 @@ func (c *CheckPointAccessConnector) VerifyPermissions(ctx context.Context, confi
 	return nil, nil
 }
 
+// checkpointUser mirrors the per-administrator payload returned by the
+// Check Point Management API `show-administrators` endpoint. The endpoint
+// does not expose a per-admin enable/disable flag in its standard response
+// (`locked` is not part of the documented administrator object), so identity
+// status defaults to "active" for any administrator returned.
 type checkpointUser struct {
-	ID     string `json:"uid"`
-	Email  string `json:"email"`
-	Name string `json:"name"`
-	Status bool `json:"locked"`
+	ID    string `json:"uid"`
+	Email string `json:"email"`
+	Name  string `json:"name"`
 }
 
 type checkpointListResponse struct {
@@ -228,16 +232,12 @@ func (c *CheckPointAccessConnector) SyncIdentities(
 			if display == "" {
 				display = u.Email
 			}
-			status := "active"
-			if u.Status {
-				status = "inactive"
-			}
 			identities = append(identities, &access.Identity{
 				ExternalID:  u.ID,
 				Type:        access.IdentityTypeUser,
 				DisplayName: display,
 				Email:       u.Email,
-				Status:      status,
+				Status:      "active",
 			})
 		}
 		next := ""

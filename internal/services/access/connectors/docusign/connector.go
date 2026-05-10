@@ -27,7 +27,9 @@ type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-type Config struct{}
+type Config struct {
+	AccountEnvironment string `json:"account_environment"`
+}
 
 type Secrets struct {
 	Token string `json:"token"`
@@ -41,11 +43,23 @@ type DocuSignAccessConnector struct {
 func New() *DocuSignAccessConnector { return &DocuSignAccessConnector{} }
 func init()                { access.RegisterAccessConnector(ProviderName, New()) }
 
+var allowedEnvs = map[string]struct{}{
+	"production": {},
+	"demo":       {},
+}
+
 func DecodeConfig(raw map[string]interface{}) (Config, error) {
 	if raw == nil {
 		return Config{}, errors.New("docusign: config is nil")
 	}
-	return Config{}, nil
+	var cfg Config
+	if v, ok := raw["account_environment"].(string); ok {
+		cfg.AccountEnvironment = v
+	}
+	if strings.TrimSpace(cfg.AccountEnvironment) == "" {
+		cfg.AccountEnvironment = "production"
+	}
+	return cfg, nil
 }
 
 func DecodeSecrets(raw map[string]interface{}) (Secrets, error) {
@@ -59,7 +73,13 @@ func DecodeSecrets(raw map[string]interface{}) (Secrets, error) {
 	return s, nil
 }
 
-func (Config) validate() error { return nil }
+func (c Config) validate() error {
+	env := strings.ToLower(strings.TrimSpace(c.AccountEnvironment))
+	if _, ok := allowedEnvs[env]; !ok {
+		return fmt.Errorf("docusign: account_environment must be one of production|demo, got %q", c.AccountEnvironment)
+	}
+	return nil
+}
 
 func (s Secrets) validate() error {
 	if strings.TrimSpace(s.Token) == "" {
@@ -83,11 +103,14 @@ func (c *DocuSignAccessConnector) Validate(_ context.Context, configRaw, secrets
 	return s.validate()
 }
 
-func (c *DocuSignAccessConnector) baseURL() string {
+func (c *DocuSignAccessConnector) baseURL(cfg Config) string {
 	if c.urlOverride != "" {
 		return strings.TrimRight(c.urlOverride, "/")
 	}
-	return "https://demo.docusign.net"
+	if strings.ToLower(strings.TrimSpace(cfg.AccountEnvironment)) == "demo" {
+		return "https://demo.docusign.net"
+	}
+	return "https://www.docusign.net"
 }
 
 func (c *DocuSignAccessConnector) client() httpDoer {
@@ -139,12 +162,12 @@ func (c *DocuSignAccessConnector) decodeBoth(configRaw, secretsRaw map[string]in
 }
 
 func (c *DocuSignAccessConnector) Connect(ctx context.Context, configRaw, secretsRaw map[string]interface{}) error {
-	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
 	if err != nil {
 		return err
 	}
 	q := url.Values{"page": []string{"1"}, "per_page": []string{"1"}}
-	probe := c.baseURL() + "/restapi/v2.1/users?" + q.Encode()
+	probe := c.baseURL(cfg) + "/restapi/v2.1/users?" + q.Encode()
 	req, err := c.newRequest(ctx, secrets, http.MethodGet, probe)
 	if err != nil {
 		return err
@@ -193,7 +216,7 @@ func (c *DocuSignAccessConnector) SyncIdentities(
 	checkpoint string,
 	handler func(batch []*access.Identity, nextCheckpoint string) error,
 ) error {
-	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
 	if err != nil {
 		return err
 	}
@@ -204,7 +227,7 @@ func (c *DocuSignAccessConnector) SyncIdentities(
 			page = 1
 		}
 	}
-	base := c.baseURL()
+	base := c.baseURL(cfg)
 	for {
 		q := url.Values{
 			"page":     []string{fmt.Sprintf("%d", page)},

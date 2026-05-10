@@ -166,11 +166,14 @@ func (c *ZscalerAccessConnector) VerifyPermissions(ctx context.Context, configRa
 	return nil, nil
 }
 
+// zscalerUser mirrors the per-admin payload returned by the Zscaler ZIA
+// `/api/v1/adminUsers` endpoint. The endpoint does not expose a reliable
+// boolean enable/disable flag (`adminStatus` is not part of the documented
+// response), so identity status defaults to "active" for any admin returned.
 type zscalerUser struct {
-	ID     string `json:"id"`
-	Email  string `json:"email"`
+	ID       string `json:"id"`
+	Email    string `json:"email"`
 	UserName string `json:"userName"`
-	Status bool `json:"adminStatus"`
 }
 
 type zscalerListResponse struct {
@@ -228,16 +231,12 @@ func (c *ZscalerAccessConnector) SyncIdentities(
 			if display == "" {
 				display = u.Email
 			}
-			status := "active"
-			if !u.Status {
-				status = "inactive"
-			}
 			identities = append(identities, &access.Identity{
 				ExternalID:  u.ID,
 				Type:        access.IdentityTypeUser,
 				DisplayName: display,
 				Email:       u.Email,
-				Status:      status,
+				Status:      "active",
 			})
 		}
 		next := ""

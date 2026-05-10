@@ -19,9 +19,42 @@ func (noNetworkRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) 
 	return nil, errors.New("network call attempted")
 }
 
-func validConfig() map[string]interface{}  { return map[string]interface{}{} }
+func validConfig() map[string]interface{} {
+	return map[string]interface{}{"account_environment": "production", "region": "na"}
+}
 func validSecrets() map[string]interface{} {
 	return map[string]interface{}{"token": "dscl_AAAA1234bbbbCCCC"}
+}
+
+func TestValidate_RejectsInvalidEnvironment(t *testing.T) {
+	if err := New().Validate(context.Background(),
+		map[string]interface{}{"account_environment": "bogus", "region": "na"},
+		validSecrets()); err == nil {
+		t.Error("expected error for invalid account_environment")
+	}
+	if err := New().Validate(context.Background(),
+		map[string]interface{}{"account_environment": "production", "region": "asia"},
+		validSecrets()); err == nil {
+		t.Error("expected error for invalid region")
+	}
+}
+
+func TestBaseURL_RoutesByEnvironmentAndRegion(t *testing.T) {
+	c := New()
+	cases := []struct {
+		env, region, want string
+	}{
+		{"production", "na", "https://apina11.springcm.com"},
+		{"production", "eu", "https://apieu11.springcm.com"},
+		{"demo", "na", "https://apiuatna11.springcm.com"},
+		{"demo", "eu", "https://apiuateu11.springcm.com"},
+	}
+	for _, tc := range cases {
+		got := c.baseURL(Config{AccountEnvironment: tc.env, Region: tc.region})
+		if got != tc.want {
+			t.Errorf("env=%q region=%q baseURL = %q; want %q", tc.env, tc.region, got, tc.want)
+		}
+	}
 }
 
 func TestValidate_HappyPath(t *testing.T) {

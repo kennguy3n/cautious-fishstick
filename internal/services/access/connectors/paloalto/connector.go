@@ -166,12 +166,15 @@ func (c *PaloAltoAccessConnector) VerifyPermissions(ctx context.Context, configR
 	return nil, nil
 }
 
+// paloaltoUser mirrors the per-user payload returned by the Palo Alto Prisma
+// Cloud `/v2/user` endpoint. The endpoint does not expose a stable per-user
+// enable/disable boolean (`enabled` is not part of the documented response),
+// so identity status defaults to "active" for any user returned.
 type paloaltoUser struct {
-	ID     string `json:"username"`
-	Email  string `json:"email"`
+	ID        string `json:"username"`
+	Email     string `json:"email"`
 	FirstName string `json:"firstName"`
-	LastName string `json:"lastName"`
-	Status bool `json:"enabled"`
+	LastName  string `json:"lastName"`
 }
 
 type paloaltoListResponse struct {
@@ -229,16 +232,12 @@ func (c *PaloAltoAccessConnector) SyncIdentities(
 			if display == "" {
 				display = u.Email
 			}
-			status := "active"
-			if !u.Status {
-				status = "inactive"
-			}
 			identities = append(identities, &access.Identity{
 				ExternalID:  u.ID,
 				Type:        access.IdentityTypeUser,
 				DisplayName: display,
 				Email:       u.Email,
-				Status:      status,
+				Status:      "active",
 			})
 		}
 		next := ""

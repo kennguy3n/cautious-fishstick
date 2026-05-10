@@ -70,13 +70,13 @@ func TestSync_PaginatesUsers(t *testing.T) {
 				t.Errorf("page = %q", page)
 			}
 			for i := 0; i < pageSize; i++ {
-				arr = append(arr, map[string]interface{}{ "id": fmt.Sprintf("u%d", i), "email": fmt.Sprintf("u%d@x.com", i), "userName": fmt.Sprintf("U%d", i), "adminStatus": true })
+				arr = append(arr, map[string]interface{}{ "id": fmt.Sprintf("u%d", i), "email": fmt.Sprintf("u%d@x.com", i), "userName": fmt.Sprintf("U%d", i) })
 			}
 		} else {
 			if page != "2" {
 				t.Errorf("page = %q", page)
 			}
-			arr = []map[string]interface{}{{"id": "ulast", "email": "last@x.com", "userName": "Last", "adminStatus": true}}
+			arr = []map[string]interface{}{{"id": "ulast", "email": "last@x.com", "userName": "Last"}}
 		}
 		body["data"] = arr
 		b, _ := json.Marshal(body)

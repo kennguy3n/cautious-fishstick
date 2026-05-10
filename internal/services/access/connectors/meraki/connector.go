@@ -166,11 +166,14 @@ func (c *MerakiAccessConnector) VerifyPermissions(ctx context.Context, configRaw
 	return nil, nil
 }
 
+// merakiUser mirrors the per-admin payload returned by the Meraki Dashboard
+// `getOrganizationAdmins` endpoint. The endpoint only returns currently
+// provisioned admins and exposes no per-admin enable/disable flag, so we do
+// not derive identity status from any boolean field on this struct.
 type merakiUser struct {
-	ID     string `json:"id"`
-	Email  string `json:"email"`
-	Name string `json:"name"`
-	Status bool `json:"hasApiKey"`
+	ID    string `json:"id"`
+	Email string `json:"email"`
+	Name  string `json:"name"`
 }
 
 type merakiListResponse struct {
@@ -228,16 +231,12 @@ func (c *MerakiAccessConnector) SyncIdentities(
 			if display == "" {
 				display = u.Email
 			}
-			status := "active"
-			if !u.Status {
-				status = "inactive"
-			}
 			identities = append(identities, &access.Identity{
 				ExternalID:  u.ID,
 				Type:        access.IdentityTypeUser,
 				DisplayName: display,
 				Email:       u.Email,
-				Status:      status,
+				Status:      "active",
 			})
 		}
 		next := ""

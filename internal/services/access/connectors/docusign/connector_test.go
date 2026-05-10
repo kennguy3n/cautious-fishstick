@@ -19,9 +19,35 @@ func (noNetworkRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) 
 	return nil, errors.New("network call attempted")
 }
 
-func validConfig() map[string]interface{}  { return map[string]interface{}{} }
+func validConfig() map[string]interface{} {
+	return map[string]interface{}{"account_environment": "production"}
+}
 func validSecrets() map[string]interface{} {
 	return map[string]interface{}{"token": "dsg_AAAA1234bbbbCCCC"}
+}
+
+func TestValidate_RejectsInvalidEnvironment(t *testing.T) {
+	if err := New().Validate(context.Background(),
+		map[string]interface{}{"account_environment": "bogus"},
+		validSecrets()); err == nil {
+		t.Error("expected error for invalid account_environment")
+	}
+}
+
+func TestBaseURL_RoutesByEnvironment(t *testing.T) {
+	c := New()
+	prod := c.baseURL(Config{AccountEnvironment: "production"})
+	if prod != "https://www.docusign.net" {
+		t.Errorf("production baseURL = %q; want https://www.docusign.net", prod)
+	}
+	demo := c.baseURL(Config{AccountEnvironment: "demo"})
+	if demo != "https://demo.docusign.net" {
+		t.Errorf("demo baseURL = %q; want https://demo.docusign.net", demo)
+	}
+	def := c.baseURL(Config{})
+	if def != "https://www.docusign.net" {
+		t.Errorf("default baseURL = %q; want https://www.docusign.net", def)
+	}
 }
 
 func TestValidate_HappyPath(t *testing.T) {

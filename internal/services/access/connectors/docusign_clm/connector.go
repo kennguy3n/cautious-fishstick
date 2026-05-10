@@ -27,7 +27,10 @@ type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-type Config struct{}
+type Config struct {
+	AccountEnvironment string `json:"account_environment"`
+	Region             string `json:"region"`
+}
 
 type Secrets struct {
 	Token string `json:"token"`
@@ -41,11 +44,34 @@ type DocuSignCLMAccessConnector struct {
 func New() *DocuSignCLMAccessConnector { return &DocuSignCLMAccessConnector{} }
 func init()                { access.RegisterAccessConnector(ProviderName, New()) }
 
+var allowedEnvs = map[string]struct{}{
+	"production": {},
+	"demo":       {},
+}
+
+var allowedRegions = map[string]struct{}{
+	"na": {},
+	"eu": {},
+}
+
 func DecodeConfig(raw map[string]interface{}) (Config, error) {
 	if raw == nil {
 		return Config{}, errors.New("docusign_clm: config is nil")
 	}
-	return Config{}, nil
+	var cfg Config
+	if v, ok := raw["account_environment"].(string); ok {
+		cfg.AccountEnvironment = v
+	}
+	if v, ok := raw["region"].(string); ok {
+		cfg.Region = v
+	}
+	if strings.TrimSpace(cfg.AccountEnvironment) == "" {
+		cfg.AccountEnvironment = "production"
+	}
+	if strings.TrimSpace(cfg.Region) == "" {
+		cfg.Region = "na"
+	}
+	return cfg, nil
 }
 
 func DecodeSecrets(raw map[string]interface{}) (Secrets, error) {
@@ -59,7 +85,17 @@ func DecodeSecrets(raw map[string]interface{}) (Secrets, error) {
 	return s, nil
 }
 
-func (Config) validate() error { return nil }
+func (c Config) validate() error {
+	env := strings.ToLower(strings.TrimSpace(c.AccountEnvironment))
+	if _, ok := allowedEnvs[env]; !ok {
+		return fmt.Errorf("docusign_clm: account_environment must be one of production|demo, got %q", c.AccountEnvironment)
+	}
+	region := strings.ToLower(strings.TrimSpace(c.Region))
+	if _, ok := allowedRegions[region]; !ok {
+		return fmt.Errorf("docusign_clm: region must be one of na|eu, got %q", c.Region)
+	}
+	return nil
+}
 
 func (s Secrets) validate() error {
 	if strings.TrimSpace(s.Token) == "" {
@@ -83,11 +119,21 @@ func (c *DocuSignCLMAccessConnector) Validate(_ context.Context, configRaw, secr
 	return s.validate()
 }
 
-func (c *DocuSignCLMAccessConnector) baseURL() string {
+func (c *DocuSignCLMAccessConnector) baseURL(cfg Config) string {
 	if c.urlOverride != "" {
 		return strings.TrimRight(c.urlOverride, "/")
 	}
-	return "https://api-eu.springcm.com"
+	env := strings.ToLower(strings.TrimSpace(cfg.AccountEnvironment))
+	region := strings.ToLower(strings.TrimSpace(cfg.Region))
+	switch {
+	case env == "demo" && region == "eu":
+		return "https://apiuateu11.springcm.com"
+	case env == "demo":
+		return "https://apiuatna11.springcm.com"
+	case region == "eu":
+		return "https://apieu11.springcm.com"
+	}
+	return "https://apina11.springcm.com"
 }
 
 func (c *DocuSignCLMAccessConnector) client() httpDoer {
@@ -139,12 +185,12 @@ func (c *DocuSignCLMAccessConnector) decodeBoth(configRaw, secretsRaw map[string
 }
 
 func (c *DocuSignCLMAccessConnector) Connect(ctx context.Context, configRaw, secretsRaw map[string]interface{}) error {
-	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
 	if err != nil {
 		return err
 	}
 	q := url.Values{"page": []string{"1"}, "per_page": []string{"1"}}
-	probe := c.baseURL() + "/v201411/users?" + q.Encode()
+	probe := c.baseURL(cfg) + "/v201411/users?" + q.Encode()
 	req, err := c.newRequest(ctx, secrets, http.MethodGet, probe)
 	if err != nil {
 		return err
@@ -193,7 +239,7 @@ func (c *DocuSignCLMAccessConnector) SyncIdentities(
 	checkpoint string,
 	handler func(batch []*access.Identity, nextCheckpoint string) error,
 ) error {
-	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
 	if err != nil {
 		return err
 	}
@@ -204,7 +250,7 @@ func (c *DocuSignCLMAccessConnector) SyncIdentities(
 			page = 1
 		}
 	}
-	base := c.baseURL()
+	base := c.baseURL(cfg)
 	for {
 		q := url.Values{
 			"page":     []string{fmt.Sprintf("%d", page)},

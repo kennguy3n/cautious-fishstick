@@ -52,6 +52,37 @@ func TestRegistryIntegration(t *testing.T) {
 	}
 }
 
+func TestSync_DefaultsStatusActiveRegardlessOfHasApiKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		body := map[string]interface{}{"data": []map[string]interface{}{
+			{"id": "a1", "email": "a@x.com", "name": "A", "hasApiKey": false},
+			{"id": "a2", "email": "b@x.com", "name": "B", "hasApiKey": true},
+		}}
+		b, _ := json.Marshal(body)
+		_, _ = w.Write(b)
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	var got []*access.Identity
+	err := c.SyncIdentities(context.Background(), validConfig(), validSecrets(), "", func(b []*access.Identity, _ string) error {
+		got = append(got, b...)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 identities; got %d", len(got))
+	}
+	for _, id := range got {
+		if id.Status != "active" {
+			t.Errorf("%s status = %q; want active (Meraki API has no per-admin enable flag)", id.ExternalID, id.Status)
+		}
+	}
+}
+
 func TestSync_PaginatesUsers(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -70,13 +101,13 @@ func TestSync_PaginatesUsers(t *testing.T) {
 				t.Errorf("page = %q", page)
 			}
 			for i := 0; i < pageSize; i++ {
-				arr = append(arr, map[string]interface{}{ "id": fmt.Sprintf("u%d", i), "email": fmt.Sprintf("u%d@x.com", i), "name": fmt.Sprintf("U%d", i), "hasApiKey": true })
+				arr = append(arr, map[string]interface{}{ "id": fmt.Sprintf("u%d", i), "email": fmt.Sprintf("u%d@x.com", i), "name": fmt.Sprintf("U%d", i) })
 			}
 		} else {
 			if page != "2" {
 				t.Errorf("page = %q", page)
 			}
-			arr = []map[string]interface{}{{"id": "ulast", "email": "last@x.com", "name": "Last", "hasApiKey": true}}
+			arr = []map[string]interface{}{{"id": "ulast", "email": "last@x.com", "name": "Last"}}
 		}
 		body["data"] = arr
 		b, _ := json.Marshal(body)
