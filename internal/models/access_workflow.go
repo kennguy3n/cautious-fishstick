@@ -61,4 +61,50 @@ const (
 	// manager and leaves it in RequestStateRequested until the manager
 	// acts via API.
 	WorkflowStepManagerApproval = "manager_approval"
+	// WorkflowStepSecurityReview routes high-risk or sensitive resource
+	// requests to the security review queue. The request stays in
+	// RequestStateRequested until a security reviewer acts via the API.
+	WorkflowStepSecurityReview = "security_review"
+	// WorkflowStepMultiLevel chains multiple approval stages — manager,
+	// then security, then resource owner — into a single step that
+	// evaluates each level in order until one approves or denies.
+	WorkflowStepMultiLevel = "multi_level"
 )
+
+// WorkflowStepDefinition is the canonical, decoded shape of one entry in
+// AccessWorkflow.Steps. Phase 8 widens the schema beyond `{type:...}` to
+// carry timeout / escalation metadata and ordered approver levels for the
+// `multi_level` step type.
+//
+//	[
+//	  {
+//	    "type": "manager_approval",
+//	    "timeout_hours": 24,
+//	    "escalation_target": "security_review"
+//	  },
+//	  {
+//	    "type": "multi_level",
+//	    "levels": [
+//	      {"role": "manager",          "timeout_hours": 24},
+//	      {"role": "security_review",  "timeout_hours": 48},
+//	      {"role": "resource_owner",   "timeout_hours": 72}
+//	    ]
+//	  }
+//	]
+//
+// Backward-compatibility: the Phase 2 short form `[{"type": "..."}]` still
+// decodes cleanly because every new field is optional.
+type WorkflowStepDefinition struct {
+	Type             string               `json:"type"`
+	TimeoutHours     int                  `json:"timeout_hours,omitempty"`
+	EscalationTarget string               `json:"escalation_target,omitempty"`
+	Levels           []WorkflowStepLevel  `json:"levels,omitempty"`
+}
+
+// WorkflowStepLevel is one stage in a multi-level approval chain.
+// `Role` is a free-form string (manager, security_review, resource_owner,
+// etc.) that downstream services map to a real approver pool.
+type WorkflowStepLevel struct {
+	Role         string `json:"role"`
+	TimeoutHours int    `json:"timeout_hours,omitempty"`
+}

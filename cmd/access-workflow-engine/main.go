@@ -1,12 +1,34 @@
-// Command access-workflow-engine hosts the LangGraph workflow orchestrator
-// that runs multi-step approval flows. The Phase 0 scaffold only logs
-// startup; full orchestration lands in Phase 8.
+// Command access-workflow-engine hosts the LangGraph-style workflow
+// orchestrator that runs multi-step approval flows. Phase 8 brings the
+// service up to a real HTTP host (see internal/services/access/workflow_engine):
+//
+//	GET  /health                — liveness probe (200 ok / 503 draining)
+//	POST /workflows/execute     — run a workflow against a request
+//
+// The engine listens on ACCESS_WORKFLOW_ENGINE_LISTEN_ADDR (default
+// :8082) and shuts down gracefully on SIGINT / SIGTERM. Database access
+// is via the same gorm postgres URL the rest of the platform uses
+// (DATABASE_URL); when DATABASE_URL is unset the binary falls back to a
+// short-lived in-memory SQLite so smoke tests can boot without
+// provisioning a database.
 package main
 
 import (
+	"context"
+	"errors"
 	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
+	"github.com/glebarez/sqlite"
+	"gorm.io/gorm"
+
+	"github.com/kennguy3n/cautious-fishstick/internal/models"
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
+	"github.com/kennguy3n/cautious-fishstick/internal/services/access/workflow_engine"
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/activecampaign"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/airtable"
@@ -28,6 +50,7 @@ import (
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/box"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/braze"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/brex"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/buffer"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/buildium"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/chargebee"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/checkpoint"
@@ -63,10 +86,13 @@ import (
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/freshbooks"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/freshdesk"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/front"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/fullstory"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/ga4"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/gcp"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/gemini"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/generic_oidc"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/generic_saml"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/ghost"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/github"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/gitlab"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/gong"
@@ -75,18 +101,22 @@ import (
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/grafana"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/gusto"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/hackerone"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/heap"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/hellosign"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/helpscout"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/heroku"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/hibob"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/hibp"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/hootsuite"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/hubspot"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/ifttt"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/insightly"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/intercom"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/ironclad"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/jasper"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/jfrog"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/jira"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/jotform"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/kareo"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/keeper"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/klaviyo"
@@ -100,6 +130,7 @@ import (
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/loom"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/magento"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/mailchimp"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/make"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/malwarebytes"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/meraki"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/mezmo"
@@ -142,12 +173,14 @@ import (
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/ramp"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/rapid7"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/recurly"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/ringcentral"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/rippling"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/sage_intacct"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/salesforce"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/salesloft"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/sap_concur"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/segment"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/sendgrid"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/sentinelone"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/sentry"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/shopify"
@@ -159,21 +192,25 @@ import (
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/sophos_central"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/sophos_xg"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/splunk"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/sprout_social"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/square"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/squarespace"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/stripe"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/sumo_logic"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/surveymonkey"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/surveysparrow"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/tailscale"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/teamwork"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/tenable"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/terraform"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/travis_ci"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/trello"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/twilio"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/typeform"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/udemy_business"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/vercel"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/virustotal"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/vonage"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/vultr"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/wasabi"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/wave"
@@ -183,8 +220,10 @@ import (
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/wordpress"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/workday"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/wrike"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/wufoo"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/xero"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/yardi"
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/zapier"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/zendesk"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/zenefits"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/zocdoc"
@@ -195,4 +234,108 @@ import (
 
 func main() {
 	log.Printf("access-workflow-engine: starting; registered access connectors: %v", access.ListRegisteredProviders())
+
+	db, dbDescription, err := openDatabase()
+	if err != nil {
+		log.Fatalf("access-workflow-engine: open db: %v", err)
+	}
+	log.Printf("access-workflow-engine: %s", dbDescription)
+
+	executor := workflow_engine.NewWorkflowExecutor(db, workflow_engine.NoOpPerformer{})
+	srv := workflow_engine.NewServer(executor)
+
+	addr := os.Getenv("ACCESS_WORKFLOW_ENGINE_LISTEN_ADDR")
+	if addr == "" {
+		addr = ":8082"
+	}
+	httpServer := &http.Server{
+		Addr:              addr,
+		Handler:           srv.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	// Phase 8 escalation cron — every minute scan pending approval
+	// steps and emit Escalate calls for any past their timeout. The
+	// production wiring lives behind the noOpEscalator until
+	// notification + state-history side-effects land in Phase 9.
+	checkerCtx, cancelChecker := context.WithCancel(context.Background())
+	go runEscalationChecker(checkerCtx, db)
+
+	go func() {
+		log.Printf("access-workflow-engine: HTTP server listening on %s", addr)
+		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("access-workflow-engine: server exited: %v", err)
+		}
+	}()
+
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	<-signals
+	log.Printf("access-workflow-engine: shutting down")
+	srv.Shutdown()
+	cancelChecker()
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelShutdown()
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("access-workflow-engine: graceful shutdown: %v", err)
+	}
+}
+
+// openDatabase returns a gorm DB. ACCESS_WORKFLOW_ENGINE_SQLITE_PATH is
+// honoured when set so operators can persist workflow state to disk;
+// otherwise an in-memory SQLite is opened so the binary can smoke-test
+// without provisioning storage. Postgres support lives in
+// internal/migrations and will be wired into the engine once the
+// migration runner is hooked up to this binary in Phase 9. The returned
+// description is logged at startup.
+func openDatabase() (*gorm.DB, string, error) {
+	dsn := os.Getenv("ACCESS_WORKFLOW_ENGINE_SQLITE_PATH")
+	if dsn == "" {
+		dsn = ":memory:"
+	}
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return nil, "", err
+	}
+	if err := db.AutoMigrate(&models.AccessRequest{}, &models.AccessWorkflow{}); err != nil {
+		return nil, "", err
+	}
+	desc := "in-memory sqlite (workflows will not persist)"
+	if dsn != ":memory:" {
+		desc = "sqlite at " + dsn
+	}
+	return db, desc, nil
+}
+
+// loggingEscalator records escalations to the structured log without
+// mutating any state. Phase 9 wires this to the notification service
+// and AccessRequestStateHistory writer.
+type loggingEscalator struct{}
+
+func (loggingEscalator) Escalate(_ context.Context, req *models.AccessRequest, wf *models.AccessWorkflow, from, to string) error {
+	log.Printf("access-workflow-engine: escalate request=%s workflow=%s %s → %s", req.ID, wf.ID, from, to)
+	return nil
+}
+
+// runEscalationChecker polls every minute until ctx is cancelled. The
+// initial delay keeps the cron from firing during startup boot tests.
+func runEscalationChecker(ctx context.Context, db *gorm.DB) {
+	checker := workflow_engine.NewEscalationChecker(db, loggingEscalator{}, time.Now)
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			n, err := checker.Run(ctx)
+			if err != nil {
+				log.Printf("access-workflow-engine: escalation check: %v", err)
+				continue
+			}
+			if n > 0 {
+				log.Printf("access-workflow-engine: escalated %d pending request(s)", n)
+			}
+		}
+	}
 }
