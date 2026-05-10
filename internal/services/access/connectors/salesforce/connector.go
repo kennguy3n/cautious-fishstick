@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"bytes"
+
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
@@ -22,7 +24,20 @@ const (
 	soqlListUsersQuery = "SELECT Id, Name, Email, IsActive FROM User"
 )
 
-var ErrNotImplemented = errors.New("salesforce: capability not implemented in Phase 7")
+var ErrNotImplemented = errors.New("salesforce: capability not implemented")
+
+// escapeSOQLLiteral escapes a value for safe interpolation inside a SOQL
+// single-quoted string literal. Salesforce SOQL requires single quotes to be
+// doubled (`'` → `''`) and backslashes to be escaped (`\` → `\\`); URL
+// encoding alone (`url.QueryEscape`) does NOT protect against injection here
+// because Salesforce URL-decodes the `q=` query parameter before the SOQL
+// parser sees it, so `%27` decodes back to `'` and an attacker-controlled
+// external ID can still break out of the string literal.
+func escapeSOQLLiteral(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `'`, `\'`)
+	return s
+}
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -268,14 +283,126 @@ func (c *SalesforceAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *SalesforceAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+func (c *SalesforceAccessConnector) ProvisionAccess(
+	ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant,
+) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("salesforce: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	body, _ := json.Marshal(map[string]string{"AssigneeId": grant.UserExternalID, "PermissionSetId": grant.ResourceExternalID})
+	urlStr := c.instanceURL(configRaw) + "/services/data/v59.0/sobjects/PermissionSetAssignment"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return fmt.Errorf("salesforce: provision: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	if strings.Contains(string(respBody), "DUPLICATE_VALUE") {
+		return nil
+	}
+	return fmt.Errorf("salesforce: provision status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *SalesforceAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+func (c *SalesforceAccessConnector) RevokeAccess(
+	ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant,
+) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("salesforce: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	query := fmt.Sprintf("SELECT+Id+FROM+PermissionSetAssignment+WHERE+AssigneeId='%s'+AND+PermissionSetId='%s'",
+		url.QueryEscape(escapeSOQLLiteral(grant.UserExternalID)), url.QueryEscape(escapeSOQLLiteral(grant.ResourceExternalID)))
+	queryURL := c.instanceURL(configRaw) + "/services/data/v59.0/query?q=" + query
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, queryURL)
+	if err != nil {
+		return err
+	}
+	body, err := c.do(req)
+	if err != nil {
+		return fmt.Errorf("salesforce: revoke query: %w", err)
+	}
+	var result struct {
+		Records []struct{ ID string `json:"Id"` } `json:"records"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return fmt.Errorf("salesforce: decode revoke query: %w", err)
+	}
+	if len(result.Records) == 0 {
+		return nil
+	}
+	delURL := c.instanceURL(configRaw) + "/services/data/v59.0/sobjects/PermissionSetAssignment/" + result.Records[0].ID
+	delReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, delURL, nil)
+	if err != nil {
+		return err
+	}
+	delReq.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
+	resp, err := c.client().Do(delReq)
+	if err != nil {
+		return fmt.Errorf("salesforce: revoke: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("salesforce: revoke status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *SalesforceAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+func (c *SalesforceAccessConnector) ListEntitlements(
+	ctx context.Context, configRaw, secretsRaw map[string]interface{}, userExternalID string,
+) ([]access.Entitlement, error) {
+	if userExternalID == "" {
+		return nil, errors.New("salesforce: user external id is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	query := fmt.Sprintf("SELECT+PermissionSet.Name,PermissionSetId+FROM+PermissionSetAssignment+WHERE+AssigneeId='%s'",
+		url.QueryEscape(escapeSOQLLiteral(userExternalID)))
+	queryURL := c.instanceURL(configRaw) + "/services/data/v59.0/query?q=" + query
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, queryURL)
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Records []struct {
+			PermissionSet struct{ Name string `json:"Name"` } `json:"PermissionSet"`
+			PermissionSetID string `json:"PermissionSetId"`
+		} `json:"records"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("salesforce: decode: %w", err)
+	}
+	var out []access.Entitlement
+	for _, r := range result.Records {
+		out = append(out, access.Entitlement{
+			ResourceExternalID: r.PermissionSetID,
+			Role:               r.PermissionSet.Name,
+			Source:             "direct",
+		})
+	}
+	return out, nil
 }
 
 // GetSSOMetadata returns the Salesforce SAML metadata URL for the configured
@@ -283,6 +410,17 @@ func (c *SalesforceAccessConnector) ListEntitlements(_ context.Context, _, _ map
 // `/identity/saml/metadata` under the org's instance URL once SSO is enabled
 // — this method composes the URL deterministically without issuing any HTTP
 // request, mirroring the GitHub / Jira / Zendesk pattern.
+func (c *SalesforceAccessConnector) instanceURL(configRaw map[string]interface{}) string {
+	if c.urlOverride != "" {
+		return strings.TrimRight(c.urlOverride, "/")
+	}
+	cfg, _ := DecodeConfig(configRaw)
+	if cfg.InstanceURL != "" {
+		return strings.TrimRight(cfg.InstanceURL, "/")
+	}
+	return "https://login.salesforce.com"
+}
+
 func (c *SalesforceAccessConnector) GetSSOMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (*access.SSOMetadata, error) {
 	cfg, _, err := c.decodeBoth(configRaw, secretsRaw)
 	if err != nil {

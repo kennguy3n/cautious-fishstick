@@ -22,6 +22,10 @@ import (
 	"strings"
 	"time"
 
+	"bytes"
+
+	"net/url"
+
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
@@ -29,7 +33,7 @@ import (
 const ProviderName = "cloudflare"
 
 // ErrNotImplemented is returned by Phase 7 stubbed methods.
-var ErrNotImplemented = errors.New("cloudflare: capability not implemented in Phase 7")
+var ErrNotImplemented = errors.New("cloudflare: capability not implemented")
 
 const defaultBaseURL = "https://api.cloudflare.com/client/v4"
 
@@ -330,8 +334,16 @@ func mapMembers(in []cfMember) []*access.Identity {
 		if m.Status != "" && m.Status != "accepted" {
 			status = m.Status
 		}
+		// Cloudflare's account-members CRUD endpoints (POST add-member,
+		// GET/DELETE /accounts/{id}/members/{member_id}) all key off the
+		// member ID (e.g. 4536bcfad5faccb...), which is distinct from
+		// user.id (the user UUID) and is not stable across accounts.
+		// Email is the only handle the operator-supplied JSON API will
+		// accept directly on the Add Account Member POST, so we store the
+		// email as ExternalID here and resolve the member ID at
+		// Revoke/ListEntitlements time via findMemberIDByEmail.
 		out = append(out, &access.Identity{
-			ExternalID:  m.User.ID,
+			ExternalID:  m.User.Email,
 			Type:        access.IdentityTypeUser,
 			DisplayName: display,
 			Email:       m.User.Email,
@@ -343,14 +355,158 @@ func mapMembers(in []cfMember) []*access.Identity {
 
 // ---------- Stubs ----------
 
-func (c *CloudflareAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+func (c *CloudflareAccessConnector) ProvisionAccess(
+	ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant,
+) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("cloudflare: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	body, _ := json.Marshal(map[string]interface{}{"email": grant.UserExternalID, "roles": []string{grant.ResourceExternalID}})
+	req, err := c.newRequest(ctx, secrets, cfg, http.MethodPost, "/accounts/"+url.PathEscape(cfg.AccountID)+"/members")
+	if err != nil {
+		return err
+	}
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	req.ContentLength = int64(len(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return fmt.Errorf("cloudflare: provision: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+		return nil
+	}
+	if strings.Contains(string(respBody), "already a member") {
+		return nil
+	}
+	return fmt.Errorf("cloudflare: provision status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *CloudflareAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+func (c *CloudflareAccessConnector) RevokeAccess(
+	ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant,
+) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("cloudflare: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	memberID, err := c.findMemberIDByEmail(ctx, secrets, cfg, grant.UserExternalID)
+	if err != nil {
+		return err
+	}
+	if memberID == "" {
+		// No member with this email — treat as idempotent success per
+		// the 404/not-found-on-revoke contract.
+		return nil
+	}
+	req, err := c.newRequest(ctx, secrets, cfg, http.MethodDelete, "/accounts/"+url.PathEscape(cfg.AccountID)+"/members/"+url.PathEscape(memberID))
+	if err != nil {
+		return err
+	}
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return fmt.Errorf("cloudflare: revoke: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("cloudflare: revoke status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *CloudflareAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+// findMemberIDByEmail paginates /accounts/{id}/members and returns the
+// member-ID of the row whose user.email matches the supplied email
+// (case-insensitive comparison). Returns ("", nil) when no row matches.
+// This is the bridge between the email-based ExternalID stored by
+// SyncIdentities and the member-ID URL segments that Cloudflare's
+// member CRUD endpoints require.
+func (c *CloudflareAccessConnector) findMemberIDByEmail(ctx context.Context, secrets Secrets, cfg Config, email string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(email))
+	if normalized == "" {
+		return "", nil
+	}
+	const perPage = 50
+	page := 1
+	for {
+		path := fmt.Sprintf("/accounts/%s/members?per_page=%d&page=%d", cfg.AccountID, perPage, page)
+		req, err := c.newRequest(ctx, secrets, cfg, http.MethodGet, path)
+		if err != nil {
+			return "", err
+		}
+		body, err := c.do(req)
+		if err != nil {
+			return "", fmt.Errorf("cloudflare: member lookup: %w", err)
+		}
+		var resp cfMembersResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return "", fmt.Errorf("cloudflare: decode members: %w", err)
+		}
+		for _, m := range resp.Result {
+			if strings.ToLower(strings.TrimSpace(m.User.Email)) == normalized {
+				return m.ID, nil
+			}
+		}
+		if resp.ResultInfo.TotalPages <= page {
+			return "", nil
+		}
+		page++
+	}
+}
+
+func (c *CloudflareAccessConnector) ListEntitlements(
+	ctx context.Context, configRaw, secretsRaw map[string]interface{}, userExternalID string,
+) ([]access.Entitlement, error) {
+	if userExternalID == "" {
+		return nil, errors.New("cloudflare: user external id is required")
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	memberID, err := c.findMemberIDByEmail(ctx, secrets, cfg, userExternalID)
+	if err != nil {
+		return nil, err
+	}
+	if memberID == "" {
+		return nil, nil
+	}
+	req, err := c.newRequest(ctx, secrets, cfg, http.MethodGet, "/accounts/"+url.PathEscape(cfg.AccountID)+"/members/"+url.PathEscape(memberID))
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.do(req)
+	if err != nil {
+		return nil, fmt.Errorf("cloudflare: list entitlements: %w", err)
+	}
+	var resp struct {
+		Result struct {
+			Roles []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"roles"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("cloudflare: decode entitlements: %w", err)
+	}
+	var out []access.Entitlement
+	for _, r := range resp.Result.Roles {
+		out = append(out, access.Entitlement{
+			ResourceExternalID: r.ID,
+			Role:               r.Name,
+			Source:             "direct",
+		})
+	}
+	return out, nil
 }
 
 func (c *CloudflareAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {

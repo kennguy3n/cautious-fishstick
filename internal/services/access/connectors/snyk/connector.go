@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"bytes"
+
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
@@ -23,7 +25,7 @@ const (
 	pageLimit       = 100
 )
 
-var ErrNotImplemented = errors.New("snyk: capability not implemented in Phase 7")
+var ErrNotImplemented = errors.New("snyk: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -282,14 +284,58 @@ func rewriteSnykNext(next, base string) string {
 	return strings.TrimRight(base, "/") + u.RequestURI()
 }
 
-func (c *SnykAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+func (c *SnykAccessConnector) ProvisionAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("snyk: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil { return err }
+	role := grant.Role
+	if role == "" { role = "collaborator" }
+	body, _ := json.Marshal(map[string]interface{}{"data": map[string]interface{}{"attributes": map[string]string{"role": role}, "type": "org-membership"}})
+	urlStr := fmt.Sprintf("%s/rest/orgs/%s/members/%s", c.baseURL(), url.PathEscape(cfg.OrgID), url.PathEscape(grant.UserExternalID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, urlStr, bytes.NewReader(body))
+	if err != nil { return err }
+	req.Header.Set("Content-Type", "application/vnd.api+json")
+	req.Header.Set("Authorization", "token "+strings.TrimSpace(secrets.APIToken))
+	resp, err := c.client().Do(req)
+	if err != nil { return fmt.Errorf("snyk: provision: %w", err) }
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK { return nil }
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("snyk: provision status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *SnykAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+func (c *SnykAccessConnector) RevokeAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("snyk: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil { return err }
+	urlStr := fmt.Sprintf("%s/rest/orgs/%s/members/%s", c.baseURL(), url.PathEscape(cfg.OrgID), url.PathEscape(grant.UserExternalID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, urlStr, nil)
+	if err != nil { return err }
+	req.Header.Set("Authorization", "token "+strings.TrimSpace(secrets.APIToken))
+	resp, err := c.client().Do(req)
+	if err != nil { return fmt.Errorf("snyk: revoke: %w", err) }
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound { return nil }
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("snyk: revoke status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *SnykAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+func (c *SnykAccessConnector) ListEntitlements(ctx context.Context, configRaw, secretsRaw map[string]interface{}, userExternalID string) ([]access.Entitlement, error) {
+	if userExternalID == "" { return nil, errors.New("snyk: user external id is required") }
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil { return nil, err }
+	urlStr := fmt.Sprintf("%s/rest/orgs/%s/members/%s", c.baseURL(), url.PathEscape(cfg.OrgID), url.PathEscape(userExternalID))
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, urlStr)
+	if err != nil { return nil, err }
+	body, err := c.do(req)
+	if err != nil { return nil, nil }
+	var resp struct { Data struct { Attributes struct { Role string `json:"role"` } `json:"attributes"` } `json:"data"` }
+	if json.Unmarshal(body, &resp) != nil { return nil, nil }
+	return []access.Entitlement{{ResourceExternalID: cfg.OrgID, Role: resp.Data.Attributes.Role, Source: "direct"}}, nil
 }
 func (c *SnykAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

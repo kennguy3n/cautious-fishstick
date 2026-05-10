@@ -31,7 +31,7 @@ const (
 	pageLimit      = 200
 )
 
-var ErrNotImplemented = errors.New("crowdstrike: capability not implemented in Phase 7")
+var ErrNotImplemented = errors.New("crowdstrike: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -340,14 +340,68 @@ func (c *CrowdStrikeAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *CrowdStrikeAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+func (c *CrowdStrikeAccessConnector) ProvisionAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("crowdstrike: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil { return err }
+	token, err := c.fetchToken(ctx, cfg, secrets)
+	if err != nil { return err }
+	body, _ := json.Marshal(map[string]interface{}{"action": "grant", "role_ids": []string{grant.ResourceExternalID}, "uuid": grant.UserExternalID})
+	urlStr := c.baseURL(cfg) + "/user-management/entities/user-role-actions/v1"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(body))
+	if err != nil { return err }
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := c.client().Do(req)
+	if err != nil { return fmt.Errorf("crowdstrike: provision: %w", err) }
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK { return nil }
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if strings.Contains(string(respBody), "already") { return nil }
+	return fmt.Errorf("crowdstrike: provision status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *CrowdStrikeAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+func (c *CrowdStrikeAccessConnector) RevokeAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("crowdstrike: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil { return err }
+	token, err := c.fetchToken(ctx, cfg, secrets)
+	if err != nil { return err }
+	body, _ := json.Marshal(map[string]interface{}{"action": "revoke", "role_ids": []string{grant.ResourceExternalID}, "uuid": grant.UserExternalID})
+	urlStr := c.baseURL(cfg) + "/user-management/entities/user-role-actions/v1"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(body))
+	if err != nil { return err }
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := c.client().Do(req)
+	if err != nil { return fmt.Errorf("crowdstrike: revoke: %w", err) }
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK { return nil }
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if strings.Contains(string(respBody), "already") { return nil }
+	return fmt.Errorf("crowdstrike: revoke status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *CrowdStrikeAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+func (c *CrowdStrikeAccessConnector) ListEntitlements(ctx context.Context, configRaw, secretsRaw map[string]interface{}, userExternalID string) ([]access.Entitlement, error) {
+	if userExternalID == "" { return nil, errors.New("crowdstrike: user external id is required") }
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil { return nil, err }
+	token, err := c.fetchToken(ctx, cfg, secrets)
+	if err != nil { return nil, err }
+	urlStr := fmt.Sprintf("%s/user-management/queries/roles/v1?user_uuid=%s", c.baseURL(cfg), url.QueryEscape(userExternalID))
+	body, err := c.authedDo(ctx, token, http.MethodGet, urlStr, nil, "")
+	if err != nil { return nil, err }
+	var resp struct { Resources []string `json:"resources"` }
+	if json.Unmarshal(body, &resp) != nil { return nil, nil }
+	var out []access.Entitlement
+	for _, r := range resp.Resources {
+		out = append(out, access.Entitlement{ResourceExternalID: r, Role: r, Source: "direct"})
+	}
+	return out, nil
 }
 func (c *CrowdStrikeAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

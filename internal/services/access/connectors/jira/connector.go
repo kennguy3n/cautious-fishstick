@@ -13,6 +13,10 @@ import (
 	"strings"
 	"time"
 
+	"bytes"
+
+	"net/url"
+
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
@@ -22,7 +26,7 @@ const (
 	pageSize         = 100
 )
 
-var ErrNotImplemented = errors.New("jira: capability not implemented in Phase 7")
+var ErrNotImplemented = errors.New("jira: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -285,14 +289,106 @@ func (c *JiraAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *JiraAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ProvisionAccess adds a user to a Jira group. Already-member = idempotent.
+func (c *JiraAccessConnector) ProvisionAccess(
+	ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant,
+) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("jira: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	body, _ := json.Marshal(map[string]string{"accountId": grant.UserExternalID})
+	urlStr := fmt.Sprintf("%s/rest/api/3/group/user?groupname=%s", c.baseURL(cfg), url.QueryEscape(grant.ResourceExternalID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth(secrets.Email, secrets.APIToken)
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return fmt.Errorf("jira: provision: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if resp.StatusCode == http.StatusBadRequest && strings.Contains(string(respBody), "already") {
+		return nil
+	}
+	return fmt.Errorf("jira: provision status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *JiraAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+// RevokeAccess removes a user from a Jira group. 404 = idempotent.
+func (c *JiraAccessConnector) RevokeAccess(
+	ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant,
+) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("jira: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	urlStr := fmt.Sprintf("%s/rest/api/3/group/user?accountId=%s&groupname=%s",
+		c.baseURL(cfg), url.QueryEscape(grant.UserExternalID), url.QueryEscape(grant.ResourceExternalID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, urlStr, nil)
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth(secrets.Email, secrets.APIToken)
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return fmt.Errorf("jira: revoke: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("jira: revoke status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *JiraAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+// ListEntitlements returns the groups a user belongs to.
+func (c *JiraAccessConnector) ListEntitlements(
+	ctx context.Context, configRaw, secretsRaw map[string]interface{}, userExternalID string,
+) ([]access.Entitlement, error) {
+	if userExternalID == "" {
+		return nil, errors.New("jira: user external id is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	urlStr := fmt.Sprintf("%s/rest/api/3/user/groups?accountId=%s", c.baseURL(cfg), url.QueryEscape(userExternalID))
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, urlStr)
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+	var groups []struct {
+		Name    string `json:"name"`
+		GroupID string `json:"groupId"`
+	}
+	if err := json.Unmarshal(body, &groups); err != nil {
+		return nil, fmt.Errorf("jira: decode groups: %w", err)
+	}
+	var out []access.Entitlement
+	for _, g := range groups {
+		out = append(out, access.Entitlement{
+			ResourceExternalID: g.Name,
+			Role:               "member",
+			Source:             "direct",
+		})
+	}
+	return out, nil
 }
 
 // GetSSOMetadata returns the Atlassian Access SAML metadata URL for the

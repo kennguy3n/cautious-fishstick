@@ -12,6 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"bytes"
+
+	"net/url"
+
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
@@ -21,7 +25,7 @@ const (
 	notionAPIVersion = "2022-06-28"
 )
 
-var ErrNotImplemented = errors.New("notion: capability not implemented in Phase 7")
+var ErrNotImplemented = errors.New("notion: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -229,14 +233,62 @@ func (c *NotionAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *NotionAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+func (c *NotionAccessConnector) ProvisionAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("notion: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	secrets, err := c.decodeBoth(secretsRaw)
+	if err != nil { return err }
+	body, _ := json.Marshal(map[string]interface{}{"properties": map[string]interface{}{}, "permissions": []map[string]interface{}{{"type": "user", "user_id": grant.UserExternalID, "role": "editor"}}})
+	urlStr := fmt.Sprintf("%s/v1/pages/%s", c.baseURL(), url.PathEscape(grant.ResourceExternalID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, urlStr, bytes.NewReader(body))
+	if err != nil { return err }
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.APIToken))
+	req.Header.Set("Notion-Version", "2022-06-28")
+	resp, err := c.client().Do(req)
+	if err != nil { return fmt.Errorf("notion: provision: %w", err) }
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK { return nil }
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if strings.Contains(string(respBody), "already") { return nil }
+	return fmt.Errorf("notion: provision status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *NotionAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+func (c *NotionAccessConnector) RevokeAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("notion: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	secrets, err := c.decodeBoth(secretsRaw)
+	if err != nil { return err }
+	body, _ := json.Marshal(map[string]interface{}{"permissions": []map[string]interface{}{}})
+	urlStr := fmt.Sprintf("%s/v1/pages/%s", c.baseURL(), url.PathEscape(grant.ResourceExternalID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, urlStr, bytes.NewReader(body))
+	if err != nil { return err }
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.APIToken))
+	req.Header.Set("Notion-Version", "2022-06-28")
+	resp, err := c.client().Do(req)
+	if err != nil { return fmt.Errorf("notion: revoke: %w", err) }
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNotFound { return nil }
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("notion: revoke status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *NotionAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+func (c *NotionAccessConnector) ListEntitlements(ctx context.Context, configRaw, secretsRaw map[string]interface{}, userExternalID string) ([]access.Entitlement, error) {
+	if userExternalID == "" { return nil, errors.New("notion: user external id is required") }
+	secrets, err := c.decodeBoth(secretsRaw)
+	if err != nil { return nil, err }
+	path := fmt.Sprintf("/v1/users/%s", url.PathEscape(userExternalID))
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, path)
+	if err != nil { return nil, err }
+	body, err := c.do(req)
+	if err != nil { return nil, nil }
+	var resp struct { Type string `json:"type"`; Name string `json:"name"` }
+	if json.Unmarshal(body, &resp) != nil { return nil, nil }
+	if resp.Type == "" { return nil, nil }
+	return []access.Entitlement{{ResourceExternalID: userExternalID, Role: resp.Type, Source: "direct"}}, nil
 }
 func (c *NotionAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

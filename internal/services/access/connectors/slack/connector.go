@@ -20,7 +20,7 @@ const (
 	defaultBaseURL = "https://slack.com/api"
 )
 
-var ErrNotImplemented = errors.New("slack: capability not implemented in Phase 7")
+var ErrNotImplemented = errors.New("slack: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -109,25 +109,37 @@ func (c *SlackAccessConnector) newRequest(ctx context.Context, secrets Secrets, 
 	return req, nil
 }
 
+type slackAPIResponse struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
 func (c *SlackAccessConnector) do(req *http.Request) ([]byte, error) {
-	resp, err := c.client().Do(req)
+	body, apiErr, err := c.doWithAPIError(req)
 	if err != nil {
-		return nil, fmt.Errorf("slack: %s %s: %w", req.Method, req.URL.Path, err)
+		return nil, err
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("slack: %s %s: status %d: %s", req.Method, req.URL.Path, resp.StatusCode, string(body))
-	}
-	// Slack returns 200 + {"ok":false,"error":"..."} on auth/api errors.
-	var envelope struct {
-		OK    bool   `json:"ok"`
-		Error string `json:"error,omitempty"`
-	}
-	if err := json.Unmarshal(body, &envelope); err == nil && !envelope.OK {
-		return nil, fmt.Errorf("slack: %s %s: api error: %s", req.Method, req.URL.Path, envelope.Error)
+	if apiErr != "" {
+		return nil, fmt.Errorf("slack: %s %s: api error: %s", req.Method, req.URL.Path, apiErr)
 	}
 	return body, nil
+}
+
+func (c *SlackAccessConnector) doWithAPIError(req *http.Request) (body []byte, apiErr string, err error) {
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("slack: %s %s: %w", req.Method, req.URL.Path, err)
+	}
+	defer resp.Body.Close()
+	body, _ = io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("slack: %s %s: status %d: %s", req.Method, req.URL.Path, resp.StatusCode, string(body))
+	}
+	var envelope slackAPIResponse
+	if err := json.Unmarshal(body, &envelope); err == nil && !envelope.OK {
+		return body, envelope.Error, nil
+	}
+	return body, "", nil
 }
 
 func (c *SlackAccessConnector) decodeBoth(configRaw, secretsRaw map[string]interface{}) (Config, Secrets, error) {
@@ -281,14 +293,126 @@ func (c *SlackAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *SlackAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ProvisionAccess invites a user to a Slack channel via conversations.invite.
+// grant.ResourceExternalID = channel ID, grant.UserExternalID = user ID.
+// already_in_channel is treated as idempotent success.
+func (c *SlackAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("slack: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	form := fmt.Sprintf("channel=%s&users=%s", grant.ResourceExternalID, grant.UserExternalID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/conversations.invite", strings.NewReader(form))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.BotToken))
+
+	_, apiErr, err := c.doWithAPIError(req)
+	if err != nil {
+		return err
+	}
+	if apiErr == "" || apiErr == "already_in_channel" {
+		return nil
+	}
+	return fmt.Errorf("slack: conversations.invite: api error: %s", apiErr)
 }
-func (c *SlackAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+// RevokeAccess removes a user from a Slack channel via conversations.kick.
+// not_in_channel is treated as idempotent success.
+func (c *SlackAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("slack: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	form := fmt.Sprintf("channel=%s&user=%s", grant.ResourceExternalID, grant.UserExternalID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/conversations.kick", strings.NewReader(form))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.BotToken))
+
+	_, apiErr, err := c.doWithAPIError(req)
+	if err != nil {
+		return err
+	}
+	if apiErr == "" || apiErr == "not_in_channel" {
+		return nil
+	}
+	return fmt.Errorf("slack: conversations.kick: api error: %s", apiErr)
 }
-func (c *SlackAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+// ListEntitlements fetches the channels a user belongs to via users.conversations
+// and maps each channel to an Entitlement with Role = "member".
+func (c *SlackAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	if userExternalID == "" {
+		return nil, errors.New("slack: user external id is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	var out []access.Entitlement
+	cursor := ""
+	for {
+		path := fmt.Sprintf("/users.conversations?user=%s&limit=200&types=public_channel,private_channel", userExternalID)
+		if cursor != "" {
+			path += "&cursor=" + cursor
+		}
+		req, err := c.newRequest(ctx, secrets, http.MethodGet, path)
+		if err != nil {
+			return nil, err
+		}
+		body, err := c.do(req)
+		if err != nil {
+			return nil, err
+		}
+		var resp struct {
+			OK               bool `json:"ok"`
+			Channels         []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"channels"`
+			ResponseMetadata struct {
+				NextCursor string `json:"next_cursor"`
+			} `json:"response_metadata"`
+		}
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, fmt.Errorf("slack: decode users.conversations: %w", err)
+		}
+		for _, ch := range resp.Channels {
+			out = append(out, access.Entitlement{
+				ResourceExternalID: ch.ID,
+				Role:               "member",
+				Source:             "direct",
+			})
+		}
+		if resp.ResponseMetadata.NextCursor == "" {
+			break
+		}
+		cursor = resp.ResponseMetadata.NextCursor
+	}
+	return out, nil
 }
 
 // GetSSOMetadata returns SAML metadata for Enterprise Grid workspaces.

@@ -13,6 +13,10 @@ import (
 	"strings"
 	"time"
 
+	"bytes"
+
+	"net/url"
+
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
@@ -20,7 +24,7 @@ const (
 	ProviderName = "zendesk"
 )
 
-var ErrNotImplemented = errors.New("zendesk: capability not implemented in Phase 7")
+var ErrNotImplemented = errors.New("zendesk: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -274,14 +278,61 @@ func (c *ZendeskAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *ZendeskAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+func (c *ZendeskAccessConnector) ProvisionAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("zendesk: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil { return err }
+	body, _ := json.Marshal(map[string]interface{}{"group_membership": map[string]interface{}{"user_id": grant.UserExternalID, "group_id": grant.ResourceExternalID}})
+	urlStr := fmt.Sprintf("%s/api/v2/group_memberships.json", c.baseURL(cfg))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(body))
+	if err != nil { return err }
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth(secrets.Email+"/token", secrets.APIToken)
+	resp, err := c.client().Do(req)
+	if err != nil { return fmt.Errorf("zendesk: provision: %w", err) }
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK { return nil }
+	if strings.Contains(string(respBody), "already exists") || strings.Contains(string(respBody), "DuplicateValue") { return nil }
+	return fmt.Errorf("zendesk: provision status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *ZendeskAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+func (c *ZendeskAccessConnector) RevokeAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("zendesk: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil { return err }
+	urlStr := fmt.Sprintf("%s/api/v2/group_memberships/%s.json", c.baseURL(cfg), url.PathEscape(grant.ResourceExternalID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, urlStr, nil)
+	if err != nil { return err }
+	req.SetBasicAuth(secrets.Email+"/token", secrets.APIToken)
+	resp, err := c.client().Do(req)
+	if err != nil { return fmt.Errorf("zendesk: revoke: %w", err) }
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound { return nil }
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("zendesk: revoke status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *ZendeskAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+func (c *ZendeskAccessConnector) ListEntitlements(ctx context.Context, configRaw, secretsRaw map[string]interface{}, userExternalID string) ([]access.Entitlement, error) {
+	if userExternalID == "" { return nil, errors.New("zendesk: user external id is required") }
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil { return nil, err }
+	urlStr := fmt.Sprintf("%s/api/v2/users/%s/group_memberships.json", c.baseURL(cfg), url.PathEscape(userExternalID))
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, urlStr)
+	if err != nil { return nil, err }
+	body, err := c.do(req)
+	if err != nil { return nil, err }
+	var resp struct { GroupMemberships []struct { GroupID int `json:"group_id"` } `json:"group_memberships"` }
+	if json.Unmarshal(body, &resp) != nil { return nil, nil }
+	var out []access.Entitlement
+	for _, gm := range resp.GroupMemberships {
+		out = append(out, access.Entitlement{ResourceExternalID: fmt.Sprintf("%d", gm.GroupID), Role: "member", Source: "direct"})
+	}
+	return out, nil
 }
 
 // GetSSOMetadata returns the Zendesk SAML metadata URL for the configured

@@ -181,6 +181,17 @@ func (e *WorkflowExecutor) Execute(ctx context.Context, req *ExecuteRequest) (*E
 		return nil, fmt.Errorf("%w: workflow %s has no steps", ErrStepUnknown, wf.ID)
 	}
 
+	// DAG runtime: when any step declares `next` or `join`, route
+	// the walk through executeDAG. Linear pipelines (Phase 2) keep
+	// the legacy code path so backwards-compat is preserved.
+	if hasDAG(steps) {
+		successors, predecessors, roots, derr := dagBuild(steps)
+		if derr != nil {
+			return nil, derr
+		}
+		return e.executeDAG(ctx, areq, wf.ID, req.RequestID, steps, successors, predecessors, roots)
+	}
+
 	for i, step := range steps {
 		historyAvailable := e.stepHistoryAvailable()
 		var historyID string

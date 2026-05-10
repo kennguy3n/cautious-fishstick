@@ -358,6 +358,65 @@ func TestRun_EmptySkipDatesAlwaysRuns(t *testing.T) {
 	}
 }
 
+// TestRun_SkipDateThenRunSequence is the Phase 5 e2e exercise that
+// drives the scheduler across two ticks for the same schedule:
+//   - tick 1 lands on a configured skip date → no campaign starts,
+//     NextRunAt advances by FrequencyDays.
+//   - tick 2 lands on a non-skip date but past the (newly bumped)
+//     NextRunAt → a campaign IS started, NextRunAt advances again.
+//
+// This covers the back-pressure invariant that a skipped tick leaves
+// the schedule in a state where the *next* fire-time is correct, not
+// the current one.
+func TestRun_SkipDateThenRunSequence(t *testing.T) {
+	db := newSchedDB(t)
+	starter := &stubStarter{}
+
+	// Tick 1: 2026-12-25 (Christmas, configured skip date).
+	tick1 := time.Date(2026, 12, 25, 8, 0, 0, 0, time.UTC)
+	originalNext := tick1.Add(-1 * time.Hour)
+	seedScheduleWithSkipDates(t, db, "01HSEQ0000000000SKIPRUN1", originalNext, []string{"2026-12-25"})
+
+	s := NewCampaignScheduler(db, starter)
+	s.SetClock(func() time.Time { return tick1 })
+	if err := s.Run(context.Background()); err != nil {
+		t.Fatalf("Run tick1: %v", err)
+	}
+	if len(starter.calls) != 0 {
+		t.Fatalf("tick1 StartCampaign calls = %d; want 0 (today is skip date)", len(starter.calls))
+	}
+
+	// Confirm NextRunAt advanced by FrequencyDays (90).
+	var afterSkip models.AccessCampaignSchedule
+	if err := db.Where("id = ?", "01HSEQ0000000000SKIPRUN1").First(&afterSkip).Error; err != nil {
+		t.Fatalf("read-back after skip: %v", err)
+	}
+	expectedNext := tick1.Add(90 * 24 * time.Hour)
+	if !afterSkip.NextRunAt.Equal(expectedNext) {
+		t.Fatalf("NextRunAt after skip = %v; want %v", afterSkip.NextRunAt, expectedNext)
+	}
+
+	// Tick 2: a date past the bumped NextRunAt that is NOT a skip
+	// date. The scheduler must start a campaign and bump NextRunAt
+	// again.
+	tick2 := expectedNext.Add(2 * time.Hour) // 2 hours past the new NextRunAt
+	s.SetClock(func() time.Time { return tick2 })
+	if err := s.Run(context.Background()); err != nil {
+		t.Fatalf("Run tick2: %v", err)
+	}
+	if len(starter.calls) != 1 {
+		t.Fatalf("tick2 StartCampaign calls = %d; want 1 (non-skip date past NextRunAt)", len(starter.calls))
+	}
+	var afterRun models.AccessCampaignSchedule
+	if err := db.Where("id = ?", "01HSEQ0000000000SKIPRUN1").First(&afterRun).Error; err != nil {
+		t.Fatalf("read-back after run: %v", err)
+	}
+	expectedNext2 := tick2.Add(90 * 24 * time.Hour)
+	if !afterRun.NextRunAt.Equal(expectedNext2) {
+		t.Fatalf("NextRunAt after run = %v; want %v", afterRun.NextRunAt, expectedNext2)
+	}
+}
+
 // TestRun_MalformedSkipDatesProceedsAsRun covers the operator-error
 // path: a corrupt SkipDates JSON should NOT strand the campaign — we
 // log the decode error and continue with a normal run.

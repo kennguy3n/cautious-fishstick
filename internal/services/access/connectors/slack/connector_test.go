@@ -157,3 +157,147 @@ func TestGetSSOMetadata_EnterpriseGridReturnsURL(t *testing.T) {
 		t.Fatalf("md = %+v", md)
 	}
 }
+
+// ---------- Phase 10 advanced capability tests ----------
+
+func TestProvisionAccess_HappyPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/conversations.invite") {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"channel":{"id":"C123"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	err := c.ProvisionAccess(context.Background(), nil, validSecrets(), access.AccessGrant{
+		UserExternalID: "U1", ResourceExternalID: "C123",
+	})
+	if err != nil {
+		t.Fatalf("ProvisionAccess: %v", err)
+	}
+}
+
+func TestProvisionAccess_Idempotent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":false,"error":"already_in_channel"}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	err := c.ProvisionAccess(context.Background(), nil, validSecrets(), access.AccessGrant{
+		UserExternalID: "U1", ResourceExternalID: "C123",
+	})
+	if err != nil {
+		t.Fatalf("ProvisionAccess (idempotent): %v", err)
+	}
+}
+
+func TestProvisionAccess_Failure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":false,"error":"channel_not_found"}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	err := c.ProvisionAccess(context.Background(), nil, validSecrets(), access.AccessGrant{
+		UserExternalID: "U1", ResourceExternalID: "C999",
+	})
+	if err == nil || !strings.Contains(err.Error(), "channel_not_found") {
+		t.Fatalf("ProvisionAccess: want channel_not_found error, got %v", err)
+	}
+}
+
+func TestRevokeAccess_HappyPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/conversations.kick") {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	err := c.RevokeAccess(context.Background(), nil, validSecrets(), access.AccessGrant{
+		UserExternalID: "U1", ResourceExternalID: "C123",
+	})
+	if err != nil {
+		t.Fatalf("RevokeAccess: %v", err)
+	}
+}
+
+func TestRevokeAccess_Idempotent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":false,"error":"not_in_channel"}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	err := c.RevokeAccess(context.Background(), nil, validSecrets(), access.AccessGrant{
+		UserExternalID: "U1", ResourceExternalID: "C123",
+	})
+	if err != nil {
+		t.Fatalf("RevokeAccess (idempotent): %v", err)
+	}
+}
+
+func TestRevokeAccess_Failure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":false,"error":"missing_scope"}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	err := c.RevokeAccess(context.Background(), nil, validSecrets(), access.AccessGrant{
+		UserExternalID: "U1", ResourceExternalID: "C123",
+	})
+	if err == nil || !strings.Contains(err.Error(), "missing_scope") {
+		t.Fatalf("RevokeAccess: want missing_scope error, got %v", err)
+	}
+}
+
+func TestListEntitlements_HappyPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "/users.conversations") {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"channels":[{"id":"C1","name":"general"},{"id":"C2","name":"random"}],"response_metadata":{"next_cursor":""}}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	got, err := c.ListEntitlements(context.Background(), nil, validSecrets(), "U1")
+	if err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d entitlements, want 2", len(got))
+	}
+	if got[0].ResourceExternalID != "C1" || got[0].Role != "member" || got[0].Source != "direct" {
+		t.Fatalf("entitlement[0] = %+v", got[0])
+	}
+}
+
+func TestListEntitlements_Empty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true,"channels":[],"response_metadata":{"next_cursor":""}}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	got, err := c.ListEntitlements(context.Background(), nil, validSecrets(), "U1")
+	if err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d entitlements, want 0", len(got))
+	}
+}

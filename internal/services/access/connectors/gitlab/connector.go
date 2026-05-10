@@ -3,12 +3,14 @@
 package gitlab
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -20,7 +22,7 @@ const (
 	defaultBaseURL = "https://gitlab.com"
 )
 
-var ErrNotImplemented = errors.New("gitlab: capability not implemented in Phase 7")
+var ErrNotImplemented = errors.New("gitlab: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -266,14 +268,104 @@ func (c *GitLabAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *GitLabAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ProvisionAccess adds a user to a GitLab group. 409 = idempotent.
+func (c *GitLabAccessConnector) ProvisionAccess(
+	ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant,
+) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("gitlab: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	accessLevel := 30 // developer default
+	if grant.Role != "" {
+		fmt.Sscanf(grant.Role, "%d", &accessLevel)
+	}
+	body, _ := json.Marshal(map[string]interface{}{"user_id": grant.UserExternalID, "access_level": accessLevel})
+	urlStr := fmt.Sprintf("%s/api/v4/groups/%s/members", c.baseURL(cfg), url.PathEscape(grant.ResourceExternalID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("PRIVATE-TOKEN", strings.TrimSpace(secrets.AccessToken))
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return fmt.Errorf("gitlab: provision: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusConflict {
+		return nil
+	}
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("gitlab: provision status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *GitLabAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+// RevokeAccess removes a user from a GitLab group. 404 = idempotent.
+func (c *GitLabAccessConnector) RevokeAccess(
+	ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant,
+) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("gitlab: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	urlStr := fmt.Sprintf("%s/api/v4/groups/%s/members/%s",
+		c.baseURL(cfg), url.PathEscape(grant.ResourceExternalID), url.PathEscape(grant.UserExternalID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, urlStr, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("PRIVATE-TOKEN", strings.TrimSpace(secrets.AccessToken))
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return fmt.Errorf("gitlab: revoke: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("gitlab: revoke status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *GitLabAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+// ListEntitlements returns the user's access level in a GitLab group.
+func (c *GitLabAccessConnector) ListEntitlements(
+	ctx context.Context, configRaw, secretsRaw map[string]interface{}, userExternalID string,
+) ([]access.Entitlement, error) {
+	if userExternalID == "" {
+		return nil, errors.New("gitlab: user external id is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	urlStr := fmt.Sprintf("%s/api/v4/groups/%s/members/%s",
+		c.baseURL(cfg), url.PathEscape(cfg.GroupID), url.PathEscape(userExternalID))
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, urlStr)
+	if err != nil {
+		return nil, err
+	}
+	_, body, err := c.doRaw(req)
+	if err != nil {
+		return nil, nil
+	}
+	var m struct {
+		AccessLevel int    `json:"access_level"`
+		Username    string `json:"username"`
+	}
+	if json.Unmarshal(body, &m) != nil {
+		return nil, nil
+	}
+	return []access.Entitlement{{
+		ResourceExternalID: cfg.GroupID,
+		Role:               fmt.Sprintf("%d", m.AccessLevel),
+		Source:             "direct",
+	}}, nil
 }
 
 // GetSSOMetadata returns the GitLab group SAML SSO metadata URL. GitLab
