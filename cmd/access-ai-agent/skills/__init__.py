@@ -20,6 +20,7 @@ from . import connector_setup_assistant  # noqa: F401
 from . import policy_recommendation  # noqa: F401
 from . import access_anomaly_detection  # noqa: F401
 from . import access_review_automation  # noqa: F401
+from . import llm  # noqa: F401
 
 __all__ = [
     "access_risk_assessment",
@@ -27,4 +28,5 @@ __all__ = [
     "policy_recommendation",
     "access_anomaly_detection",
     "access_review_automation",
+    "llm",
 ]

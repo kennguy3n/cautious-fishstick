@@ -25,6 +25,12 @@ import (
 //     the AI agent after the row is written. Never set by the user.
 //   - WorkflowID is nullable: if no workflow matches, the request stays in
 //     RequestStateRequested and a manager has to act.
+//   - LastEscalatedAt and EscalationLevel are written by the workflow engine's
+//     NotifyingEscalator and consumed by EscalationChecker.escalationTargets
+//     to (a) re-base the timeout window after an escalation and (b) advance
+//     a multi_level approval through Levels[]. Both fields default to nil/0
+//     for fresh requests; a CAS update on EscalationLevel is what makes the
+//     escalator idempotent under concurrent polling.
 //   - DeletedAt is the GORM soft-delete column. Tombstoned rows stay readable
 //     so the audit trail does not get rewritten when an admin "deletes" a
 //     request.
@@ -42,6 +48,8 @@ type AccessRequest struct {
 	RiskFactors        datatypes.JSON `gorm:"type:jsonb" json:"risk_factors,omitempty"`
 	WorkflowID         *string        `gorm:"type:varchar(26)" json:"workflow_id,omitempty"`
 	ExpiresAt          *time.Time     `json:"expires_at,omitempty"`
+	LastEscalatedAt    *time.Time     `json:"last_escalated_at,omitempty"`
+	EscalationLevel    int            `gorm:"not null;default:0" json:"escalation_level"`
 	DeletedAt          gorm.DeletedAt `gorm:"index" json:"-"`
 	CreatedAt          time.Time      `json:"created_at"`
 	UpdatedAt          time.Time      `json:"updated_at"`

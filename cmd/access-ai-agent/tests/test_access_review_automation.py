@@ -77,3 +77,57 @@ def test_run_rejects_bool_days_since_last_use() -> None:
 def test_run_raises_on_missing_grant_id() -> None:
     with pytest.raises(skill.SkillError):
         skill.run({"role": "viewer"})
+
+
+# Phase 5 — LLM verdict tests.
+import pytest
+
+from skills import llm as llm_mod
+
+
+@pytest.fixture
+def llm_provider(monkeypatch):
+    monkeypatch.setenv("ACCESS_AI_LLM_PROVIDER", "fake_review")
+    yield
+    llm_mod.set_test_provider("fake_review", None)
+
+
+def test_llm_verdict_revoke(llm_provider) -> None:
+    from skills import access_review_automation as skill
+    def fake(_prompt, _kwargs):
+        return '{"decision": "revoke", "reason": "test revoke"}'
+    llm_mod.set_test_provider("fake_review", fake)
+    result = skill.run({
+        "grant_id": "01H00000000000000000000001",
+        "role": "viewer",
+        "usage_data": {"days_since_last_use": 10},
+    })
+    assert result["decision"] == "revoke"
+    assert result["reason"] == "test revoke"
+
+
+def test_llm_unknown_decision_falls_back(llm_provider) -> None:
+    from skills import access_review_automation as skill
+    def fake(_prompt, _kwargs):
+        return '{"decision": "burn_it_down", "reason": "x"}'
+    llm_mod.set_test_provider("fake_review", fake)
+    result = skill.run({
+        "grant_id": "01H00000000000000000000001",
+        "role": "viewer",
+        "usage_data": {"days_since_last_use": 10},
+    })
+    # Falls back to deterministic certify path.
+    assert result["decision"] == "certify"
+
+
+def test_llm_failure_uses_deterministic(llm_provider) -> None:
+    from skills import access_review_automation as skill
+    def fake(_prompt, _kwargs):
+        raise RuntimeError("nope")
+    llm_mod.set_test_provider("fake_review", fake)
+    result = skill.run({
+        "grant_id": "01H00000000000000000000001",
+        "role": "viewer",
+        "usage_data": {"days_since_last_use": 10},
+    })
+    assert result["decision"] == "certify"

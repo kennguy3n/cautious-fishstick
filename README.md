@@ -268,12 +268,16 @@ cautious-fishstick/
 │   │       └── zapier/            # Zapier /v1/team/members (bearer + page/per_page) — Validate, Connect, Sync
 │   ├── services/access/workflow_engine/        # Phase 8 LangGraph-style orchestration package
 │   │   ├── router.go                          # RiskRouter (low → self_service, medium → manager_approval, high or sensitive_resource tag → security_review)
-│   │   ├── executor.go                        # WorkflowExecutor + ExecuteRequest / ExecutionResult + StepPerformer interface
+│   │   ├── executor.go                        # WorkflowExecutor + ExecuteRequest / ExecutionResult + StepPerformer interface + ListFailedSteps DLQ
 │   │   ├── steps.go                           # auto_approve / manager_approval / security_review / multi_level step bodies
+│   │   ├── performer.go                       # RealStepPerformer (replaces NoOpPerformer) — drives AccessRequestService.ApproveRequest / MarkPending
+│   │   ├── retry.go                           # RetryPolicy (3 attempts, exponential backoff 100ms → 200ms → 400ms cap 5s) + step-history DLQ writes
 │   │   ├── escalation.go                      # EscalationChecker cron + Escalator interface (timeout_hours / escalation_target / multi_level Levels[])
+│   │   ├── notification_escalator.go          # NotifyingEscalator (replaces loggingEscalator) — writes AccessRequestStateHistory + fans best-effort notifications
 │   │   └── server.go                          # net/http server (GET /health, POST /workflows/execute) on :8082 (configurable via ACCESS_WORKFLOW_ENGINE_LISTEN_ADDR)
 │   ├── services/notification/             # Phase 5 NotificationService + Notifier interface + InMemoryNotifier
-│   │   └── service.go                     # NotifyReviewersPending / NotifyRequester (best-effort fan-out)
+│   │   ├── service.go                     # NotifyReviewersPending / NotifyRequester (best-effort fan-out)
+│   │   └── push_notifier.go               # WebPushNotifier — POSTs pushEnvelope JSON to PushSubscription endpoints (best-effort)
 │   ├── pkg/credentials/                   # AES-GCM credential manager (KeyManager interface stub)
 │   ├── models/                            # GORM models
 │   │   ├── access_connector.go            # access_connectors
@@ -286,13 +290,18 @@ cautious-fishstick/
 │   │   ├── resource.go                    # Phase 3 resources
 │   │   ├── access_review.go               # Phase 5 access_reviews + state constants
 │   │   ├── access_review_decision.go      # Phase 5 access_review_decisions + decision constants
-│   │   └── access_campaign_schedule.go    # Phase 5 access_campaign_schedules (recurring check-ups)
+│   │   ├── access_campaign_schedule.go    # Phase 5 access_campaign_schedules (recurring check-ups + SkipDates)
+│   │   ├── access_workflow_step_history.go# Phase 8 access_workflow_step_history (durable per-step audit log + DLQ)
+│   │   └── push_subscription.go           # Phase 5 push_subscriptions (WebPush endpoint + p256dh / auth keys)
 │   └── migrations/                        # GORM AutoMigrate migrations (no FK constraints)
 │       ├── 001_create_access_connectors.go
 │       ├── 002_create_access_request_tables.go
 │       ├── 003_create_policy_tables.go
 │       ├── 004_create_access_review_tables.go
-│       └── 005_create_access_campaign_schedules.go
+│       ├── 005_create_access_campaign_schedules.go
+│       ├── 008_seed_workflow_templates.go         # Phase 8 default templates: new_hire_onboarding / contractor_onboarding / role_change / project_access
+│       ├── 009_create_workflow_step_history.go    # Phase 8 access_workflow_step_history table
+│       └── 010_create_push_subscriptions.go       # Phase 5 push_subscriptions table
 └── docs/                          # Proposal, architecture, phases, progress
 ```
 

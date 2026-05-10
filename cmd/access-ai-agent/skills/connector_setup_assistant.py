@@ -11,7 +11,13 @@ generator that pulls from the connector's published metadata.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List
+
+from .llm import LLMUnavailable, call_llm, parse_json_response
+
+
+logger = logging.getLogger(__name__)
 
 
 KNOWN_KINDS = {
@@ -65,7 +71,79 @@ def run(payload: Dict[str, Any]) -> Dict[str, Any]:
             "Set the connector's scim_auth_header secret to the literal Authorization header value (e.g. 'Bearer <token>').",
             "Verify with a SCIM /Users GET; expect HTTP 200.",
         ]
-    return {
+    deterministic = {
         "explanation": f"Setup guidance for connector kind {kind!r}.",
         "next_steps": steps,
     }
+
+    # Phase 5: ask the LLM for natural-language guidance, parsed
+    # into a structured next_steps array. The deterministic
+    # checklist is always returned; the LLM result either replaces
+    # or augments it depending on whether the user supplied a
+    # ``user_question`` (free-text question vs. plain wizard
+    # prompt).
+    user_question = payload.get("user_question") if isinstance(payload.get("user_question"), str) else ""
+    wizard_state = payload.get("wizard_state") if isinstance(payload.get("wizard_state"), dict) else {}
+    try:
+        llm_out = _llm_assistant(kind, user_question, wizard_state, deterministic)
+    except LLMUnavailable as exc:
+        logger.debug("llm connector assistant unavailable: %s", exc)
+        return deterministic
+    return llm_out
+
+
+# Substrings used to scrub credential-bearing wizard fields before the
+# state is sent to the LLM. Connectors commonly use names like
+# ``api_key``, ``aws_access_key_id``, ``scim_auth_header``, and
+# ``password`` — none of which contain "secret"/"token" — so the
+# deny-list has to cover the broader set of patterns.
+_SECRET_KEY_SUBSTRINGS = (
+    "secret",
+    "token",
+    "password",
+    "key",
+    "auth",
+    "credential",
+)
+
+
+def _llm_assistant(
+    kind: str, user_question: str, wizard_state: Dict[str, Any], baseline: Dict[str, Any]
+) -> Dict[str, Any]:
+    # Cap free-text input lengths to avoid bloating the prompt or
+    # smuggling long prompt-injection payloads from end users.
+    if len(user_question) > 1000:
+        user_question = user_question[:1000] + "\u2026"
+    safe_state = {
+        k: v
+        for k, v in wizard_state.items()
+        if isinstance(k, str) and not any(s in k.lower() for s in _SECRET_KEY_SUBSTRINGS)
+    }
+    prompt = (
+        "Help the admin configure a connector. Respond with strict JSON"
+        " {\"explanation\": one-paragraph natural-language answer,"
+        " \"next_steps\": ordered array of one-line action strings,"
+        " \"wizard_field_hints\": object mapping wizard field name to suggested"
+        " value or guidance string}.\n"
+        f"connector_kind: {kind}\n"
+        f"user_question: {user_question}\n"
+        f"wizard_state (secrets stripped): {safe_state}\n"
+        f"deterministic_baseline: {baseline['next_steps']}\n"
+    )
+    result = call_llm(prompt, system="You are a connector-setup assistant.")
+    parsed = parse_json_response(result.text)
+    explanation = parsed.get("explanation")
+    next_steps = parsed.get("next_steps")
+    if not isinstance(next_steps, list) or not next_steps:
+        raise LLMUnavailable("llm next_steps missing or empty")
+    next_steps = [s for s in next_steps if isinstance(s, str) and s.strip()]
+    if not next_steps:
+        raise LLMUnavailable("llm next_steps had no usable strings")
+    out: Dict[str, Any] = {
+        "explanation": explanation if isinstance(explanation, str) and explanation.strip() else baseline["explanation"],
+        "next_steps": next_steps,
+    }
+    hints = parsed.get("wizard_field_hints")
+    if isinstance(hints, dict):
+        out["wizard_field_hints"] = {k: v for k, v in hints.items() if isinstance(k, str)}
+    return out

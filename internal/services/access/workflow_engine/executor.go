@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -96,8 +98,15 @@ type StepPerformer interface {
 // Each step type is implemented as a method on the executor returning
 // (StepDecision, error) — see step_*.go in the same package.
 type WorkflowExecutor struct {
-	db        *gorm.DB
-	performer StepPerformer
+	db          *gorm.DB
+	performer   StepPerformer
+	retryPolicy RetryPolicy
+	sleep       func(time.Duration)
+	// stepHistoryOnce guards the lazy HasTable probe in
+	// stepHistoryAvailable so concurrent Execute calls don't race on
+	// stepHistoryOK. Initialised once and read freely thereafter.
+	stepHistoryOnce sync.Once
+	stepHistoryOK   bool
 }
 
 // NewWorkflowExecutor returns an executor backed by db and performer.
@@ -173,14 +182,41 @@ func (e *WorkflowExecutor) Execute(ctx context.Context, req *ExecuteRequest) (*E
 	}
 
 	for i, step := range steps {
-		decision, reason, err := e.runStep(ctx, areq, step)
+		historyAvailable := e.stepHistoryAvailable()
+		var historyID string
+		if historyAvailable {
+			var herr error
+			historyID, herr = e.startStepHistory(ctx, req.RequestID, wf.ID, i, step.Type)
+			if herr != nil {
+				return nil, herr
+			}
+		}
+		decision, reason, attempts, err := e.runStepWithRetry(ctx, areq, step)
 		if err != nil {
+			if historyID != "" {
+				_ = e.finishStepHistory(ctx, historyID, models.WorkflowStepStatusFailed, err.Error(), attempts)
+			}
 			return nil, fmt.Errorf("workflow_engine: step %d (%s): %w", i, step.Type, err)
 		}
 		if decision == StepApprove {
+			if historyID != "" {
+				_ = e.finishStepHistory(ctx, historyID, models.WorkflowStepStatusCompleted, reason, attempts)
+			}
 			continue
 		}
-		// Any non-approve decision halts the walk.
+		// Any non-approve decision halts the walk. Step-history
+		// status reflects the terminal outcome so operators can
+		// see at a glance which step blocked the request.
+		if historyID != "" {
+			terminalStatus := models.WorkflowStepStatusPending
+			switch decision {
+			case StepDeny:
+				terminalStatus = models.WorkflowStepStatusDenied
+			case StepEscalate:
+				terminalStatus = models.WorkflowStepStatusEscalated
+			}
+			_ = e.finishStepHistory(ctx, historyID, terminalStatus, reason, attempts)
+		}
 		return &ExecutionResult{
 			Decision:  decision,
 			StepIndex: i,

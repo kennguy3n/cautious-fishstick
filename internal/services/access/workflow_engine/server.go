@@ -53,8 +53,8 @@ func (s *Server) Shutdown() { s.healthy.Store(0) }
 
 // healthResponse is the JSON shape served by /health.
 type healthResponse struct {
-	Status     string `json:"status"`
-	UptimeSec  int64  `json:"uptime_seconds"`
+	Status    string `json:"status"`
+	UptimeSec int64  `json:"uptime_seconds"`
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {

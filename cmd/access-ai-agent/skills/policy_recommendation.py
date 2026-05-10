@@ -11,7 +11,13 @@ off ``team_kind`` per team. Phase 5 swaps in an LLM-backed generator.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List
+
+from .llm import LLMUnavailable, call_llm, parse_json_response
+
+
+logger = logging.getLogger(__name__)
 
 
 # Canned recommendations per team kind. Each entry is a partial
@@ -100,11 +106,71 @@ def run(payload: Dict[str, Any]) -> Dict[str, Any]:
         if templates:
             explanations.append(f"team {t.get('name')!r} kind={kind!r}: {len(templates)} templates")
 
-    return {
+    deterministic = {
         "explanation": (
             f"Phase 4 stub generated {len(recs)} recommendations from {len(teams)} teams: "
             + "; ".join(explanations) if explanations else
             "No matching team kinds found; no recommendations generated."
         ),
         "recommendations": recs,
+    }
+
+    # Phase 5: ask the LLM to expand recommendations using the
+    # supplied org context. The LLM result is APPENDED to the
+    # deterministic templates rather than replacing them, so the
+    # canned policies are always present even when the model
+    # returns nothing useful.
+    try:
+        extra = _llm_recommendations(teams, payload, deterministic)
+    except LLMUnavailable as exc:
+        logger.debug("llm policy recommendation unavailable: %s", exc)
+        return deterministic
+    if extra.get("recommendations"):
+        merged = list(recs) + list(extra["recommendations"])
+        return {
+            "explanation": extra.get("explanation") or deterministic["explanation"],
+            "recommendations": merged,
+        }
+    return deterministic
+
+
+def _llm_recommendations(
+    teams: List[Any], payload: Dict[str, Any], baseline: Dict[str, Any]
+) -> Dict[str, Any]:
+    team_summaries = []
+    for t in teams:
+        if not isinstance(t, dict):
+            continue
+        team_summaries.append({
+            "name": t.get("name"),
+            "kind": t.get("kind"),
+            "member_count": t.get("member_count"),
+        })
+    resources = payload.get("resources") or []
+    historical = payload.get("historical_request_counts") or {}
+    prompt = (
+        "Suggest additional access policies for this organisation. Respond"
+        " with strict JSON {\"explanation\": one sentence, \"recommendations\":"
+        " array of {name, subject_team, resource_kind, action, auto_provision,"
+        " rationale}}.\n"
+        f"teams: {team_summaries}\n"
+        f"resources: {resources}\n"
+        f"historical_request_counts: {historical}\n"
+        f"already_recommended: {[r.get('name') for r in baseline['recommendations']]}\n"
+    )
+    result = call_llm(prompt, system="You are an access-policy authoring assistant.")
+    parsed = parse_json_response(result.text)
+    extra = parsed.get("recommendations")
+    if not isinstance(extra, list):
+        raise LLMUnavailable("llm recommendations is not a list")
+    sanitised: List[Dict[str, Any]] = []
+    for item in extra:
+        if not isinstance(item, dict):
+            continue
+        if not isinstance(item.get("name"), str) or not item["name"].strip():
+            continue
+        sanitised.append(item)
+    return {
+        "explanation": parsed.get("explanation") if isinstance(parsed.get("explanation"), str) else None,
+        "recommendations": sanitised,
     }

@@ -44,9 +44,9 @@ type CampaignStarter interface {
 // expects an external ticker (or test loop) to drive Run. This makes
 // it trivial to unit-test with a synthetic clock.
 type CampaignScheduler struct {
-	db        *gorm.DB
-	starter   CampaignStarter
-	now       func() time.Time
+	db         *gorm.DB
+	starter    CampaignStarter
+	now        func() time.Time
 	defaultDue time.Duration
 }
 
@@ -55,9 +55,9 @@ type CampaignScheduler struct {
 // AccessReviewService that StartCampaign-s the new review.
 func NewCampaignScheduler(db *gorm.DB, starter CampaignStarter) *CampaignScheduler {
 	return &CampaignScheduler{
-		db:        db,
-		starter:   starter,
-		now:       time.Now,
+		db:         db,
+		starter:    starter,
+		now:        time.Now,
 		defaultDue: 14 * 24 * time.Hour,
 	}
 }
@@ -109,6 +109,15 @@ func (s *CampaignScheduler) Run(ctx context.Context) error {
 	var lastErr error
 	for i := range due {
 		sched := &due[i]
+		if shouldSkip, skipErr := isSkipDate(sched.SkipDates, now); skipErr != nil {
+			log.Printf("cron: campaign_scheduler: schedule_id=%s decode skip_dates: %v", sched.ID, skipErr)
+		} else if shouldSkip {
+			if err := s.bumpSkippedSchedule(ctx, sched, now); err != nil {
+				log.Printf("cron: campaign_scheduler: schedule_id=%s skip-bump: %v", sched.ID, err)
+				lastErr = err
+			}
+			continue
+		}
 		if err := s.runOne(ctx, sched, now); err != nil {
 			log.Printf("cron: campaign_scheduler: schedule_id=%s name=%q: %v", sched.ID, sched.Name, err)
 			lastErr = err
@@ -116,6 +125,52 @@ func (s *CampaignScheduler) Run(ctx context.Context) error {
 		}
 	}
 	return lastErr
+}
+
+// isSkipDate returns true when raw decodes to a list of dates and one
+// of them matches today (in UTC). A nil / empty raw is "no skip
+// dates" → never skip. Decode errors are surfaced so operators can
+// see malformed data; the caller treats decode failure as "do not
+// skip" so a typo'd holiday list doesn't strand a campaign.
+func isSkipDate(raw []byte, now time.Time) (bool, error) {
+	if len(raw) == 0 {
+		return false, nil
+	}
+	var dates []string
+	if err := json.Unmarshal(raw, &dates); err != nil {
+		return false, fmt.Errorf("cron: decode skip_dates: %w", err)
+	}
+	today := now.UTC().Format(models.SkipDateLayout)
+	for _, d := range dates {
+		if d == today {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// bumpSkippedSchedule advances NextRunAt by FrequencyDays without
+// inserting a new AccessReview. Used when the scheduler hits a
+// configured skip date — operators want the holiday respected, but
+// the next cycle should still fire on cadence.
+//
+// FrequencyDays<=0 falls back to the PROPOSAL §9 default of 90 days.
+func (s *CampaignScheduler) bumpSkippedSchedule(ctx context.Context, sched *models.AccessCampaignSchedule, now time.Time) error {
+	freq := sched.FrequencyDays
+	if freq <= 0 {
+		freq = 90
+	}
+	next := now.Add(time.Duration(freq) * 24 * time.Hour)
+	if err := s.db.WithContext(ctx).
+		Model(&models.AccessCampaignSchedule{}).
+		Where("id = ?", sched.ID).
+		Updates(map[string]interface{}{
+			"next_run_at": next,
+			"updated_at":  now,
+		}).Error; err != nil {
+		return fmt.Errorf("cron: skip-bump next_run_at for schedule_id=%s: %w", sched.ID, err)
+	}
+	return nil
 }
 
 // runOne starts a single campaign for the supplied schedule and

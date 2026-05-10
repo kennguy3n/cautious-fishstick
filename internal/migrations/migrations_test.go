@@ -1,13 +1,22 @@
 package migrations
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/glebarez/sqlite"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 
 	"github.com/kennguy3n/cautious-fishstick/internal/models"
 )
+
+// jsonUnmarshal is a thin wrapper around encoding/json.Unmarshal that
+// accepts a datatypes.JSON column directly so the migration tests can
+// inspect the seeded Steps payload without a re-cast at every callsite.
+func jsonUnmarshal(raw datatypes.JSON, into interface{}) error {
+	return json.Unmarshal([]byte(raw), into)
+}
 
 // openTestDB opens a fresh in-memory SQLite database for one test case.
 // SQLite has dynamic typing so the postgres-flavoured `type:jsonb` and
@@ -29,7 +38,7 @@ func openTestDB(t *testing.T) *gorm.DB {
 // catches "added the file but forgot to wire it into All()" wiring bugs.
 func TestAll_ReturnsAllMigrations(t *testing.T) {
 	got := All()
-	want := []string{"001", "002", "003", "004", "005", "006", "007"}
+	want := []string{"001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011"}
 	if len(got) != len(want) {
 		t.Fatalf("All() returned %d migrations; want %d", len(got), len(want))
 	}
@@ -72,6 +81,8 @@ func TestRunAll_AutoMigratesEveryTable(t *testing.T) {
 		"access_campaign_schedules",
 		"access_sync_state",
 		"access_jobs",
+		"access_workflow_step_history",
+		"push_subscriptions",
 	}
 	mig := db.Migrator()
 	for _, table := range wantTables {
@@ -223,6 +234,121 @@ func TestMigration007_RejectsNilDB(t *testing.T) {
 	}
 }
 
+// TestMigration008_SeedsAllTemplates asserts that running the
+// Phase 8 seed migration creates the four canonical workflow
+// templates with valid step JSON.
+func TestMigration008_SeedsAllTemplates(t *testing.T) {
+	db := openTestDB(t)
+	if err := Migration002CreateAccessRequestTables(db); err != nil {
+		t.Fatalf("migration 002: %v", err)
+	}
+	if err := Migration008SeedWorkflowTemplates(db); err != nil {
+		t.Fatalf("migration 008: %v", err)
+	}
+	wantNames := []string{
+		WorkflowTemplateNewHireOnboarding,
+		WorkflowTemplateContractorOnboard,
+		WorkflowTemplateRoleChange,
+		WorkflowTemplateProjectAccess,
+	}
+	for _, name := range wantNames {
+		var wf models.AccessWorkflow
+		if err := db.Where("name = ?", name).First(&wf).Error; err != nil {
+			t.Fatalf("template %q not seeded: %v", name, err)
+		}
+		if !wf.IsActive {
+			t.Errorf("template %q: IsActive false", name)
+		}
+		if len(wf.Steps) == 0 {
+			t.Errorf("template %q: empty Steps", name)
+		}
+		// Steps decodes as valid JSON.
+		var steps []models.WorkflowStepDefinition
+		if err := jsonUnmarshal(wf.Steps, &steps); err != nil {
+			t.Errorf("template %q: steps not valid JSON: %v", name, err)
+		}
+		if len(steps) == 0 {
+			t.Errorf("template %q: zero decoded steps", name)
+		}
+	}
+}
+
+// TestMigration008_IsIdempotent asserts that re-running the seed is a no-op.
+func TestMigration008_IsIdempotent(t *testing.T) {
+	db := openTestDB(t)
+	if err := Migration002CreateAccessRequestTables(db); err != nil {
+		t.Fatalf("migration 002: %v", err)
+	}
+	if err := Migration008SeedWorkflowTemplates(db); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	var beforeCount int64
+	if err := db.Model(&models.AccessWorkflow{}).Count(&beforeCount).Error; err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if err := Migration008SeedWorkflowTemplates(db); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	var afterCount int64
+	if err := db.Model(&models.AccessWorkflow{}).Count(&afterCount).Error; err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if beforeCount != afterCount {
+		t.Errorf("template count changed on re-run: %d → %d", beforeCount, afterCount)
+	}
+}
+
+// TestMigration008_RejectsNilDB exercises the defensive guard.
+func TestMigration008_RejectsNilDB(t *testing.T) {
+	if err := Migration008SeedWorkflowTemplates(nil); err == nil {
+		t.Fatal("expected error for nil db, got nil")
+	}
+}
+
+// TestMigration009_IsIdempotent asserts that running the Phase 8
+// step-history migration a second time is a no-op.
+func TestMigration009_IsIdempotent(t *testing.T) {
+	db := openTestDB(t)
+	if err := Migration009CreateWorkflowStepHistory(db); err != nil {
+		t.Fatalf("first run of migration 009 failed: %v", err)
+	}
+	if err := Migration009CreateWorkflowStepHistory(db); err != nil {
+		t.Fatalf("second run of migration 009 was not idempotent: %v", err)
+	}
+	if !db.Migrator().HasTable(&models.AccessWorkflowStepHistory{}) {
+		t.Error("step history table missing after migration")
+	}
+}
+
+// TestMigration009_RejectsNilDB exercises the defensive guard.
+func TestMigration009_RejectsNilDB(t *testing.T) {
+	if err := Migration009CreateWorkflowStepHistory(nil); err == nil {
+		t.Fatal("expected error for nil db, got nil")
+	}
+}
+
+// TestMigration010_IsIdempotent asserts that running the Phase 5
+// push subscription migration a second time is a no-op.
+func TestMigration010_IsIdempotent(t *testing.T) {
+	db := openTestDB(t)
+	if err := Migration010CreatePushSubscriptions(db); err != nil {
+		t.Fatalf("first run of migration 010 failed: %v", err)
+	}
+	if err := Migration010CreatePushSubscriptions(db); err != nil {
+		t.Fatalf("second run of migration 010 was not idempotent: %v", err)
+	}
+	if !db.Migrator().HasTable(&models.PushSubscription{}) {
+		t.Error("push_subscriptions table missing")
+	}
+}
+
+// TestMigration010_RejectsNilDB exercises the defensive guard.
+func TestMigration010_RejectsNilDB(t *testing.T) {
+	if err := Migration010CreatePushSubscriptions(nil); err == nil {
+		t.Fatal("expected error for nil db, got nil")
+	}
+}
+
 // TestModelTableNames pins the TableName() overrides so accidental renames
 // surface as a unit-test failure instead of an at-runtime migration mismatch.
 func TestModelTableNames(t *testing.T) {
@@ -244,6 +370,8 @@ func TestModelTableNames(t *testing.T) {
 		{"access_campaign_schedule", (models.AccessCampaignSchedule{}).TableName(), "access_campaign_schedules"},
 		{"access_sync_state", (models.AccessSyncState{}).TableName(), "access_sync_state"},
 		{"access_job", (models.AccessJob{}).TableName(), "access_jobs"},
+		{"access_workflow_step_history", (models.AccessWorkflowStepHistory{}).TableName(), "access_workflow_step_history"},
+		{"push_subscription", (models.PushSubscription{}).TableName(), "push_subscriptions"},
 	}
 	for _, tc := range cases {
 		if tc.got != tc.want {
