@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -85,24 +86,24 @@ func (c *PipedriveAccessConnector) client() httpDoer {
 	return &http.Client{Timeout: 30 * time.Second}
 }
 
+// newRequest builds an authenticated Pipedrive request. The api_token is sent
+// via the Authorization header (Pipedrive accepts "Bearer <api_token>" for both
+// v1 and v2 endpoints) so it never lands in the URL — keeping it out of
+// *url.Error.Error() messages and any subsequent log lines.
 func (c *PipedriveAccessConnector) newRequest(ctx context.Context, secrets Secrets, method, path string) (*http.Request, error) {
-	sep := "?"
-	if strings.Contains(path, "?") {
-		sep = "&"
-	}
-	full := c.baseURL() + path + sep + "api_token=" + strings.TrimSpace(secrets.APIToken)
-	req, err := http.NewRequestWithContext(ctx, method, full, nil)
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL()+path, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.APIToken))
 	return req, nil
 }
 
 func (c *PipedriveAccessConnector) do(req *http.Request) ([]byte, error) {
 	resp, err := c.client().Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("pipedrive: %s %s: %w", req.Method, req.URL.Path, err)
+		return nil, fmt.Errorf("pipedrive: %s %s: %w", req.Method, req.URL.Path, sanitizeURLError(err))
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -280,6 +281,17 @@ func shortToken(t string) string {
 		return t
 	}
 	return t[:4] + "..." + t[len(t)-4:]
+}
+
+// sanitizeURLError strips the URL component from *url.Error so that any
+// query-string-borne secrets (defence-in-depth — we already moved the token
+// to the Authorization header) cannot leak through wrapped error messages.
+func sanitizeURLError(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return fmt.Errorf("%s: %w", urlErr.Op, urlErr.Err)
+	}
+	return err
 }
 
 var _ access.AccessConnector = (*PipedriveAccessConnector)(nil)

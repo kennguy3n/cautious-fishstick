@@ -143,7 +143,11 @@ func (c *TrelloAccessConnector) newRequest(ctx context.Context, secrets Secrets,
 func (c *TrelloAccessConnector) do(req *http.Request) ([]byte, error) {
 	resp, err := c.client().Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("trello: %s %s: %w", req.Method, req.URL.Path, err)
+		// Trello requires api_key/api_token to be sent as URL query parameters
+		// (no header-auth equivalent for personal tokens), so we strip the URL
+		// component from any *url.Error before wrapping to keep credentials
+		// out of the error chain (and therefore out of caller log lines).
+		return nil, fmt.Errorf("trello: %s %s: %w", req.Method, req.URL.Path, sanitizeURLError(err))
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -288,6 +292,18 @@ func shortToken(t string) string {
 		return t
 	}
 	return t[:4] + "..." + t[len(t)-4:]
+}
+
+// sanitizeURLError unwraps *url.Error and re-wraps with only the operation
+// ("Get", "Post", ...) and the underlying error, dropping the URL field —
+// which would otherwise embed the api_key/api_token query parameters in any
+// log line that prints the returned error.
+func sanitizeURLError(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return fmt.Errorf("%s: %w", urlErr.Op, urlErr.Err)
+	}
+	return err
 }
 
 var _ access.AccessConnector = (*TrelloAccessConnector)(nil)

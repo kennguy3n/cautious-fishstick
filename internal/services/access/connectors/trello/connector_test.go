@@ -114,3 +114,24 @@ func TestGetCredentialsMetadata_RedactsToken(t *testing.T) {
 		t.Errorf("key_short = %q", keyShort)
 	}
 }
+
+// TestDoError_DoesNotLeakCredentials proves that when the underlying transport
+// returns a *url.Error, the returned error string does not contain either the
+// api_key or api_token. Trello requires query-string auth (no header
+// equivalent for personal tokens), so this is the only line of defence.
+func TestDoError_DoesNotLeakCredentials(t *testing.T) {
+	c := New()
+	c.urlOverride = "http://127.0.0.1:1" // unroutable, forces *url.Error
+	c.httpClient = func() httpDoer { return &http.Client{Transport: http.DefaultTransport} }
+	err := c.Connect(context.Background(), validConfig(), validSecrets())
+	if err == nil {
+		t.Fatal("expected error from unreachable host")
+	}
+	secrets := validSecrets()
+	for _, field := range []string{"api_key", "api_token"} {
+		v, _ := secrets[field].(string)
+		if strings.Contains(err.Error(), v) {
+			t.Errorf("%s leaked in error: %q", field, err.Error())
+		}
+	}
+}
