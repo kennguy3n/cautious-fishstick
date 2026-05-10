@@ -1,5 +1,14 @@
-// Package stripe implements the access.AccessConnector contract for the
-// Stripe accounts API.
+// Package stripe implements the access.AccessConnector contract for Stripe
+// Connect platforms.
+//
+// Stripe does not expose a public REST API for dashboard team members
+// (see https://stripe.com/docs/api). The closest thing the platform can
+// pull is the list of connected merchant accounts via /v1/accounts —
+// those are the businesses (merchants) that have authorized the platform
+// account to act on their behalf, not the human users who can sign into
+// the dashboard. This connector therefore syncs connected accounts as
+// IdentityTypeServiceAccount records (one per merchant) rather than
+// pretending to enumerate dashboard team members.
 package stripe
 
 import (
@@ -165,13 +174,15 @@ func (c *StripeAccessConnector) VerifyPermissions(ctx context.Context, configRaw
 }
 
 type stripeAccount struct {
-	ID       string `json:"id"`
-	Email    string `json:"email"`
+	ID              string `json:"id"`
+	Email           string `json:"email"`
 	BusinessProfile struct {
 		Name string `json:"name"`
 	} `json:"business_profile"`
-	Type    string `json:"type"`
-	Country string `json:"country"`
+	Type           string `json:"type"`
+	Country        string `json:"country"`
+	ChargesEnabled bool   `json:"charges_enabled"`
+	PayoutsEnabled bool   `json:"payouts_enabled"`
 }
 
 type stripeListResponse struct {
@@ -227,12 +238,19 @@ func (c *StripeAccessConnector) SyncIdentities(
 			if display == "" {
 				display = a.ID
 			}
+			status := "active"
+			if !a.ChargesEnabled || !a.PayoutsEnabled {
+				status = "restricted"
+			}
 			identities = append(identities, &access.Identity{
 				ExternalID:  a.ID,
-				Type:        access.IdentityTypeUser,
+				// Connected accounts are merchant businesses, not human
+				// users; service_account is the closest fit in the
+				// IdentityType enum.
+				Type:        access.IdentityTypeServiceAccount,
 				DisplayName: display,
 				Email:       a.Email,
-				Status:      "active",
+				Status:      status,
 				RawData:     map[string]interface{}{"type": a.Type, "country": a.Country},
 			})
 		}

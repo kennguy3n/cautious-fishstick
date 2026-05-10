@@ -1,10 +1,9 @@
-package stripe
+package zenefits
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,7 +19,7 @@ func (noNetworkRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) 
 }
 
 func validConfig() map[string]interface{}  { return map[string]interface{}{} }
-func validSecrets() map[string]interface{} { return map[string]interface{}{"secret_key": "sk_test_AAAA1234bbbbCCCC"} }
+func validSecrets() map[string]interface{} { return map[string]interface{}{"token": "znAAAA1234bbbbCCCC"} }
 
 func TestValidate_HappyPath(t *testing.T) {
 	if err := New().Validate(context.Background(), validConfig(), validSecrets()); err != nil {
@@ -31,7 +30,7 @@ func TestValidate_HappyPath(t *testing.T) {
 func TestValidate_RejectsMissing(t *testing.T) {
 	c := New()
 	if err := c.Validate(context.Background(), validConfig(), map[string]interface{}{}); err == nil {
-		t.Error("missing key")
+		t.Error("missing token")
 	}
 }
 
@@ -52,43 +51,26 @@ func TestRegistryIntegration(t *testing.T) {
 
 func TestSync_PaginatesUsers(t *testing.T) {
 	calls := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
 			t.Errorf("expected Bearer auth")
 		}
-		if r.URL.Path != "/v1/accounts" {
-			t.Errorf("path = %q; want /v1/accounts", r.URL.Path)
-		}
+		body := map[string]interface{}{"data": map[string]interface{}{"data": []map[string]interface{}{}, "next_url": ""}}
 		if calls == 1 {
-			data := []map[string]interface{}{
-				{
-					"id":               "acct_1",
-					"email":            "a@x.com",
-					"business_profile": map[string]interface{}{"name": "Acme Inc."},
-					"charges_enabled":  true,
-					"payouts_enabled":  true,
-				},
-				{
-					"id":               "acct_2",
-					"email":            "b@x.com",
-					"business_profile": map[string]interface{}{"name": "Beta Co."},
-					"charges_enabled":  true,
-					"payouts_enabled":  false,
-				},
+			body["data"] = map[string]interface{}{
+				"data":     []map[string]interface{}{{"id": "p1", "first_name": "Alice", "last_name": "A", "work_email": "a@x.com", "status": "active"}},
+				"next_url": srv.URL + "/core/people?cursor=p2",
 			}
-			b, _ := json.Marshal(map[string]interface{}{
-				"object":   "list",
-				"has_more": true,
-				"data":     data,
-			})
-			_, _ = w.Write(b)
-			return
+		} else {
+			body["data"] = map[string]interface{}{
+				"data":     []map[string]interface{}{{"id": "p2", "first_name": "Bob", "last_name": "B", "work_email": "b@x.com", "status": "TERMINATED"}},
+				"next_url": "",
+			}
 		}
-		if r.URL.Query().Get("starting_after") != "acct_2" {
-			t.Errorf("starting_after = %q", r.URL.Query().Get("starting_after"))
-		}
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"object":"list","has_more":false,"data":[{"id":"acct_3","email":"c@x.com","charges_enabled":true,"payouts_enabled":true}]}`)))
+		b, _ := json.Marshal(body)
+		_, _ = w.Write(b)
 	}))
 	t.Cleanup(srv.Close)
 	c := New()
@@ -102,38 +84,27 @@ func TestSync_PaginatesUsers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	if len(got) != 3 {
+	if len(got) != 2 {
 		t.Fatalf("len = %d", len(got))
 	}
 	if calls != 2 {
 		t.Fatalf("calls = %d", calls)
 	}
-	for _, id := range got {
-		if id.Type != access.IdentityTypeServiceAccount {
-			t.Errorf("identity %q type = %q; want service_account (Stripe Connect accounts are merchant businesses, not human users)", id.ExternalID, id.Type)
-		}
-	}
-	if got[0].DisplayName != "Acme Inc." {
-		t.Errorf("acct_1 display = %q; want Acme Inc.", got[0].DisplayName)
-	}
-	if got[1].Status != "restricted" {
-		t.Errorf("acct_2 status = %q; want restricted (payouts_enabled=false)", got[1].Status)
-	}
-	if got[2].Status != "active" {
-		t.Errorf("acct_3 status = %q; want active", got[2].Status)
+	if got[1].Status != "terminated" {
+		t.Errorf("status = %q", got[1].Status)
 	}
 }
 
 func TestConnect_Failure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
+		w.WriteHeader(http.StatusForbidden)
 	}))
 	t.Cleanup(srv.Close)
 	c := New()
 	c.urlOverride = srv.URL
 	c.httpClient = func() httpDoer { return srv.Client() }
-	if err := c.Connect(context.Background(), validConfig(), validSecrets()); err == nil || !strings.Contains(err.Error(), "401") {
-		t.Errorf("Connect err = %v; want 401", err)
+	if err := c.Connect(context.Background(), validConfig(), validSecrets()); err == nil || !strings.Contains(err.Error(), "403") {
+		t.Errorf("Connect err = %v; want 403", err)
 	}
 }
 
@@ -142,8 +113,8 @@ func TestGetCredentialsMetadata_RedactsToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	short, _ := md["key_short"].(string)
+	short, _ := md["token_short"].(string)
 	if short == "" || strings.Contains(short, "AAAA1234") {
-		t.Errorf("key_short = %q", short)
+		t.Errorf("token_short = %q", short)
 	}
 }
