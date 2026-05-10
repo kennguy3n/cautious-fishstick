@@ -56,6 +56,9 @@ func TestSync_PaginatesUsers(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
+		if got := r.URL.Path; got != "/v2/learningActivityReports" {
+			t.Errorf("expected /v2/learningActivityReports; got %q", got)
+		}
 		if got := r.Header.Get("Authorization"); !strings.HasPrefix(got, "Bearer ") {
 			t.Errorf("expected Bearer auth; got %q", got)
 		}

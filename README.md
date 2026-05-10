@@ -235,7 +235,7 @@ cautious-fishstick/
 │   │       ├── chargebee/         # Chargebee /api/v2/customers (HTTP Basic api_key: + offset cursor + DNS-label site) — Validate, Connect, Sync
 │   │       ├── coursera/          # Coursera /api/businesses.v1/{org}/users (bearer + page/per_page + URL-path-escape) — Validate, Connect, Sync
 │   │       ├── kareo/             # Kareo /api/v1/users (bearer + page/per_page) — Validate, Connect, Sync
-│   │       ├── linkedin_learning/ # LinkedIn Learning /v2/learningAssets (bearer + page/per_page) — Validate, Connect, Sync
+│   │       ├── linkedin_learning/ # LinkedIn Learning admin /v2/learningActivityReports (bearer + page/per_page) — Validate, Connect, Sync
 │   │       ├── magento/           # Magento 2 /rest/V1/customers/search (bearer + searchCriteria pagination + total_count + https endpoint) — Validate, Connect, Sync
 │   │       ├── netsuite/          # NetSuite SuiteTalk /record/v1/employee (bearer + offset/limit) — Validate, Connect, Sync
 │   │       ├── practice_fusion/   # Practice Fusion /api/v1/users (bearer + page/per_page) — Validate, Connect, Sync

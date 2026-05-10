@@ -56,8 +56,23 @@ func TestSync_PaginatesUsers(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST; got %s", r.Method)
+		}
 		if got := r.Header.Get("Authorization"); !strings.HasPrefix(got, "Bearer ") {
 			t.Errorf("expected Bearer auth; got %q", got)
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("expected application/json content-type; got %q", got)
+		}
+		var reqBody map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if calls == 2 {
+			if got, _ := reqBody["cursor"].(string); got != "next-cursor" {
+				t.Errorf("expected cursor=next-cursor on page 2; got %q", got)
+			}
 		}
 		var arr []map[string]interface{}
 		if calls == 1 {

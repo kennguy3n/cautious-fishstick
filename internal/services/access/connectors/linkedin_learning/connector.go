@@ -1,4 +1,5 @@
-// Package linkedin_learning implements the access.AccessConnector contract for LinkedIn Learning /v2/learningAssets with bearer auth + page/per_page pagination.
+// Package linkedin_learning implements the access.AccessConnector contract for LinkedIn Learning admin /v2/learningActivityReports with bearer auth + page/per_page pagination.
+// /v2/learningActivityReports is the admin API endpoint that returns member (learner) accounts; /v2/learningAssets is the content catalog endpoint and is NOT used here.
 package linkedin_learning
 
 import (
@@ -145,7 +146,7 @@ func (c *LinkedInLearningAccessConnector) Connect(ctx context.Context, configRaw
 		return err
 	}
 	_ = cfg
-	probe := c.baseURL() + ("/v2/learningAssets") + "?page=1&per_page=1"
+	probe := c.baseURL() + "/v2/learningActivityReports" + "?page=1&per_page=1"
 	req, err := c.newRequest(ctx, secrets, http.MethodGet, probe)
 	if err != nil {
 		return err
@@ -205,7 +206,7 @@ func (c *LinkedInLearningAccessConnector) SyncIdentities(
 		}
 	}
 	base := c.baseURL()
-	path := base + ("/v2/learningAssets")
+	path := base + "/v2/learningActivityReports"
 	for {
 		q := url.Values{
 			"page":     []string{fmt.Sprintf("%d", page)},

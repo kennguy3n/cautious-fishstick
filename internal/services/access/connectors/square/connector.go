@@ -1,17 +1,18 @@
 // Package square implements the access.AccessConnector contract for Square /v2/team-members/search with bearer auth + cursor pagination.
+// /v2/team-members/search is a POST endpoint that accepts a JSON body with a search query and pagination cursor.
 package square
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
-	
+
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
@@ -98,13 +99,16 @@ func (c *SquareAccessConnector) client() httpDoer {
 	return &http.Client{Timeout: 30 * time.Second}
 }
 
-func (c *SquareAccessConnector) newRequest(ctx context.Context, secrets Secrets, method, fullURL string) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, method, fullURL, nil)
+func (c *SquareAccessConnector) newRequest(ctx context.Context, secrets Secrets, method, fullURL string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, body)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.Token))
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	return req, nil
 }
 
@@ -145,8 +149,12 @@ func (c *SquareAccessConnector) Connect(ctx context.Context, configRaw, secretsR
 		return err
 	}
 	_ = cfg
-	probe := c.baseURL() + ("/v2/team-members/search") + "?limit=1"
-	req, err := c.newRequest(ctx, secrets, http.MethodGet, probe)
+	probe := c.baseURL() + "/v2/team-members/search"
+	body, err := json.Marshal(map[string]interface{}{"limit": 1})
+	if err != nil {
+		return fmt.Errorf("square: encode connect body: %w", err)
+	}
+	req, err := c.newRequest(ctx, secrets, http.MethodPost, probe, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -200,16 +208,19 @@ func (c *SquareAccessConnector) SyncIdentities(
 	_ = cfg
 	cursor := strings.TrimSpace(checkpoint)
 	base := c.baseURL()
-	path := base + ("/v2/team-members/search")
+	path := base + "/v2/team-members/search"
 	for {
-		q := url.Values{
-			"limit": []string{fmt.Sprintf("%d", pageSize)},
+		reqBody := map[string]interface{}{
+			"limit": pageSize,
 		}
 		if cursor != "" {
-			q.Set("cursor", cursor)
+			reqBody["cursor"] = cursor
 		}
-		fullURL := path + "?" + q.Encode()
-		req, err := c.newRequest(ctx, secrets, http.MethodGet, fullURL)
+		encoded, err := json.Marshal(reqBody)
+		if err != nil {
+			return fmt.Errorf("square: encode search body: %w", err)
+		}
+		req, err := c.newRequest(ctx, secrets, http.MethodPost, path, bytes.NewReader(encoded))
 		if err != nil {
 			return err
 		}
