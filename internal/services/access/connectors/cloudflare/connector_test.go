@@ -299,3 +299,69 @@ func TestListEntitlements_Empty(t *testing.T) {
 		t.Fatalf("got %d entitlements, want 0", len(got))
 	}
 }
+
+// legacyAPIKeySecrets configures a Cloudflare global API key + email
+// instead of an API token. The Secrets.validate() contract still accepts
+// this mode (legacy auth), so ProvisionAccess / RevokeAccess /
+// ListEntitlements must all route through newRequest, which is the only
+// place that knows how to fall back to X-Auth-Email / X-Auth-Key headers.
+func legacyAPIKeyConfig() map[string]interface{} {
+	return map[string]interface{}{"account_id": "acct-123", "email": "admin@example.com"}
+}
+
+func legacyAPIKeySecrets() map[string]interface{} {
+	return map[string]interface{}{"api_key": "legacy-key-xyz"}
+}
+
+// TestProvisionAccess_LegacyAPIKeyAuth is a regression test for the bug
+// where ProvisionAccess hardcoded Authorization: Bearer + secrets.APIToken
+// and silently sent an empty Bearer header on legacy api_key auth.
+func TestProvisionAccess_LegacyAPIKeyAuth(t *testing.T) {
+	var gotAuth, gotEmail, gotKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotEmail = r.Header.Get("X-Auth-Email")
+		gotKey = r.Header.Get("X-Auth-Key")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	err := c.ProvisionAccess(context.Background(), legacyAPIKeyConfig(), legacyAPIKeySecrets(), access.AccessGrant{UserExternalID: "user@example.com", ResourceExternalID: "role-1"})
+	if err != nil {
+		t.Fatalf("ProvisionAccess (legacy api_key): %v", err)
+	}
+	if gotAuth != "" {
+		t.Errorf("Authorization header = %q; want empty under legacy api_key auth", gotAuth)
+	}
+	if gotEmail != "admin@example.com" {
+		t.Errorf("X-Auth-Email = %q; want admin@example.com", gotEmail)
+	}
+	if gotKey != "legacy-key-xyz" {
+		t.Errorf("X-Auth-Key = %q; want legacy-key-xyz", gotKey)
+	}
+}
+
+// TestRevokeAccess_LegacyAPIKeyAuth mirrors the regression test for the
+// DELETE path.
+func TestRevokeAccess_LegacyAPIKeyAuth(t *testing.T) {
+	var gotEmail, gotKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotEmail = r.Header.Get("X-Auth-Email")
+		gotKey = r.Header.Get("X-Auth-Key")
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	err := c.RevokeAccess(context.Background(), legacyAPIKeyConfig(), legacyAPIKeySecrets(), access.AccessGrant{UserExternalID: "user@example.com", ResourceExternalID: "role-1"})
+	if err != nil {
+		t.Fatalf("RevokeAccess (legacy api_key): %v", err)
+	}
+	if gotEmail != "admin@example.com" || gotKey != "legacy-key-xyz" {
+		t.Errorf("legacy headers wrong: email=%q key=%q", gotEmail, gotKey)
+	}
+}

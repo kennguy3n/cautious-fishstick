@@ -26,6 +26,19 @@ const (
 
 var ErrNotImplemented = errors.New("salesforce: capability not implemented")
 
+// escapeSOQLLiteral escapes a value for safe interpolation inside a SOQL
+// single-quoted string literal. Salesforce SOQL requires single quotes to be
+// doubled (`'` → `''`) and backslashes to be escaped (`\` → `\\`); URL
+// encoding alone (`url.QueryEscape`) does NOT protect against injection here
+// because Salesforce URL-decodes the `q=` query parameter before the SOQL
+// parser sees it, so `%27` decodes back to `'` and an attacker-controlled
+// external ID can still break out of the string literal.
+func escapeSOQLLiteral(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `'`, `\'`)
+	return s
+}
+
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
@@ -314,7 +327,7 @@ func (c *SalesforceAccessConnector) RevokeAccess(
 		return err
 	}
 	query := fmt.Sprintf("SELECT+Id+FROM+PermissionSetAssignment+WHERE+AssigneeId='%s'+AND+PermissionSetId='%s'",
-		url.QueryEscape(grant.UserExternalID), url.QueryEscape(grant.ResourceExternalID))
+		url.QueryEscape(escapeSOQLLiteral(grant.UserExternalID)), url.QueryEscape(escapeSOQLLiteral(grant.ResourceExternalID)))
 	queryURL := c.instanceURL(configRaw) + "/services/data/v59.0/query?q=" + query
 	req, err := c.newRequest(ctx, secrets, http.MethodGet, queryURL)
 	if err != nil {
@@ -359,7 +372,7 @@ func (c *SalesforceAccessConnector) ListEntitlements(
 		return nil, err
 	}
 	query := fmt.Sprintf("SELECT+PermissionSet.Name,PermissionSetId+FROM+PermissionSetAssignment+WHERE+AssigneeId='%s'",
-		url.QueryEscape(userExternalID))
+		url.QueryEscape(escapeSOQLLiteral(userExternalID)))
 	queryURL := c.instanceURL(configRaw) + "/services/data/v59.0/query?q=" + query
 	req, err := c.newRequest(ctx, secrets, http.MethodGet, queryURL)
 	if err != nil {

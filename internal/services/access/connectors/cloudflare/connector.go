@@ -358,13 +358,13 @@ func (c *CloudflareAccessConnector) ProvisionAccess(
 		return err
 	}
 	body, _ := json.Marshal(map[string]interface{}{"email": grant.UserExternalID, "roles": []string{grant.ResourceExternalID}})
-	urlStr := fmt.Sprintf("%s/accounts/%s/members", c.baseURL(), url.PathEscape(cfg.AccountID))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(body))
+	req, err := c.newRequest(ctx, secrets, cfg, http.MethodPost, "/accounts/"+url.PathEscape(cfg.AccountID)+"/members")
 	if err != nil {
 		return err
 	}
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	req.ContentLength = int64(len(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.APIToken))
 	resp, err := c.client().Do(req)
 	if err != nil {
 		return fmt.Errorf("cloudflare: provision: %w", err)
@@ -390,12 +390,10 @@ func (c *CloudflareAccessConnector) RevokeAccess(
 	if err != nil {
 		return err
 	}
-	urlStr := fmt.Sprintf("%s/accounts/%s/members/%s", c.baseURL(), url.PathEscape(cfg.AccountID), url.PathEscape(grant.UserExternalID))
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, urlStr, nil)
+	req, err := c.newRequest(ctx, secrets, cfg, http.MethodDelete, "/accounts/"+url.PathEscape(cfg.AccountID)+"/members/"+url.PathEscape(grant.UserExternalID))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.APIToken))
 	resp, err := c.client().Do(req)
 	if err != nil {
 		return fmt.Errorf("cloudflare: revoke: %w", err)
@@ -418,12 +416,10 @@ func (c *CloudflareAccessConnector) ListEntitlements(
 	if err != nil {
 		return nil, err
 	}
-	urlStr := fmt.Sprintf("%s/accounts/%s/members/%s", c.baseURL(), url.PathEscape(cfg.AccountID), url.PathEscape(userExternalID))
-	req, err := c.newRequest(ctx, secrets, cfg, http.MethodGet, "")
+	req, err := c.newRequest(ctx, secrets, cfg, http.MethodGet, "/accounts/"+url.PathEscape(cfg.AccountID)+"/members/"+url.PathEscape(userExternalID))
 	if err != nil {
 		return nil, err
 	}
-	req.URL, _ = url.Parse(urlStr)
 	body, err := c.do(req)
 	if err != nil {
 		return nil, nil

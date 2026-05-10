@@ -262,3 +262,79 @@ func TestListEntitlements_Empty(t *testing.T) {
 		t.Fatalf("got %d entitlements, want 0", len(got))
 	}
 }
+
+// TestEscapeSOQLLiteral covers the pure-local escape helper that guards the
+// SOQL string-literal interpolation in RevokeAccess / ListEntitlements.
+func TestEscapeSOQLLiteral(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{`uid-1`, `uid-1`},
+		{`x' OR '1'='1`, `x\' OR \'1\'=\'1`},
+		{`back\slash`, `back\\slash`},
+		{`mixed'\both`, `mixed\'\\both`},
+	}
+	for _, tc := range cases {
+		if got := escapeSOQLLiteral(tc.in); got != tc.want {
+			t.Errorf("escapeSOQLLiteral(%q) = %q; want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestRevokeAccess_QuoteInExternalIDDoesNotInjectSOQL is a regression test
+// for the SOQL injection vulnerability where url.QueryEscape alone left the
+// literal vulnerable because Salesforce URL-decodes the `q=` parameter back
+// to a raw `'` before parsing. The fix doubles the quote in the literal
+// (escapeSOQLLiteral) so the query the server sees still has the attacker
+// payload contained inside the AssigneeId string literal.
+func TestRevokeAccess_QuoteInExternalIDDoesNotInjectSOQL(t *testing.T) {
+	const payload = `x' OR '1'='1`
+	var capturedQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			capturedQuery = r.URL.Query().Get("q")
+			_, _ = w.Write([]byte(`{"records":[]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{UserExternalID: payload, ResourceExternalID: "ps-1"})
+	if err != nil {
+		t.Fatalf("RevokeAccess: %v", err)
+	}
+	// After URL-decoding by net/http, the captured SOQL must still have
+	// the attacker payload escaped (i.e. `\'`) so it stays inside the
+	// AssigneeId string literal rather than terminating it and injecting
+	// a tautology.
+	if !strings.Contains(capturedQuery, `AssigneeId='x\' OR \'1\'=\'1'`) {
+		t.Fatalf("expected escaped literal in SOQL; got: %s", capturedQuery)
+	}
+	if strings.Contains(capturedQuery, `AssigneeId='x' OR '1'='1'`) {
+		t.Fatalf("SOQL still contains raw injection payload: %s", capturedQuery)
+	}
+}
+
+// TestListEntitlements_QuoteInUserIDDoesNotInjectSOQL is the equivalent
+// regression test for the ListEntitlements SOQL builder.
+func TestListEntitlements_QuoteInUserIDDoesNotInjectSOQL(t *testing.T) {
+	const payload = `u' OR Name LIKE '%`
+	var capturedQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedQuery = r.URL.Query().Get("q")
+		_, _ = w.Write([]byte(`{"records":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	if _, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), payload); err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if !strings.Contains(capturedQuery, `AssigneeId='u\' OR Name LIKE \'%'`) {
+		t.Fatalf("expected escaped literal in SOQL; got: %s", capturedQuery)
+	}
+}
