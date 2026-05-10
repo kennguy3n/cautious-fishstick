@@ -220,7 +220,7 @@ func (c *GitLabAccessConnector) SyncIdentities(
 	}
 	base := c.baseURL(cfg)
 	for {
-		path := fmt.Sprintf("%s/api/v4/groups/%s/members?per_page=100&page=%d", base, cfg.GroupID, page)
+		path := fmt.Sprintf("%s/api/v4/groups/%s/members/all?per_page=100&page=%d", base, cfg.GroupID, page)
 		req, err := c.newRequest(ctx, secrets, http.MethodGet, path)
 		if err != nil {
 			return err
