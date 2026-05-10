@@ -52,6 +52,12 @@ flowchart LR
         HEROKU[heroku/]
         VERCEL[vercel/]
         NETLIFY[netlify/]
+        VULTR[vultr/]
+        LINODE[linode/]
+        OVH[ovhcloud/]
+        ALIBABA[alibaba/]
+        CSIGMA[cloudsigma/]
+        WASABI[wasabi/]
         SLACK[slack/]
         MSTEAMS[ms_teams/]
         ZOOM[zoom/]
@@ -62,6 +68,10 @@ flowchart LR
         MIRO[miro/]
         TRELLO[trello/]
         AIRTABLE[airtable/]
+        SMARTSHEET[smartsheet/]
+        CLICKUP[clickup/]
+        DROPBOX[dropbox/]
+        BOX[box/]
         SF[salesforce/]
         HUBSPOT[hubspot/]
         ZOHO[zoho_crm/]
@@ -77,6 +87,16 @@ flowchart LR
         CS[crowdstrike/]
         S1[sentinelone/]
         SNYK[snyk/]
+        BAMBOO[bamboohr/]
+        GUSTO[gusto/]
+        RIPPLING[rippling/]
+        PERSONIO[personio/]
+        HIBOB[hibob/]
+        WORKDAY[workday/]
+        QUICKBOOKS[quickbooks/]
+        XERO[xero/]
+        STRIPE[stripe/]
+        FRESHBOOKS[freshbooks/]
         FUTURE[next provider]
     end
 
@@ -154,6 +174,10 @@ Reference points:
 - Phase 7 DevOps connectors (5 of 5 implemented — minimum capabilities, PR #10): `internal/services/access/connectors/github/` (`/orgs/{org}/members` with RFC 5988 `Link rel="next"` pagination + GitHub Enterprise SAML metadata at `https://github.com/organizations/{org}/saml/metadata`), `internal/services/access/connectors/gitlab/` (`/api/v4/groups/{group_id}/members/all` with `X-Next-Page` header pagination + optional self-hosted `base_url` + GitLab group SAML metadata at `{base_url}/groups/{group_id}/-/saml/metadata`), `internal/services/access/connectors/jira/` (Atlassian Cloud `/rest/api/3/users/search` over `https://api.atlassian.com/ex/jira/{cloud_id}` with `email:api_token` Basic auth + `startAt`/`maxResults` pagination + Atlassian Access SAML metadata at `{site_url}/admin/saml/metadata`), `internal/services/access/connectors/pagerduty/` (`/users` with `Authorization: Token token=…` + offset/limit pagination + `more` flag), `internal/services/access/connectors/sentry/` (`/api/0/organizations/{org_slug}/members/` with `Link rel="next"; results="true"` cursor pagination).
 - Phase 7 Support connectors (3 of 3 implemented — minimum capabilities, PR #10): `internal/services/access/connectors/zendesk/` (`/api/v2/users.json` with `email/token:api_token` Basic auth + `next_page` URL pagination + Zendesk SAML metadata at `https://{subdomain}.zendesk.com/access/saml/metadata`), `internal/services/access/connectors/freshdesk/` (`/api/v2/agents` with `api_key:X` Basic auth + page-size-as-EOF pagination), `internal/services/access/connectors/helpscout/` (`/v2/users` with bearer token + HAL `_embedded.users` + `page.totalPages` pagination).
 - Phase 7 Security / Vertical connectors (3 of 3 implemented — minimum capabilities, PR #10): `internal/services/access/connectors/crowdstrike/` (OAuth2 `client_credentials` at `/oauth2/token` then Falcon "query then hydrate" via `GET /user-management/queries/users/v1` + `POST /user-management/entities/users/GET/v1` with offset/limit pagination), `internal/services/access/connectors/sentinelone/` (`/web/api/v2.1/users` with `Authorization: ApiToken …` + `pagination.nextCursor`), `internal/services/access/connectors/snyk/` (`/rest/orgs/{org_id}/members?version=2024-08-25` with `Authorization: token …` + `links.next` cursor + relative-URL rewrite for hosted/test base URLs).
+- Phase 7 Cloud Infra Tier 2 completion connectors (6 of 6 implemented — minimum capabilities, PR #11): `internal/services/access/connectors/vultr/` (`/v2/users` with `Authorization: Bearer …` + cursor `meta.links.next`), `internal/services/access/connectors/linode/` (`/v4/account/users` with `Authorization: Bearer …` + page/page_size and `pages` total pagination), `internal/services/access/connectors/ovhcloud/` (`/1.0/me/identity/user` with OVH application-key/consumer-key/secret signature headers + endpoint switch eu/ca/us), `internal/services/access/connectors/alibaba/` (RAM `ListUsers` action over `https://ram.aliyuncs.com/?Action=ListUsers` with HMAC-SHA1 signed querystring + `Marker`/`IsTruncated`), `internal/services/access/connectors/cloudsigma/` (`/api/2.0/profile/` HTTP Basic over `https://{region}.cloudsigma.com` — single-user identity), `internal/services/access/connectors/wasabi/` (IAM-compatible `ListUsers` at `https://iam.wasabisys.com/?Action=ListUsers` with AWS SigV4 signing — re-uses `internal/services/access/connectors/aws/sigv4.go`).
+- Phase 7 Finance connectors (4 of 4 implemented — minimum capabilities, PR #11): `internal/services/access/connectors/quickbooks/` (`/v3/company/{realm_id}/query` with `SELECT * FROM Employee STARTPOSITION/MAXRESULTS` + OAuth2 bearer), `internal/services/access/connectors/xero/` (`/api.xro/2.0/Users` with `Authorization: Bearer …` + `Xero-Tenant-Id` header + offset pagination), `internal/services/access/connectors/stripe/` (`/v1/team_members` with `Authorization: Bearer {secret_key}` + `starting_after` cursor + `has_more`), `internal/services/access/connectors/freshbooks/` (`/accounting/account/{account_id}/users/staffs` with `Authorization: Bearer …` + page/per_page pagination).
+- Phase 7 HR connectors (6 of 6 implemented — minimum capabilities, PR #11): `internal/services/access/connectors/bamboohr/` (`/api/gateway.php/{subdomain}/v1/employees/directory` with HTTP Basic `api_key:x` + Bamboo SAML metadata at `{subdomain}.bamboohr.com/saml/metadata`), `internal/services/access/connectors/gusto/` (`/v1/companies/{company_id}/employees` with `Authorization: Bearer …` + page/per pagination), `internal/services/access/connectors/rippling/` (`/platform/api/employees` with cursor `nextCursor`/`next` + `/platform/api/me` probe), `internal/services/access/connectors/personio/` (OAuth2 client_credentials at `/v1/auth` -> `/v1/company/employees` with offset/limit + Personio attribute-wrapped JSON unwrap helpers), `internal/services/access/connectors/hibob/` (`/v1/people?showInactive=true` with `Authorization: Basic {api_token}`), `internal/services/access/connectors/workday/` (`/ccx/api/v1/{tenant}/workers` with offset/limit + `total` field + Workday SAML metadata at `/{tenant}/saml2/metadata`).
+- Phase 7 Tier 3 SaaS connectors batch B (4 of 4 implemented — minimum capabilities, PR #11): `internal/services/access/connectors/smartsheet/` (`/2.0/users` with `Authorization: Bearer …` + page/pageSize/totalPages pagination), `internal/services/access/connectors/clickup/` (`/api/v2/team/{team_id}/member` with raw API token in `Authorization` header), `internal/services/access/connectors/dropbox/` (POST `/2/team/members/list_v2` then `/2/team/members/list/continue_v2` with `has_more`/`cursor` + `Authorization: Bearer …` + Dropbox Business SAML metadata at `https://www.dropbox.com/saml_login/metadata`), `internal/services/access/connectors/box/` (`/2.0/users?user_type=all` with `Authorization: Bearer …` + offset/limit + `total_count`).
 - Phase 2 request lifecycle (implemented):
   - Request lifecycle FSM: `internal/services/access/request_state_machine.go` (pure logic, mirrors `ztna-business-layer/internal/state_machine/`).
   - `AccessRequestService` (`CreateRequest` / `ApproveRequest` / `DenyRequest` / `CancelRequest`, transactional state-history): `internal/services/access/request_service.go`.
