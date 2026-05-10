@@ -40,7 +40,7 @@ type MidjourneyAccessConnector struct {
 }
 
 func New() *MidjourneyAccessConnector { return &MidjourneyAccessConnector{} }
-func init()                { access.RegisterAccessConnector(ProviderName, New()) }
+func init()                           { access.RegisterAccessConnector(ProviderName, New()) }
 
 func DecodeConfig(raw map[string]interface{}) (Config, error) {
 	if raw == nil {
@@ -211,9 +211,9 @@ func (c *MidjourneyAccessConnector) SyncIdentities(
 	for {
 		q := url.Values{
 			"page":     []string{fmt.Sprintf("%d", page)},
-			"per_page":    []string{fmt.Sprintf("%d", pageSize)},
+			"per_page": []string{fmt.Sprintf("%d", pageSize)},
 		}
-	path := base + "/api/v1/members"
+		path := base + "/api/v1/members"
 		fullURL := path + "?" + q.Encode()
 		req, err := c.newRequest(ctx, secrets, http.MethodGet, fullURL)
 		if err != nil {

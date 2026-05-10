@@ -74,11 +74,11 @@ func TestSync_PaginatesUsers(t *testing.T) {
 			}
 			for i := 0; i < pageSize; i++ {
 				arr = append(arr, map[string]interface{}{
-					"id":       i,
-					"uuid":     fmt.Sprintf("u-%d", i),
-					"name":     fmt.Sprintf("U%d", i),
-					"email":    fmt.Sprintf("u%d@x.com", i),
-					"enabled":  i%2 == 0,
+					"id":      i,
+					"uuid":    fmt.Sprintf("u-%d", i),
+					"name":    fmt.Sprintf("U%d", i),
+					"email":   fmt.Sprintf("u%d@x.com", i),
+					"enabled": i%2 == 0,
 				})
 			}
 		} else {

@@ -19,7 +19,7 @@ func (noNetworkRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) 
 	return nil, errors.New("network call attempted")
 }
 
-func validConfig() map[string]interface{}  { return map[string]interface{}{} }
+func validConfig() map[string]interface{} { return map[string]interface{}{} }
 func validSecrets() map[string]interface{} {
 	return map[string]interface{}{"token": "sk-ant-AAAA1234bbbbCCCC"}
 }

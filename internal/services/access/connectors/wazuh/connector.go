@@ -241,8 +241,13 @@ func (c *WazuhAccessConnector) VerifyPermissions(ctx context.Context, configRaw,
 
 // CountIdentities reports zero — Wazuh's `/security/users` realm covers
 // SIEM operators rather than tenant identities, so the connector is
-// audit-focused and does not enumerate identities.
-func (c *WazuhAccessConnector) CountIdentities(_ context.Context, _, _ map[string]interface{}) (int, error) {
+// audit-focused and does not enumerate identities. Config and secrets
+// are still validated so callers with invalid credentials receive a
+// deterministic error instead of a silent success.
+func (c *WazuhAccessConnector) CountIdentities(_ context.Context, configRaw, secretsRaw map[string]interface{}) (int, error) {
+	if _, _, err := c.decodeBoth(configRaw, secretsRaw); err != nil {
+		return 0, err
+	}
 	return 0, nil
 }
 

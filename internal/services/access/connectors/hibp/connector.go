@@ -173,8 +173,13 @@ func (c *HIBPAccessConnector) VerifyPermissions(ctx context.Context, configRaw, 
 }
 
 // CountIdentities reports zero — HIBP is an audit-only / search-only API
-// with no per-tenant identity directory to enumerate.
-func (c *HIBPAccessConnector) CountIdentities(_ context.Context, _, _ map[string]interface{}) (int, error) {
+// with no per-tenant identity directory to enumerate. Config and secrets
+// are still validated so callers with invalid credentials receive a
+// deterministic error instead of a silent success.
+func (c *HIBPAccessConnector) CountIdentities(_ context.Context, configRaw, secretsRaw map[string]interface{}) (int, error) {
+	if _, _, err := c.decodeBoth(configRaw, secretsRaw); err != nil {
+		return 0, err
+	}
 	return 0, nil
 }
 
@@ -211,10 +216,10 @@ func (c *HIBPAccessConnector) GetCredentialsMetadata(_ context.Context, configRa
 		return nil, err
 	}
 	return map[string]interface{}{
-		"provider":    ProviderName,
-		"auth_type":   "api_key",
-		"key_short":   shortToken(secrets.APIKey),
-		"sync_kind":   "audit_only",
+		"provider":  ProviderName,
+		"auth_type": "api_key",
+		"key_short": shortToken(secrets.APIKey),
+		"sync_kind": "audit_only",
 	}, nil
 }
 

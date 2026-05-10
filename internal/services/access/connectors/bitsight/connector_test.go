@@ -17,8 +17,10 @@ func (noNetworkRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) 
 	return nil, errors.New("network call attempted")
 }
 
-func validConfig() map[string]interface{}  { return map[string]interface{}{} }
-func validSecrets() map[string]interface{} { return map[string]interface{}{"token": "bsAAAA1234bbbbCCCC"} }
+func validConfig() map[string]interface{} { return map[string]interface{}{} }
+func validSecrets() map[string]interface{} {
+	return map[string]interface{}{"token": "bsAAAA1234bbbbCCCC"}
+}
 
 func TestValidate_HappyPath(t *testing.T) {
 	if err := New().Validate(context.Background(), validConfig(), validSecrets()); err != nil {
@@ -82,6 +84,24 @@ func TestConnect_Failure(t *testing.T) {
 	c.httpClient = func() httpDoer { return srv.Client() }
 	if err := c.Connect(context.Background(), validConfig(), validSecrets()); err == nil || !strings.Contains(err.Error(), "401") {
 		t.Errorf("Connect err = %v; want 401", err)
+	}
+}
+
+// TestCountIdentities_ValidatesCredentials confirms that CountIdentities
+// rejects missing credentials with an error rather than silently
+// returning zero, so callers cannot mistake a misconfigured tenant for
+// an empty one.
+func TestCountIdentities_ValidatesCredentials(t *testing.T) {
+	c := New()
+	if _, err := c.CountIdentities(context.Background(), validConfig(), map[string]interface{}{}); err == nil {
+		t.Error("CountIdentities with missing token should error")
+	}
+	got, err := c.CountIdentities(context.Background(), validConfig(), validSecrets())
+	if err != nil {
+		t.Fatalf("CountIdentities: %v", err)
+	}
+	if got != 0 {
+		t.Errorf("CountIdentities = %d; want 0 for audit-only connector", got)
 	}
 }
 

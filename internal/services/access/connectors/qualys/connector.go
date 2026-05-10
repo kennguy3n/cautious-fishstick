@@ -20,6 +20,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -338,8 +339,8 @@ func (c *QualysAccessConnector) SyncIdentities(
 	base := c.baseURL(cfg)
 	for {
 		q := url.Values{
-			"action":            []string{"list"},
-			"truncation_limit":  []string{fmt.Sprintf("%d", pageSize)},
+			"action":           []string{"list"},
+			"truncation_limit": []string{fmt.Sprintf("%d", pageSize)},
 		}
 		if idMin > 0 {
 			q.Set("id_min", fmt.Sprintf("%d", idMin))
@@ -383,9 +384,12 @@ func (c *QualysAccessConnector) SyncIdentities(
 				Email:       strings.TrimSpace(u.Email),
 				Status:      status,
 			})
-			var id int
-			fmt.Sscanf(strings.TrimSpace(u.UserID), "%d", &id)
-			if id > maxID {
+			// Qualys VMDR USER_IDs are numeric integers per the public API
+			// spec; non-numeric values are skipped explicitly so the cursor
+			// only advances on confirmed progress. Combined with the
+			// `maxID > idMin` guard below, an entire unparseable page would
+			// terminate the sync rather than loop forever.
+			if id, err := strconv.Atoi(strings.TrimSpace(u.UserID)); err == nil && id > maxID {
 				maxID = id
 			}
 		}
@@ -426,11 +430,11 @@ func (c *QualysAccessConnector) GetCredentialsMetadata(_ context.Context, config
 		platform = "custom"
 	}
 	return map[string]interface{}{
-		"provider":         ProviderName,
-		"auth_type":        "basic",
-		"platform":         platform,
-		"username_short":   shortToken(secrets.Username),
-		"password_short":   shortToken(secrets.Password),
+		"provider":       ProviderName,
+		"auth_type":      "basic",
+		"platform":       platform,
+		"username_short": shortToken(secrets.Username),
+		"password_short": shortToken(secrets.Password),
 	}, nil
 }
 

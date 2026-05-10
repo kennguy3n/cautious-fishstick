@@ -22,7 +22,9 @@ func (noNetworkRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) 
 func validConfig() map[string]interface{} {
 	return map[string]interface{}{"endpoint": "https://idm.corp.example"}
 }
-func validSecrets() map[string]interface{} { return map[string]interface{}{"token": "frAAAA1234bbbbCCCC"} }
+func validSecrets() map[string]interface{} {
+	return map[string]interface{}{"token": "frAAAA1234bbbbCCCC"}
+}
 
 func TestValidate_HappyPath(t *testing.T) {
 	if err := New().Validate(context.Background(), validConfig(), validSecrets()); err != nil {

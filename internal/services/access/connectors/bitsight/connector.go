@@ -167,7 +167,12 @@ func (c *BitSightAccessConnector) VerifyPermissions(ctx context.Context, configR
 
 // CountIdentities reports zero — the BitSight connector is audit-/rating-
 // focused and exposes no per-tenant identity directory in this scope.
-func (c *BitSightAccessConnector) CountIdentities(_ context.Context, _, _ map[string]interface{}) (int, error) {
+// Config and secrets are still validated so callers with invalid
+// credentials receive a deterministic error instead of a silent success.
+func (c *BitSightAccessConnector) CountIdentities(_ context.Context, configRaw, secretsRaw map[string]interface{}) (int, error) {
+	if _, _, err := c.decodeBoth(configRaw, secretsRaw); err != nil {
+		return 0, err
+	}
 	return 0, nil
 }
 

@@ -41,7 +41,7 @@ type HackerOneAccessConnector struct {
 }
 
 func New() *HackerOneAccessConnector { return &HackerOneAccessConnector{} }
-func init()                { access.RegisterAccessConnector(ProviderName, New()) }
+func init()                          { access.RegisterAccessConnector(ProviderName, New()) }
 
 func DecodeConfig(raw map[string]interface{}) (Config, error) {
 	if raw == nil {
@@ -218,9 +218,9 @@ func (c *HackerOneAccessConnector) SyncIdentities(
 	for {
 		q := url.Values{
 			"page":     []string{fmt.Sprintf("%d", page)},
-			"per_page":    []string{fmt.Sprintf("%d", pageSize)},
+			"per_page": []string{fmt.Sprintf("%d", pageSize)},
 		}
-	path := base + fmt.Sprintf("/v1/organizations/%s/members", url.PathEscape(strings.TrimSpace(cfg.OrgID)))
+		path := base + fmt.Sprintf("/v1/organizations/%s/members", url.PathEscape(strings.TrimSpace(cfg.OrgID)))
 		fullURL := path + "?" + q.Encode()
 		req, err := c.newRequest(ctx, secrets, http.MethodGet, fullURL)
 		if err != nil {

@@ -40,7 +40,7 @@ type JasperAccessConnector struct {
 }
 
 func New() *JasperAccessConnector { return &JasperAccessConnector{} }
-func init()                { access.RegisterAccessConnector(ProviderName, New()) }
+func init()                       { access.RegisterAccessConnector(ProviderName, New()) }
 
 func DecodeConfig(raw map[string]interface{}) (Config, error) {
 	if raw == nil {
@@ -211,9 +211,9 @@ func (c *JasperAccessConnector) SyncIdentities(
 	for {
 		q := url.Values{
 			"page":     []string{fmt.Sprintf("%d", page)},
-			"per_page":    []string{fmt.Sprintf("%d", pageSize)},
+			"per_page": []string{fmt.Sprintf("%d", pageSize)},
 		}
-	path := base + "/v1/team/members"
+		path := base + "/v1/team/members"
 		fullURL := path + "?" + q.Encode()
 		req, err := c.newRequest(ctx, secrets, http.MethodGet, fullURL)
 		if err != nil {

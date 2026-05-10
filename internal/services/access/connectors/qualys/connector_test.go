@@ -142,17 +142,17 @@ func TestGetCredentialsMetadata_RedactsToken(t *testing.T) {
 func TestValidate_RejectsBadBaseURL(t *testing.T) {
 	c := New()
 	bad := map[string]string{
-		"http scheme":     "http://qualys.example.com",
-		"ip literal":      "https://10.0.0.1",
-		"v6 ip literal":   "https://[::1]",
-		"with userinfo":   "https://attacker@qualys.example.com",
-		"with path":       "https://qualys.example.com/internal",
-		"with query":      "https://qualys.example.com?x=1",
-		"with fragment":   "https://qualys.example.com#frag",
-		"hyphen leading":  "https://-qualys.example.com",
-		"underscore":      "https://bad_label.example.com",
-		"empty host":      "https://",
-		"unparseable":     "https://%zz",
+		"http scheme":    "http://qualys.example.com",
+		"ip literal":     "https://10.0.0.1",
+		"v6 ip literal":  "https://[::1]",
+		"with userinfo":  "https://attacker@qualys.example.com",
+		"with path":      "https://qualys.example.com/internal",
+		"with query":     "https://qualys.example.com?x=1",
+		"with fragment":  "https://qualys.example.com#frag",
+		"hyphen leading": "https://-qualys.example.com",
+		"underscore":     "https://bad_label.example.com",
+		"empty host":     "https://",
+		"unparseable":    "https://%zz",
 	}
 	for name, ep := range bad {
 		t.Run(name, func(t *testing.T) {

@@ -40,7 +40,7 @@ type BeyondTrustAccessConnector struct {
 }
 
 func New() *BeyondTrustAccessConnector { return &BeyondTrustAccessConnector{} }
-func init()                { access.RegisterAccessConnector(ProviderName, New()) }
+func init()                            { access.RegisterAccessConnector(ProviderName, New()) }
 
 func DecodeConfig(raw map[string]interface{}) (Config, error) {
 	if raw == nil {

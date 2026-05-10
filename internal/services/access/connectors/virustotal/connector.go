@@ -168,7 +168,12 @@ func (c *VirusTotalAccessConnector) VerifyPermissions(ctx context.Context, confi
 
 // CountIdentities reports zero — VirusTotal exposes no per-tenant identity
 // directory through the v3 API; the connector is audit-/lookup-only.
-func (c *VirusTotalAccessConnector) CountIdentities(_ context.Context, _, _ map[string]interface{}) (int, error) {
+// Config and secrets are still validated so callers with invalid
+// credentials receive a deterministic error instead of a silent success.
+func (c *VirusTotalAccessConnector) CountIdentities(_ context.Context, configRaw, secretsRaw map[string]interface{}) (int, error) {
+	if _, _, err := c.decodeBoth(configRaw, secretsRaw); err != nil {
+		return 0, err
+	}
 	return 0, nil
 }
 
