@@ -51,10 +51,13 @@ func NewEscalationChecker(db *gorm.DB, escalator Escalator, now func() time.Time
 // step has elapsed past its timeout, and call Escalator.Escalate for
 // each.
 //
-// Run is idempotent in the sense that a second call within the same
-// poll window will re-emit the same escalations; the Escalator
-// implementation is responsible for de-duping (e.g. by writing a
-// state-history row only once per (request, step) pair).
+// Run is idempotent across polling passes: escalationTargets
+// consults each request's LastEscalatedAt + EscalationLevel and skips
+// requests that have already been escalated within the current
+// timeout window. The Escalator implementation provides a second
+// layer of defence with a CAS update on EscalationLevel so concurrent
+// pollers (or a manually-triggered Run during a scheduled Run) cannot
+// double-emit.
 //
 // Returns the number of escalations triggered.
 func (c *EscalationChecker) Run(ctx context.Context) (int, error) {
@@ -99,12 +102,21 @@ func (c *EscalationChecker) Run(ctx context.Context) (int, error) {
 // "currently pending" step (Phase 2/8 only marks the first step
 // pending; multi-step pipelines escalate one level at a time).
 //
+// The dedup window is keyed off req.LastEscalatedAt: for the first
+// escalation we measure from req.UpdatedAt; for subsequent
+// escalations on a multi_level workflow we measure from the previous
+// escalation. EscalationLevel is the index of the level the request
+// is currently waiting on — 0 means we have not escalated yet, N>0
+// means we have already escalated N times and are waiting on
+// Levels[N].
+//
 // shouldEscalate is true iff:
 //
-//  1. the step has a positive timeout_hours, and
-//  2. the request's UpdatedAt is older than now - timeout_hours, and
-//  3. the step has either an escalation_target or, for multi_level, at
-//     least one Level beyond the first.
+//  1. the active level / step has a positive timeout_hours, and
+//  2. the time since the last state-changing event (UpdatedAt or
+//     LastEscalatedAt) has exceeded that timeout, and
+//  3. there is somewhere to escalate to — escalation_target for
+//     single-target steps, or Levels[level+1] for multi_level.
 func (c *EscalationChecker) escalationTargets(req *models.AccessRequest, wf *models.AccessWorkflow) (string, string, bool, error) {
 	steps, err := DecodeSteps(wf.Steps)
 	if err != nil {
@@ -114,27 +126,49 @@ func (c *EscalationChecker) escalationTargets(req *models.AccessRequest, wf *mod
 		return "", "", false, nil
 	}
 	step := steps[0]
+	baseTime := req.UpdatedAt
+	if req.LastEscalatedAt != nil {
+		baseTime = *req.LastEscalatedAt
+	}
 
 	if step.Type == models.WorkflowStepMultiLevel {
-		if len(step.Levels) < 2 {
+		levels := step.Levels
+		if len(levels) < 2 {
 			return "", "", false, nil
 		}
-		first := step.Levels[0]
-		next := step.Levels[1]
-		if first.TimeoutHours <= 0 {
+		level := req.EscalationLevel
+		if level < 0 {
+			level = 0
+		}
+		// We can only escalate from level N to level N+1; if we
+		// have already escalated through the last level there is
+		// nothing more to do.
+		if level >= len(levels)-1 {
 			return "", "", false, nil
 		}
-		deadline := req.UpdatedAt.Add(time.Duration(first.TimeoutHours) * time.Hour)
+		current := levels[level]
+		next := levels[level+1]
+		if current.TimeoutHours <= 0 {
+			return "", "", false, nil
+		}
+		deadline := baseTime.Add(time.Duration(current.TimeoutHours) * time.Hour)
 		if c.now().Before(deadline) {
 			return "", "", false, nil
 		}
-		return first.Role, next.Role, true, nil
+		return current.Role, next.Role, true, nil
 	}
 
 	if step.TimeoutHours <= 0 || step.EscalationTarget == "" {
 		return "", "", false, nil
 	}
-	deadline := req.UpdatedAt.Add(time.Duration(step.TimeoutHours) * time.Hour)
+	// Single-target steps escalate at most once: the request moves
+	// from `step.Type` to `step.EscalationTarget` and there is no
+	// further hop to take. Re-firing on the next poll would just
+	// pile up audit rows.
+	if req.EscalationLevel > 0 {
+		return "", "", false, nil
+	}
+	deadline := baseTime.Add(time.Duration(step.TimeoutHours) * time.Hour)
 	if c.now().Before(deadline) {
 		return "", "", false, nil
 	}

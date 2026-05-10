@@ -2,6 +2,7 @@ package workflow_engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -80,38 +81,86 @@ func (e *NotifyingEscalator) WithActorID(actor string) *NotifyingEscalator {
 	return e
 }
 
+// errEscalationAlreadyRecorded is returned from the inner CAS
+// transaction when another writer has already advanced
+// AccessRequest.EscalationLevel past the value we observed. Surfaced
+// as a sentinel so the outer Escalate method can distinguish "no work
+// to do" from a real DB error and silently return nil — the contract
+// with EscalationChecker is that Escalate is idempotent.
+var errEscalationAlreadyRecorded = errors.New("workflow_engine: escalation already recorded")
+
 // Escalate is invoked by EscalationChecker once per pending request
 // whose oldest approval step has exceeded its timeout. It performs
-// two side effects:
+// three side effects, in order:
 //
-//  1. Writes an AccessRequestStateHistory row recording the
+//  1. CAS-bumps AccessRequest.EscalationLevel and stamps
+//     LastEscalatedAt = now. The CAS condition on the previously
+//     observed EscalationLevel is what makes Escalate safe to call
+//     concurrently from multiple pollers — only one writer wins; the
+//     loser sees RowsAffected == 0 and bails silently.
+//  2. Writes an AccessRequestStateHistory row recording the
 //     escalation event. The from→to states are both
 //     RequestStateRequested (escalation does not flip the request
-//     state); the Reason field captures the from/to roles.
-//  2. Fans out a best-effort notification to the requester so they
-//     know their pending step has been bumped.
-//
-// Order matters: the audit row is written FIRST. A failure to write
-// the audit row is surfaced as an error so the EscalationChecker
-// will retry on its next pass. A failure to send the notification is
-// swallowed (logged) so we don't roll back the audit row — the audit
-// row is the durable record.
+//     state); the Reason field captures the from/to roles. Steps 1
+//     and 2 happen in a single GORM transaction so an audit row is
+//     never written without a corresponding CAS bump and vice versa.
+//  3. Fans out a best-effort notification to the requester so they
+//     know their pending step has been bumped. Notification failures
+//     are logged but do NOT roll back the durable audit row — the
+//     audit row is the source of truth, the notification is a
+//     courtesy.
 func (e *NotifyingEscalator) Escalate(ctx context.Context, req *models.AccessRequest, wf *models.AccessWorkflow, from, to string) error {
 	if req == nil || wf == nil {
 		return nil
 	}
-	history := &models.AccessRequestStateHistory{
-		ID:          e.newID(),
-		RequestID:   req.ID,
-		FromState:   req.State,
-		ToState:     req.State,
-		ActorUserID: e.actorID,
-		Reason:      fmt.Sprintf("workflow_engine: escalation %s → %s (workflow %s)", from, to, wf.ID),
-		CreatedAt:   e.now(),
+	expectedLevel := req.EscalationLevel
+	stamped := e.now()
+	historyID := e.newID()
+
+	err := e.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Conditional update: only bump escalation_level if it
+		// still matches what we observed. If a concurrent
+		// EscalationChecker already advanced it, RowsAffected
+		// will be 0 and we treat this Escalate as a no-op.
+		result := tx.Model(&models.AccessRequest{}).
+			Where("id = ? AND escalation_level = ?", req.ID, expectedLevel).
+			Updates(map[string]interface{}{
+				"escalation_level":  expectedLevel + 1,
+				"last_escalated_at": stamped,
+			})
+		if result.Error != nil {
+			return fmt.Errorf("workflow_engine: escalation cas for request %s: %w", req.ID, result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return errEscalationAlreadyRecorded
+		}
+		history := &models.AccessRequestStateHistory{
+			ID:          historyID,
+			RequestID:   req.ID,
+			FromState:   req.State,
+			ToState:     req.State,
+			ActorUserID: e.actorID,
+			Reason:      fmt.Sprintf("workflow_engine: escalation %s → %s (workflow %s)", from, to, wf.ID),
+			CreatedAt:   stamped,
+		}
+		if err := tx.Create(history).Error; err != nil {
+			return fmt.Errorf("workflow_engine: escalation audit for request %s: %w", req.ID, err)
+		}
+		return nil
+	})
+	if errors.Is(err, errEscalationAlreadyRecorded) {
+		return nil
 	}
-	if err := e.db.WithContext(ctx).Create(history).Error; err != nil {
-		return fmt.Errorf("workflow_engine: escalation audit for request %s: %w", req.ID, err)
+	if err != nil {
+		return err
 	}
+
+	// Reflect the new state on the in-memory request so the caller
+	// (EscalationChecker) and any subsequent code in the same Run()
+	// pass observe a consistent view without reloading.
+	req.EscalationLevel = expectedLevel + 1
+	req.LastEscalatedAt = &stamped
+
 	if e.notifier != nil && req.RequesterUserID != "" {
 		msg := fmt.Sprintf("Your access request was escalated from %s to %s.", from, to)
 		if nerr := e.notifier.NotifyRequester(ctx, req.ID, req.RequesterUserID, msg); nerr != nil {
