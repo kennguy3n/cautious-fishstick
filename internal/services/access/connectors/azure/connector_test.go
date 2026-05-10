@@ -268,3 +268,138 @@ func TestGetCredentialsMetadata_EscapesClientIDInFilter(t *testing.T) {
 		i++ // skip the paired quote
 	}
 }
+
+func TestProvisionAccess_PutsRoleAssignment(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+	}{
+		{"created", http.StatusCreated},
+		{"conflict_idempotent", http.StatusConflict},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var seenMethod, seenPath string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seenMethod, seenPath = r.Method, r.URL.Path
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			t.Cleanup(srv.Close)
+			c := New()
+			c.urlOverride = srv.URL
+			c.tokenOverride = func(_ context.Context, _ Config, _ Secrets) (string, error) { return "tok", nil }
+			err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+				UserExternalID:     "principal-1",
+				ResourceExternalID: "/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/reader",
+			})
+			if err != nil {
+				t.Fatalf("ProvisionAccess: %v", err)
+			}
+			if seenMethod != http.MethodPut {
+				t.Fatalf("method = %q", seenMethod)
+			}
+			wantPrefix := "/subscriptions/sub-1/providers/Microsoft.Authorization/roleAssignments/"
+			if !strings.HasPrefix(seenPath, wantPrefix) {
+				t.Fatalf("path = %q want prefix %q", seenPath, wantPrefix)
+			}
+		})
+	}
+}
+
+func TestProvisionAccess_4xxFailsPermanently(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.tokenOverride = func(_ context.Context, _ Config, _ Secrets) (string, error) { return "tok", nil }
+	err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "p", ResourceExternalID: "r",
+	})
+	if err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("expected 403 error, got %v", err)
+	}
+}
+
+func TestRevokeAccess_DeletesRoleAssignment(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+	}{
+		{"deleted", http.StatusOK},
+		{"not_found_idempotent", http.StatusNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var seenMethod string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seenMethod = r.Method
+				w.WriteHeader(tc.status)
+			}))
+			t.Cleanup(srv.Close)
+			c := New()
+			c.urlOverride = srv.URL
+			c.tokenOverride = func(_ context.Context, _ Config, _ Secrets) (string, error) { return "tok", nil }
+			err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+				UserExternalID: "p", ResourceExternalID: "r",
+			})
+			if err != nil {
+				t.Fatalf("RevokeAccess: %v", err)
+			}
+			if seenMethod != http.MethodDelete {
+				t.Fatalf("method = %q", seenMethod)
+			}
+		})
+	}
+}
+
+func TestRevokeAccess_4xxFailsPermanently(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.tokenOverride = func(_ context.Context, _ Config, _ Secrets) (string, error) { return "tok", nil }
+	err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "p", ResourceExternalID: "r",
+	})
+	if err == nil || !strings.Contains(err.Error(), "400") {
+		t.Fatalf("expected 400 error, got %v", err)
+	}
+}
+
+func TestListEntitlements_FiltersByPrincipal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("$filter"); got != "principalId eq 'principal-1'" {
+			t.Fatalf("$filter = %q", got)
+		}
+		_, _ = w.Write([]byte(`{"value":[{"id":"ra1","name":"ra1","properties":{"roleDefinitionId":"role-1","principalId":"principal-1","scope":"/subscriptions/sub-1"}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.tokenOverride = func(_ context.Context, _ Config, _ Secrets) (string, error) { return "tok", nil }
+	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "principal-1")
+	if err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if len(got) != 1 || got[0].ResourceExternalID != "role-1" || got[0].Source != "direct" {
+		t.Fatalf("got = %+v", got)
+	}
+}
+
+func TestListEntitlements_4xxReturnsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.tokenOverride = func(_ context.Context, _ Config, _ Secrets) (string, error) { return "tok", nil }
+	if _, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "principal-1"); err == nil {
+		t.Fatal("expected error on 401")
+	}
+}

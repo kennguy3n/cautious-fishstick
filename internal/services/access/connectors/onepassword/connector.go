@@ -7,16 +7,19 @@
 //   - CountIdentities, SyncIdentities (paginated /scim/v2/Users)
 //   - GetSSOMetadata returns nil — 1Password is a vault, not an SSO provider
 //   - GetCredentialsMetadata
-//   - ProvisionAccess / RevokeAccess / ListEntitlements: Phase 1 stubs.
+//   - ProvisionAccess / RevokeAccess / ListEntitlements: real Phase 10
+//     implementations against the SCIM v2 /Groups and /Users endpoints.
 package onepassword
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -24,8 +27,10 @@ import (
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
-// ErrNotImplemented is returned by Phase 1 stubbed methods.
-var ErrNotImplemented = errors.New("onepassword: capability not implemented in Phase 1")
+// ErrNotImplemented is retained for any future capability that is not yet
+// implemented; ProvisionAccess / RevokeAccess / ListEntitlements no longer
+// return it as of Phase 10.
+var ErrNotImplemented = errors.New("onepassword: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -180,18 +185,176 @@ func (c *OnePasswordAccessConnector) SyncIdentities(
 	}
 }
 
-// ---------- Phase 1 stubs ----------
+// ---------- Phase 10 advanced capabilities ----------
 
-func (c *OnePasswordAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ProvisionAccess adds the user to the SCIM group via PATCH /scim/v2/Groups/{groupId}
+// with the standard SCIM "add members" operation. 409 Conflict is treated as
+// idempotent success.
+func (c *OnePasswordAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if err := validateGrantPair(grant); err != nil {
+		return err
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	patch := scimPatchOp{
+		Schemas: []string{"urn:ietf:params:scim:api:messages:2.0:PatchOp"},
+		Operations: []scimPatchOperation{{
+			Op:    "add",
+			Path:  "members",
+			Value: []scimMember{{Value: grant.UserExternalID}},
+		}},
+	}
+	body, err := json.Marshal(patch)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/scim/v2/Groups/%s", url.PathEscape(grant.ResourceExternalID))
+	return c.scimMutate(ctx, cfg, secrets, http.MethodPatch, path, body, "provision")
 }
 
-func (c *OnePasswordAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// RevokeAccess removes the user from the SCIM group via PATCH with the
+// "remove members[value eq \"...\"]" filter. 404 Not Found is idempotent
+// success.
+func (c *OnePasswordAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if err := validateGrantPair(grant); err != nil {
+		return err
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	patch := scimPatchOp{
+		Schemas: []string{"urn:ietf:params:scim:api:messages:2.0:PatchOp"},
+		Operations: []scimPatchOperation{{
+			Op:   "remove",
+			Path: fmt.Sprintf("members[value eq %q]", grant.UserExternalID),
+		}},
+	}
+	body, err := json.Marshal(patch)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/scim/v2/Groups/%s", url.PathEscape(grant.ResourceExternalID))
+	return c.scimMutate(ctx, cfg, secrets, http.MethodPatch, path, body, "revoke")
 }
 
-func (c *OnePasswordAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+// ListEntitlements pulls the user's group memberships from
+// GET /scim/v2/Users/{userId} (SCIM users include a "groups" array). Each
+// group is mapped to Entitlement{ResourceExternalID: groupID, Role:
+// groupDisplay, Source: "direct"}.
+func (c *OnePasswordAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	if userExternalID == "" {
+		return nil, errors.New("onepassword: user external id is required")
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	req, err := c.newRequest(ctx, cfg, secrets, http.MethodGet, fmt.Sprintf("/scim/v2/Users/%s", url.PathEscape(userExternalID)))
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+	var user scimUserDetail
+	if err := json.Unmarshal(body, &user); err != nil {
+		return nil, fmt.Errorf("onepassword: decode user: %w", err)
+	}
+	out := make([]access.Entitlement, 0, len(user.Groups))
+	for _, g := range user.Groups {
+		out = append(out, access.Entitlement{
+			ResourceExternalID: g.Value,
+			Role:               g.Display,
+			Source:             "direct",
+		})
+	}
+	return out, nil
+}
+
+func validateGrantPair(grant access.AccessGrant) error {
+	if grant.UserExternalID == "" {
+		return errors.New("onepassword: grant.UserExternalID is required")
+	}
+	if grant.ResourceExternalID == "" {
+		return errors.New("onepassword: grant.ResourceExternalID is required")
+	}
+	return nil
+}
+
+// scimMutate dispatches a PATCH or POST mutation, treating 2xx + 409 as
+// success for provision and 2xx + 404 as success for revoke.
+func (c *OnePasswordAccessConnector) scimMutate(
+	ctx context.Context,
+	cfg Config,
+	secrets Secrets,
+	method, path string,
+	body []byte,
+	op string,
+) error {
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL(cfg)+path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+secrets.bearerToken())
+	req.Header.Set("Accept", "application/scim+json")
+	req.Header.Set("Content-Type", "application/scim+json")
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return fmt.Errorf("onepassword: %s request: %w", op, err)
+	}
+	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case op == "provision" && resp.StatusCode == http.StatusConflict:
+		return nil
+	case op == "revoke" && resp.StatusCode == http.StatusNotFound:
+		return nil
+	default:
+		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("onepassword: %s status %d: %s", op, resp.StatusCode, string(rb))
+	}
+}
+
+type scimPatchOp struct {
+	Schemas    []string             `json:"schemas"`
+	Operations []scimPatchOperation `json:"Operations"`
+}
+
+type scimPatchOperation struct {
+	Op    string      `json:"op"`
+	Path  string      `json:"path,omitempty"`
+	Value interface{} `json:"value,omitempty"`
+}
+
+type scimMember struct {
+	Value string `json:"value"`
+}
+
+type scimUserDetail struct {
+	ID     string             `json:"id"`
+	Groups []scimUserGroupRef `json:"groups"`
+}
+
+type scimUserGroupRef struct {
+	Value   string `json:"value"`
+	Display string `json:"display"`
 }
 
 // ---------- Metadata ----------

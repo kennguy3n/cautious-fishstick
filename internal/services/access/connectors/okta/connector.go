@@ -7,10 +7,13 @@
 //   - SyncIdentitiesDelta (System Log polling; expired token → ErrDeltaTokenExpired)
 //   - GetSSOMetadata (Okta OIDC discovery URL)
 //   - GetCredentialsMetadata
-//   - ProvisionAccess / RevokeAccess / ListEntitlements: Phase 0 stubs.
+//   - ProvisionAccess / RevokeAccess / ListEntitlements: real Phase 10
+//     implementations against /api/v1/apps/{appId}/users/{userId} and
+//     /api/v1/users/{userId}/appLinks.
 package okta
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -26,8 +29,10 @@ import (
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
-// ErrNotImplemented is returned by Phase 0 stubbed methods.
-var ErrNotImplemented = errors.New("okta: capability not implemented in Phase 0")
+// ErrNotImplemented is retained for any future capability that is not yet
+// implemented; ProvisionAccess / RevokeAccess / ListEntitlements no longer
+// return it as of Phase 10.
+var ErrNotImplemented = errors.New("okta: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -287,18 +292,176 @@ func (c *OktaAccessConnector) SyncIdentitiesDelta(
 	return finalDeltaLink, nil
 }
 
-// ---------- Phase 0 stubs ----------
+// ---------- Phase 10 advanced capabilities ----------
 
-func (c *OktaAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ProvisionAccess assigns the user to the app. The grant.ResourceExternalID is
+// the Okta application id; grant.Role is mapped onto the assignment's
+// `profile` payload (the Okta API accepts an arbitrary key/value JSON object
+// here — we send {"role": grant.Role} for the simplest case). 409 Conflict on
+// assign is treated as idempotent success.
+func (c *OktaAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if err := validateGrantPair(grant); err != nil {
+		return err
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	profile := map[string]string{}
+	if grant.Role != "" {
+		profile["role"] = grant.Role
+	}
+	body, err := json.Marshal(oktaAppUserAssignment{
+		ID:      grant.UserExternalID,
+		Scope:   "USER",
+		Profile: profile,
+	})
+	if err != nil {
+		return fmt.Errorf("okta: marshal assignment: %w", err)
+	}
+	path := fmt.Sprintf("/api/v1/apps/%s/users/%s",
+		url.PathEscape(grant.ResourceExternalID),
+		url.PathEscape(grant.UserExternalID),
+	)
+	req, err := c.newRequest(ctx, cfg, secrets, http.MethodPut, path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return fmt.Errorf("okta: provision request: %w", err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusCreated, http.StatusConflict:
+		return nil
+	default:
+		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("okta: provision status %d: %s", resp.StatusCode, string(rb))
+	}
 }
 
-func (c *OktaAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// RevokeAccess deletes the user's app assignment. 404 is idempotent success.
+func (c *OktaAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if err := validateGrantPair(grant); err != nil {
+		return err
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/api/v1/apps/%s/users/%s",
+		url.PathEscape(grant.ResourceExternalID),
+		url.PathEscape(grant.UserExternalID),
+	)
+	req, err := c.newRequest(ctx, cfg, secrets, http.MethodDelete, path, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return fmt.Errorf("okta: revoke request: %w", err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusNoContent, http.StatusNotFound:
+		return nil
+	default:
+		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("okta: revoke status %d: %s", resp.StatusCode, string(rb))
+	}
 }
 
-func (c *OktaAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+// ListEntitlements pages through /api/v1/users/{userExternalID}/appLinks and
+// maps each appLink to Entitlement{ResourceExternalID: appInstanceId, Role:
+// label, Source: "direct"}. Pagination uses RFC-5988 Link headers.
+func (c *OktaAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	if userExternalID == "" {
+		return nil, errors.New("okta: user external id is required")
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+
+	path := fmt.Sprintf("/api/v1/users/%s/appLinks", url.PathEscape(userExternalID))
+	var out []access.Entitlement
+	for {
+		req, err := c.newRequest(ctx, cfg, secrets, http.MethodGet, path, nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.doRaw(req)
+		if err != nil {
+			return nil, fmt.Errorf("okta: list appLinks: %w", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("okta: list appLinks status %d: %s", resp.StatusCode, string(rb))
+		}
+		body, err := io.ReadAll(resp.Body)
+		next := parseNextLink(resp.Header.Get("Link"))
+		_ = resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		var links []oktaAppLink
+		if err := json.Unmarshal(body, &links); err != nil {
+			return nil, fmt.Errorf("okta: decode appLinks: %w", err)
+		}
+		for _, link := range links {
+			out = append(out, access.Entitlement{
+				ResourceExternalID: link.AppInstanceID,
+				Role:               link.Label,
+				Source:             "direct",
+			})
+		}
+		if next == "" {
+			return out, nil
+		}
+		rewritten := c.rewriteForTest(next)
+		u, err := url.Parse(rewritten)
+		if err != nil {
+			return nil, err
+		}
+		path = u.RequestURI()
+	}
+}
+
+func validateGrantPair(grant access.AccessGrant) error {
+	if grant.UserExternalID == "" {
+		return errors.New("okta: grant.UserExternalID is required")
+	}
+	if grant.ResourceExternalID == "" {
+		return errors.New("okta: grant.ResourceExternalID is required")
+	}
+	return nil
+}
+
+type oktaAppUserAssignment struct {
+	ID      string            `json:"id"`
+	Scope   string            `json:"scope"`
+	Profile map[string]string `json:"profile,omitempty"`
+}
+
+type oktaAppLink struct {
+	AppInstanceID string `json:"appInstanceId"`
+	AppName       string `json:"appName"`
+	Label         string `json:"label"`
 }
 
 // ---------- Metadata ----------

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -85,16 +86,199 @@ func TestRegistryIntegration(t *testing.T) {
 	}
 }
 
-func TestStubsReturnErrNotImplemented(t *testing.T) {
+func TestProvisionAccess_AddsGroupMembership(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+	}{
+		{"created", http.StatusCreated},
+		{"conflict_idempotent", http.StatusConflict},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var seenMethod, seenPath string
+			var seenBody []byte
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/as/token") {
+					_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "tok"})
+					return
+				}
+				seenMethod, seenPath = r.Method, r.URL.Path
+				seenBody, _ = io.ReadAll(r.Body)
+				w.WriteHeader(tc.status)
+			}))
+			t.Cleanup(server.Close)
+
+			c := New()
+			c.urlOverride = server.URL
+			c.httpClient = func() httpDoer { return server.Client() }
+			err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+				UserExternalID: "user-1", ResourceExternalID: "group-1",
+			})
+			if err != nil {
+				t.Fatalf("ProvisionAccess: %v", err)
+			}
+			if seenMethod != http.MethodPost {
+				t.Fatalf("method = %q", seenMethod)
+			}
+			wantPath := "/v1/environments/" + testEnvID + "/users/user-1/groupMemberships"
+			if seenPath != wantPath {
+				t.Fatalf("path = %q, want %q", seenPath, wantPath)
+			}
+			var body map[string]string
+			if err := json.Unmarshal(seenBody, &body); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if body["id"] != "group-1" {
+				t.Fatalf("body id = %q", body["id"])
+			}
+		})
+	}
+}
+
+func TestProvisionAccess_4xxFailsPermanently(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/as/token") {
+			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "tok"})
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(server.Close)
+
 	c := New()
-	if err := c.ProvisionAccess(context.Background(), nil, nil, access.AccessGrant{}); !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("ProvisionAccess: got %v", err)
+	c.urlOverride = server.URL
+	c.httpClient = func() httpDoer { return server.Client() }
+	err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "user-1", ResourceExternalID: "group-1",
+	})
+	if err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("expected 403, got %v", err)
 	}
-	if err := c.RevokeAccess(context.Background(), nil, nil, access.AccessGrant{}); !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("RevokeAccess: got %v", err)
+}
+
+func TestRevokeAccess_DeletesGroupMembership(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+	}{
+		{"deleted", http.StatusNoContent},
+		{"not_found_idempotent", http.StatusNotFound},
 	}
-	if _, err := c.ListEntitlements(context.Background(), nil, nil, "user"); !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("ListEntitlements: got %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var seenMethod, seenPath string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/as/token") {
+					_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "tok"})
+					return
+				}
+				seenMethod, seenPath = r.Method, r.URL.Path
+				w.WriteHeader(tc.status)
+			}))
+			t.Cleanup(server.Close)
+
+			c := New()
+			c.urlOverride = server.URL
+			c.httpClient = func() httpDoer { return server.Client() }
+			err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+				UserExternalID: "user-1", ResourceExternalID: "group-1",
+			})
+			if err != nil {
+				t.Fatalf("RevokeAccess: %v", err)
+			}
+			if seenMethod != http.MethodDelete {
+				t.Fatalf("method = %q", seenMethod)
+			}
+			wantPath := "/v1/environments/" + testEnvID + "/users/user-1/groupMemberships/group-1"
+			if seenPath != wantPath {
+				t.Fatalf("path = %q, want %q", seenPath, wantPath)
+			}
+		})
+	}
+}
+
+func TestRevokeAccess_4xxFailsPermanently(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/as/token") {
+			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "tok"})
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.urlOverride = server.URL
+	c.httpClient = func() httpDoer { return server.Client() }
+	err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "user-1", ResourceExternalID: "group-1",
+	})
+	if err == nil || !strings.Contains(err.Error(), "400") {
+		t.Fatalf("expected 400, got %v", err)
+	}
+}
+
+func TestListEntitlements_PaginatesViaHALNext(t *testing.T) {
+	hits := 0
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/as/token") {
+			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "tok"})
+			return
+		}
+		hits++
+		if hits == 1 {
+			next := server.URL + r.URL.Path + "?cursor=2"
+			_ = json.NewEncoder(w).Encode(pingGroupMembershipsResponse{
+				Embedded: pingGroupsEmbeddings{
+					GroupMemberships: []pingGroupMembership{{ID: "g-1", Name: "Engineers"}},
+				},
+				Links: pingLinks{Next: &pingHref{Href: next}},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(pingGroupMembershipsResponse{
+			Embedded: pingGroupsEmbeddings{
+				GroupMemberships: []pingGroupMembership{{ID: "g-2", Name: "Ops"}},
+			},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.urlOverride = server.URL
+	c.httpClient = func() httpDoer { return server.Client() }
+	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "user-1")
+	if err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if hits != 2 {
+		t.Fatalf("hits = %d", hits)
+	}
+	if len(got) != 2 || got[0].ResourceExternalID != "g-1" || got[1].ResourceExternalID != "g-2" {
+		t.Fatalf("got %+v", got)
+	}
+	if got[0].Source != "direct" {
+		t.Fatalf("source = %q", got[0].Source)
+	}
+}
+
+func TestListEntitlements_4xxReturnsError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/as/token") {
+			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "tok"})
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.urlOverride = server.URL
+	c.httpClient = func() httpDoer { return server.Client() }
+	if _, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "user-1"); err == nil {
+		t.Fatal("expected error on 401")
 	}
 }
 

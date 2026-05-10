@@ -7,10 +7,12 @@
 //   - CountIdentities, SyncIdentities (paginated /v1/environments/{id}/users)
 //   - GetSSOMetadata (PingOne OIDC discovery URL)
 //   - GetCredentialsMetadata
-//   - ProvisionAccess / RevokeAccess / ListEntitlements: Phase 1 stubs.
+//   - ProvisionAccess / RevokeAccess / ListEntitlements: real Phase 10
+//     implementations against /v1/environments/{envID}/users/{userID}/groupMemberships.
 package ping_identity
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,8 +26,10 @@ import (
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
-// ErrNotImplemented is returned by Phase 1 stubbed methods.
-var ErrNotImplemented = errors.New("ping_identity: capability not implemented in Phase 1")
+// ErrNotImplemented is retained for any future capability that is not yet
+// implemented; ProvisionAccess / RevokeAccess / ListEntitlements no longer
+// return it as of Phase 10.
+var ErrNotImplemented = errors.New("ping_identity: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -195,18 +199,172 @@ func (c *PingIdentityAccessConnector) SyncIdentities(
 	}
 }
 
-// ---------- Phase 1 stubs ----------
+// ---------- Phase 10 advanced capabilities ----------
 
-func (c *PingIdentityAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ProvisionAccess adds the user to a PingOne group via POST
+// /v1/environments/{envID}/users/{userID}/groupMemberships with body
+// {"id": groupID}. 409 Conflict is treated as idempotent success.
+func (c *PingIdentityAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if err := validateGrantPair(grant); err != nil {
+		return err
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	token, err := c.fetchAccessToken(ctx, cfg, secrets)
+	if err != nil {
+		return fmt.Errorf("ping_identity: authenticate: %w", err)
+	}
+	body, err := json.Marshal(map[string]string{"id": grant.ResourceExternalID})
+	if err != nil {
+		return err
+	}
+	fullURL := c.apiURL(cfg, fmt.Sprintf("/v1/environments/%s/users/%s/groupMemberships",
+		url.PathEscape(cfg.EnvironmentID), url.PathEscape(grant.UserExternalID)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return fmt.Errorf("ping_identity: provision request: %w", err)
+	}
+	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusConflict:
+		return nil
+	default:
+		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("ping_identity: provision status %d: %s", resp.StatusCode, string(rb))
+	}
 }
 
-func (c *PingIdentityAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// RevokeAccess removes the user from the PingOne group via DELETE
+// /v1/environments/{envID}/users/{userID}/groupMemberships/{groupID}. 404 is
+// idempotent success.
+func (c *PingIdentityAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if err := validateGrantPair(grant); err != nil {
+		return err
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	token, err := c.fetchAccessToken(ctx, cfg, secrets)
+	if err != nil {
+		return fmt.Errorf("ping_identity: authenticate: %w", err)
+	}
+	fullURL := c.apiURL(cfg, fmt.Sprintf("/v1/environments/%s/users/%s/groupMemberships/%s",
+		url.PathEscape(cfg.EnvironmentID),
+		url.PathEscape(grant.UserExternalID),
+		url.PathEscape(grant.ResourceExternalID)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, fullURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return fmt.Errorf("ping_identity: revoke request: %w", err)
+	}
+	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return nil
+	default:
+		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("ping_identity: revoke status %d: %s", resp.StatusCode, string(rb))
+	}
 }
 
-func (c *PingIdentityAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+// ListEntitlements pages through GET
+// /v1/environments/{envID}/users/{userID}/groupMemberships using HAL
+// _links.next.href cursor pagination.
+func (c *PingIdentityAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	if userExternalID == "" {
+		return nil, errors.New("ping_identity: user external id is required")
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	token, err := c.fetchAccessToken(ctx, cfg, secrets)
+	if err != nil {
+		return nil, fmt.Errorf("ping_identity: authenticate: %w", err)
+	}
+	next := c.apiURL(cfg, fmt.Sprintf("/v1/environments/%s/users/%s/groupMemberships?limit=100",
+		url.PathEscape(cfg.EnvironmentID), url.PathEscape(userExternalID)))
+	var out []access.Entitlement
+	for {
+		req, err := newAuthedRequest(ctx, next, token)
+		if err != nil {
+			return nil, err
+		}
+		body, err := c.do(req)
+		if err != nil {
+			return nil, err
+		}
+		var page pingGroupMembershipsResponse
+		if err := json.Unmarshal(body, &page); err != nil {
+			return nil, fmt.Errorf("ping_identity: decode group memberships: %w", err)
+		}
+		for _, gm := range page.Embedded.GroupMemberships {
+			out = append(out, access.Entitlement{
+				ResourceExternalID: gm.ID,
+				Role:               gm.Name,
+				Source:             "direct",
+			})
+		}
+		if page.Links.Next == nil || page.Links.Next.Href == "" {
+			return out, nil
+		}
+		next = page.Links.Next.Href
+	}
+}
+
+func validateGrantPair(grant access.AccessGrant) error {
+	if grant.UserExternalID == "" {
+		return errors.New("ping_identity: grant.UserExternalID is required")
+	}
+	if grant.ResourceExternalID == "" {
+		return errors.New("ping_identity: grant.ResourceExternalID is required")
+	}
+	return nil
+}
+
+type pingGroupMembershipsResponse struct {
+	Links    pingLinks            `json:"_links"`
+	Embedded pingGroupsEmbeddings `json:"_embedded"`
+}
+
+type pingGroupsEmbeddings struct {
+	GroupMemberships []pingGroupMembership `json:"groupMemberships"`
+}
+
+type pingGroupMembership struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // ---------- Metadata ----------

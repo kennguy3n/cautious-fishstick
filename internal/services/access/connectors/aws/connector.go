@@ -28,7 +28,10 @@ const (
 	iamAPIVersion  = "2010-05-08"
 )
 
-var ErrNotImplemented = errors.New("aws: capability not implemented in Phase 7")
+// ErrNotImplemented is retained for any future capability that is not yet
+// implemented; ProvisionAccess / RevokeAccess / ListEntitlements no longer
+// return it as of Phase 10.
+var ErrNotImplemented = errors.New("aws: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -329,14 +332,144 @@ func (c *AWSAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *AWSAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ProvisionAccess attaches an IAM managed policy to the user via
+// iam:AttachUserPolicy. The grant's UserExternalID is treated as the IAM
+// UserName and ResourceExternalID as the policy ARN. EntityAlreadyExists
+// (the IAM error returned when the policy is already attached) is treated
+// as idempotent success.
+func (c *AWSAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if err := validateGrantPair(grant); err != nil {
+		return err
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	params := url.Values{}
+	params.Set("Action", "AttachUserPolicy")
+	params.Set("UserName", grant.UserExternalID)
+	params.Set("PolicyArn", grant.ResourceExternalID)
+	if _, err := c.callIAM(ctx, cfg, secrets, params); err != nil {
+		if isAWSErrorCode(err, "EntityAlreadyExists") {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
-func (c *AWSAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+// RevokeAccess detaches the IAM managed policy via iam:DetachUserPolicy.
+// NoSuchEntity (returned when the policy is not attached or the user does
+// not exist) is treated as idempotent success.
+func (c *AWSAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if err := validateGrantPair(grant); err != nil {
+		return err
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	params := url.Values{}
+	params.Set("Action", "DetachUserPolicy")
+	params.Set("UserName", grant.UserExternalID)
+	params.Set("PolicyArn", grant.ResourceExternalID)
+	if _, err := c.callIAM(ctx, cfg, secrets, params); err != nil {
+		if isAWSErrorCode(err, "NoSuchEntity") {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
-func (c *AWSAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+// ListEntitlements pages through iam:ListAttachedUserPolicies and maps each
+// attached managed policy to Entitlement{ResourceExternalID: PolicyArn,
+// Role: PolicyName, Source: "direct"}.
+func (c *AWSAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	if userExternalID == "" {
+		return nil, errors.New("aws: user external id is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	var out []access.Entitlement
+	marker := ""
+	for {
+		params := url.Values{}
+		params.Set("Action", "ListAttachedUserPolicies")
+		params.Set("UserName", userExternalID)
+		params.Set("MaxItems", "100")
+		if marker != "" {
+			params.Set("Marker", marker)
+		}
+		body, err := c.callIAM(ctx, cfg, secrets, params)
+		if err != nil {
+			return nil, err
+		}
+		var resp listAttachedUserPoliciesResponse
+		if err := xml.Unmarshal(body, &resp); err != nil {
+			return nil, fmt.Errorf("aws: decode ListAttachedUserPolicies: %w", err)
+		}
+		for _, p := range resp.ListAttachedUserPoliciesResult.AttachedPolicies {
+			out = append(out, access.Entitlement{
+				ResourceExternalID: p.PolicyArn,
+				Role:               p.PolicyName,
+				Source:             "direct",
+			})
+		}
+		if !resp.ListAttachedUserPoliciesResult.IsTruncated {
+			return out, nil
+		}
+		marker = resp.ListAttachedUserPoliciesResult.Marker
+		if marker == "" {
+			return out, nil
+		}
+	}
+}
+
+func validateGrantPair(grant access.AccessGrant) error {
+	if grant.UserExternalID == "" {
+		return errors.New("aws: grant.UserExternalID is required")
+	}
+	if grant.ResourceExternalID == "" {
+		return errors.New("aws: grant.ResourceExternalID is required")
+	}
+	return nil
+}
+
+// isAWSErrorCode returns true when the IAM error returned by callIAM
+// matches the given AWS error <Code>. callIAM stringifies the body verbatim
+// in the error so we can substring-match without re-parsing the XML.
+func isAWSErrorCode(err error, code string) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "<Code>"+code+"</Code>")
+}
+
+type listAttachedUserPoliciesResponse struct {
+	XMLName                       xml.Name `xml:"ListAttachedUserPoliciesResponse"`
+	ListAttachedUserPoliciesResult struct {
+		IsTruncated      bool   `xml:"IsTruncated"`
+		Marker           string `xml:"Marker"`
+		AttachedPolicies []struct {
+			PolicyName string `xml:"PolicyName"`
+			PolicyArn  string `xml:"PolicyArn"`
+		} `xml:"AttachedPolicies>member"`
+	} `xml:"ListAttachedUserPoliciesResult"`
 }
 func (c *AWSAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

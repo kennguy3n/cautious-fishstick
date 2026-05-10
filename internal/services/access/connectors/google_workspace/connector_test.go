@@ -127,16 +127,193 @@ func TestRegistryIntegration(t *testing.T) {
 	}
 }
 
-func TestStubsReturnErrNotImplemented(t *testing.T) {
+func TestProvisionAccess_AddsGroupMember(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+	}{
+		{"created", http.StatusOK},
+		{"conflict_idempotent", http.StatusConflict},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var seenPath string
+			var seenBody []byte
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seenPath = r.URL.Path
+				seenBody, _ = io.ReadAll(r.Body)
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			t.Cleanup(server.Close)
+
+			c := New()
+			c.httpClientFor = func(_ context.Context, _ Config, _ Secrets) (httpDoer, error) {
+				return &fakeDirectoryClient{base: server.URL, c: server.Client()}, nil
+			}
+			err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(t), access.AccessGrant{
+				UserExternalID:     "alice@example.com",
+				ResourceExternalID: "engineering@example.com",
+				Role:               "MEMBER",
+			})
+			if err != nil {
+				t.Fatalf("ProvisionAccess: %v", err)
+			}
+			if !strings.Contains(seenPath, "/groups/engineering@example.com/members") {
+				t.Fatalf("path = %q, want .../groups/engineering@example.com/members", seenPath)
+			}
+			var body directoryMemberAdd
+			if err := json.Unmarshal(seenBody, &body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if body.Email != "alice@example.com" || body.Role != "MEMBER" {
+				t.Fatalf("body = %+v", body)
+			}
+		})
+	}
+}
+
+func TestProvisionAccess_4xxFailsPermanently(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(server.Close)
+
 	c := New()
-	if err := c.ProvisionAccess(context.Background(), nil, nil, access.AccessGrant{}); !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("ProvisionAccess: got %v, want ErrNotImplemented", err)
+	c.httpClientFor = func(_ context.Context, _ Config, _ Secrets) (httpDoer, error) {
+		return &fakeDirectoryClient{base: server.URL, c: server.Client()}, nil
 	}
-	if err := c.RevokeAccess(context.Background(), nil, nil, access.AccessGrant{}); !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("RevokeAccess: got %v, want ErrNotImplemented", err)
+	err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(t), access.AccessGrant{
+		UserExternalID: "alice@example.com", ResourceExternalID: "engineering@example.com", Role: "MEMBER",
+	})
+	if err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("expected 403 error, got %v", err)
 	}
-	if _, err := c.ListEntitlements(context.Background(), nil, nil, "user"); !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("ListEntitlements: got %v, want ErrNotImplemented", err)
+}
+
+func TestRevokeAccess_RemovesGroupMember(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+	}{
+		{"deleted", http.StatusNoContent},
+		{"not_found_idempotent", http.StatusNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var seenMethod, seenPath string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seenMethod, seenPath = r.Method, r.URL.Path
+				w.WriteHeader(tc.status)
+			}))
+			t.Cleanup(server.Close)
+
+			c := New()
+			c.httpClientFor = func(_ context.Context, _ Config, _ Secrets) (httpDoer, error) {
+				return &fakeDirectoryClient{base: server.URL, c: server.Client()}, nil
+			}
+			err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(t), access.AccessGrant{
+				UserExternalID: "alice@example.com", ResourceExternalID: "engineering@example.com", Role: "MEMBER",
+			})
+			if err != nil {
+				t.Fatalf("RevokeAccess: %v", err)
+			}
+			if seenMethod != http.MethodDelete {
+				t.Fatalf("method = %q, want DELETE", seenMethod)
+			}
+			if !strings.HasSuffix(seenPath, "/groups/engineering@example.com/members/alice@example.com") {
+				t.Fatalf("path = %q", seenPath)
+			}
+		})
+	}
+}
+
+func TestRevokeAccess_4xxFailsPermanently(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.httpClientFor = func(_ context.Context, _ Config, _ Secrets) (httpDoer, error) {
+		return &fakeDirectoryClient{base: server.URL, c: server.Client()}, nil
+	}
+	err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(t), access.AccessGrant{
+		UserExternalID: "alice@example.com", ResourceExternalID: "engineering@example.com", Role: "MEMBER",
+	})
+	if err == nil || !strings.Contains(err.Error(), "400") {
+		t.Fatalf("expected 400 error, got %v", err)
+	}
+}
+
+func TestListEntitlements_PagesUserGroups(t *testing.T) {
+	hits := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		if r.URL.Query().Get("userKey") != "alice@example.com" {
+			t.Fatalf("userKey = %q", r.URL.Query().Get("userKey"))
+		}
+		if r.URL.Query().Get("pageToken") == "" {
+			page := directoryGroupsPage{
+				Groups:        []directoryGroup{{ID: "g-1", Email: "engineering@example.com", Name: "Engineering"}},
+				NextPageToken: "p2",
+			}
+			_ = json.NewEncoder(w).Encode(page)
+			return
+		}
+		page := directoryGroupsPage{
+			Groups: []directoryGroup{{ID: "g-2", Email: "ops@example.com", Name: "Ops"}},
+		}
+		_ = json.NewEncoder(w).Encode(page)
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.httpClientFor = func(_ context.Context, _ Config, _ Secrets) (httpDoer, error) {
+		return &fakeDirectoryClient{base: server.URL, c: server.Client()}, nil
+	}
+	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(t), "alice@example.com")
+	if err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if hits != 2 {
+		t.Fatalf("expected 2 page requests, got %d", hits)
+	}
+	if len(got) != 2 || got[0].ResourceExternalID != "g-1" || got[1].ResourceExternalID != "g-2" {
+		t.Fatalf("got %+v", got)
+	}
+	for _, e := range got {
+		if e.Source != "direct" || e.Role != "member" {
+			t.Fatalf("entitlement %+v missing role/source", e)
+		}
+	}
+}
+
+func TestListEntitlements_4xxReturnsError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.httpClientFor = func(_ context.Context, _ Config, _ Secrets) (httpDoer, error) {
+		return &fakeDirectoryClient{base: server.URL, c: server.Client()}, nil
+	}
+	if _, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(t), "alice@example.com"); err == nil {
+		t.Fatal("expected error on 401")
+	}
+}
+
+func TestParseLicenseRole(t *testing.T) {
+	pid, sku, ok := parseLicenseRole("license:Google-Apps/1010020020")
+	if !ok || pid != "Google-Apps" || sku != "1010020020" {
+		t.Fatalf("parseLicenseRole = %q/%q/%v", pid, sku, ok)
+	}
+	if _, _, ok := parseLicenseRole("group:engineering"); ok {
+		t.Fatal("group: should not be parsed as license")
+	}
+	if _, _, ok := parseLicenseRole("license:bad"); ok {
+		t.Fatal("license:bad should be rejected")
 	}
 }
 

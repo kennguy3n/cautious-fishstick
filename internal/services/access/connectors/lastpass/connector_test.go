@@ -75,16 +75,161 @@ func TestRegistryIntegration(t *testing.T) {
 	}
 }
 
-func TestStubsReturnErrNotImplemented(t *testing.T) {
+func TestProvisionAccess_AddsToSharedGroup(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"ok", `{"status":"OK"}`},
+		{"already_member_idempotent", `{"status":"FAIL","errors":["User already a member of group"]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var seen map[string]interface{}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen = decodeRequestBody(t, r)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(server.Close)
+
+			c := New()
+			c.urlOverride = server.URL
+			c.httpClient = func() httpDoer { return server.Client() }
+			err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+				UserExternalID: "alice@example.com", ResourceExternalID: "Engineering",
+			})
+			if err != nil {
+				t.Fatalf("ProvisionAccess: %v", err)
+			}
+			if seen["cmd"] != "batchchangegrp" {
+				t.Fatalf("cmd = %v", seen["cmd"])
+			}
+			data, _ := seen["data"].(map[string]interface{})
+			if data["op"] != "add" || data["groupname"] != "Engineering" || data["username"] != "alice@example.com" {
+				t.Fatalf("data = %+v", data)
+			}
+		})
+	}
+}
+
+func TestProvisionAccess_FailsOnUnknownError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"FAIL","errors":["bad credentials"]}`))
+	}))
+	t.Cleanup(server.Close)
+
 	c := New()
-	if err := c.ProvisionAccess(context.Background(), nil, nil, access.AccessGrant{}); !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("ProvisionAccess: got %v", err)
+	c.urlOverride = server.URL
+	c.httpClient = func() httpDoer { return server.Client() }
+	err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "u@x", ResourceExternalID: "g",
+	})
+	if err == nil || !strings.Contains(err.Error(), "FAIL") {
+		t.Fatalf("expected FAIL error, got %v", err)
 	}
-	if err := c.RevokeAccess(context.Background(), nil, nil, access.AccessGrant{}); !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("RevokeAccess: got %v", err)
+}
+
+func TestRevokeAccess_RemovesFromSharedGroup(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"ok", `{"status":"OK"}`},
+		{"not_member_idempotent", `{"status":"FAIL","errors":["User is not in the group"]}`},
 	}
-	if _, err := c.ListEntitlements(context.Background(), nil, nil, "user"); !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("ListEntitlements: got %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var seen map[string]interface{}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen = decodeRequestBody(t, r)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(server.Close)
+
+			c := New()
+			c.urlOverride = server.URL
+			c.httpClient = func() httpDoer { return server.Client() }
+			err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+				UserExternalID: "alice@example.com", ResourceExternalID: "Engineering",
+			})
+			if err != nil {
+				t.Fatalf("RevokeAccess: %v", err)
+			}
+			data, _ := seen["data"].(map[string]interface{})
+			if data["op"] != "del" {
+				t.Fatalf("op = %v, want del", data["op"])
+			}
+		})
+	}
+}
+
+func TestRevokeAccess_FailsOnUnknownError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"FAIL","errors":["unauthorized"]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.urlOverride = server.URL
+	c.httpClient = func() httpDoer { return server.Client() }
+	err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "u@x", ResourceExternalID: "g",
+	})
+	if err == nil || !strings.Contains(err.Error(), "FAIL") {
+		t.Fatalf("expected FAIL error, got %v", err)
+	}
+}
+
+func TestListEntitlements_FiltersFoldersByUser(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := decodeRequestBody(t, r)
+		if body["cmd"] != "getsfdata" {
+			t.Fatalf("cmd = %v", body["cmd"])
+		}
+		_ = json.NewEncoder(w).Encode(lastpassSharedFolderDataResponse{
+			Folders: []lastpassSharedFolder{
+				{
+					SharedFolderID:   "sf-1",
+					SharedFolderName: "Engineering",
+					Users: []lastpassFolderMember{
+						{Username: "alice@example.com", UserID: "uid1"},
+					},
+				},
+				{
+					SharedFolderID:   "sf-2",
+					SharedFolderName: "Sales",
+					Users: []lastpassFolderMember{
+						{Username: "bob@example.com", UserID: "uid2"},
+					},
+				},
+			},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.urlOverride = server.URL
+	c.httpClient = func() httpDoer { return server.Client() }
+	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if len(got) != 1 || got[0].ResourceExternalID != "sf-1" || got[0].Role != "Engineering" || got[0].Source != "direct" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestListEntitlements_4xxReturnsError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.urlOverride = server.URL
+	c.httpClient = func() httpDoer { return server.Client() }
+	if _, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "alice@example.com"); err == nil {
+		t.Fatal("expected error on 403")
 	}
 }
 
