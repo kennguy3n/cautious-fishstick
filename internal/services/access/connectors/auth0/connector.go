@@ -7,7 +7,8 @@
 //   - SyncIdentitiesDelta (Auth0 logs API; 400 with "expired log_id" → ErrDeltaTokenExpired)
 //   - GetSSOMetadata (Auth0 OIDC discovery URL)
 //   - GetCredentialsMetadata
-//   - ProvisionAccess / RevokeAccess / ListEntitlements: Phase 1 stubs.
+//   - ProvisionAccess / RevokeAccess / ListEntitlements: real Phase 10
+//     implementations against /api/v2/users/{userId}/roles.
 package auth0
 
 import (
@@ -26,8 +27,10 @@ import (
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
-// ErrNotImplemented is returned by Phase 1 stubbed methods.
-var ErrNotImplemented = errors.New("auth0: capability not implemented in Phase 1")
+// ErrNotImplemented is retained for any future capability that is not yet
+// implemented; ProvisionAccess / RevokeAccess / ListEntitlements no longer
+// return it as of Phase 10.
+var ErrNotImplemented = errors.New("auth0: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -287,18 +290,158 @@ func (c *Auth0AccessConnector) SyncIdentitiesDelta(
 	}
 }
 
-// ---------- Phase 1 stubs ----------
+// ---------- Phase 10 advanced capabilities ----------
 
-func (c *Auth0AccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ProvisionAccess assigns roles to a user via POST /api/v2/users/{userId}/roles.
+// 409 Conflict on assign is treated as idempotent success.
+func (c *Auth0AccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if err := validateGrantPair(grant); err != nil {
+		return err
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	token, err := c.fetchAccessToken(ctx, cfg, secrets)
+	if err != nil {
+		return fmt.Errorf("auth0: authenticate: %w", err)
+	}
+	body, err := json.Marshal(map[string][]string{"roles": {grant.ResourceExternalID}})
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/api/v2/users/%s/roles", url.PathEscape(grant.UserExternalID))
+	req, err := c.newAuthedRequest(ctx, cfg, token, http.MethodPost, path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return fmt.Errorf("auth0: provision request: %w", err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusCreated, http.StatusNoContent, http.StatusConflict:
+		return nil
+	default:
+		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("auth0: provision status %d: %s", resp.StatusCode, string(rb))
+	}
 }
 
-func (c *Auth0AccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// RevokeAccess removes roles from a user via DELETE /api/v2/users/{userId}/roles
+// (with body {"roles": [...]}). 404 is idempotent success.
+func (c *Auth0AccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if err := validateGrantPair(grant); err != nil {
+		return err
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	token, err := c.fetchAccessToken(ctx, cfg, secrets)
+	if err != nil {
+		return fmt.Errorf("auth0: authenticate: %w", err)
+	}
+	body, err := json.Marshal(map[string][]string{"roles": {grant.ResourceExternalID}})
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/api/v2/users/%s/roles", url.PathEscape(grant.UserExternalID))
+	req, err := c.newAuthedRequest(ctx, cfg, token, http.MethodDelete, path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return fmt.Errorf("auth0: revoke request: %w", err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusNoContent, http.StatusNotFound:
+		return nil
+	default:
+		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("auth0: revoke status %d: %s", resp.StatusCode, string(rb))
+	}
 }
 
-func (c *Auth0AccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+// ListEntitlements pages through /api/v2/users/{userExternalID}/roles. Roles
+// surface as Entitlement{ResourceExternalID: roleID, Role: roleName,
+// Source: "direct"}.
+func (c *Auth0AccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	if userExternalID == "" {
+		return nil, errors.New("auth0: user external id is required")
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	token, err := c.fetchAccessToken(ctx, cfg, secrets)
+	if err != nil {
+		return nil, fmt.Errorf("auth0: authenticate: %w", err)
+	}
+
+	const perPage = 100
+	page := 0
+	var out []access.Entitlement
+	for {
+		path := fmt.Sprintf("/api/v2/users/%s/roles?per_page=%d&page=%d",
+			url.PathEscape(userExternalID), perPage, page)
+		req, err := c.newAuthedRequest(ctx, cfg, token, http.MethodGet, path, nil)
+		if err != nil {
+			return nil, err
+		}
+		body, err := c.do(req)
+		if err != nil {
+			return nil, err
+		}
+		var roles []auth0Role
+		if err := json.Unmarshal(body, &roles); err != nil {
+			return nil, fmt.Errorf("auth0: decode roles: %w", err)
+		}
+		for _, r := range roles {
+			out = append(out, access.Entitlement{
+				ResourceExternalID: r.ID,
+				Role:               r.Name,
+				Source:             "direct",
+			})
+		}
+		if len(roles) < perPage {
+			return out, nil
+		}
+		page++
+	}
+}
+
+func validateGrantPair(grant access.AccessGrant) error {
+	if grant.UserExternalID == "" {
+		return errors.New("auth0: grant.UserExternalID is required")
+	}
+	if grant.ResourceExternalID == "" {
+		return errors.New("auth0: grant.ResourceExternalID is required")
+	}
+	return nil
+}
+
+type auth0Role struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
 }
 
 // ---------- Metadata ----------

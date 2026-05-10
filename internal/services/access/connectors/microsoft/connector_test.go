@@ -88,16 +88,231 @@ func TestRegistryIntegration(t *testing.T) {
 	}
 }
 
-func TestStubsReturnErrNotImplemented(t *testing.T) {
+func TestProvisionRevokeListEntitlements_RequireGrantFields(t *testing.T) {
 	c := New()
-	if err := c.ProvisionAccess(context.Background(), nil, nil, access.AccessGrant{}); !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("ProvisionAccess: got %v, want ErrNotImplemented", err)
+	if err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{}); err == nil {
+		t.Fatal("ProvisionAccess with empty grant: expected error")
 	}
-	if err := c.RevokeAccess(context.Background(), nil, nil, access.AccessGrant{}); !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("RevokeAccess: got %v, want ErrNotImplemented", err)
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{ResourceExternalID: "r"}); err == nil {
+		t.Fatal("RevokeAccess without UserExternalID: expected error")
 	}
-	if _, err := c.ListEntitlements(context.Background(), nil, nil, "user"); !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("ListEntitlements: got %v, want ErrNotImplemented", err)
+	if _, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), ""); err == nil {
+		t.Fatal("ListEntitlements without user id: expected error")
+	}
+}
+
+func TestProvisionAccess_HappyAndIdempotent(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+	}{
+		{"created", http.StatusCreated},
+		{"conflict_idempotent", http.StatusConflict},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var seen *http.Request
+			var seenBody []byte
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen = r
+				seenBody, _ = io.ReadAll(r.Body)
+				if !strings.HasSuffix(r.URL.Path, "/users/u-1/appRoleAssignments") {
+					t.Fatalf("path = %q, want .../users/u-1/appRoleAssignments", r.URL.Path)
+				}
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			t.Cleanup(server.Close)
+
+			c := New()
+			c.httpClientFor = func(_ context.Context, _ Config, _ Secrets) httpDoer {
+				return &serverFirstFakeClient{base: server.URL, http: server.Client()}
+			}
+			err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+				UserExternalID:     "u-1",
+				ResourceExternalID: "sp-1",
+				Role:               "appRole-A",
+			})
+			if err != nil {
+				t.Fatalf("ProvisionAccess: %v", err)
+			}
+			if seen == nil || seen.Method != http.MethodPost {
+				t.Fatalf("expected POST, got %v", seen)
+			}
+			var body graphAppRoleAssignment
+			if err := json.Unmarshal(seenBody, &body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if body.PrincipalID != "u-1" || body.ResourceID != "sp-1" || body.AppRoleID != "appRole-A" {
+				t.Fatalf("body = %+v, want principalId/resourceId/appRoleId set", body)
+			}
+		})
+	}
+}
+
+func TestProvisionAccess_4xxFailsPermanently(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":{"code":"Authorization_RequestDenied"}}`))
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.httpClientFor = func(_ context.Context, _ Config, _ Secrets) httpDoer {
+		return &serverFirstFakeClient{base: server.URL, http: server.Client()}
+	}
+	err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "u-1", ResourceExternalID: "sp-1", Role: "appRole-A",
+	})
+	if err == nil {
+		t.Fatal("expected error on 403")
+	}
+	if !strings.Contains(err.Error(), "403") {
+		t.Fatalf("error %q missing status code", err.Error())
+	}
+}
+
+func TestRevokeAccess_DeletesMatchingAssignment(t *testing.T) {
+	var deletePath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			page := graphAppRoleAssignmentsPage{
+				Value: []graphAppRoleAssignment{
+					{ID: "a-1", PrincipalID: "u-1", ResourceID: "other", AppRoleID: "x"},
+					{ID: "a-2", PrincipalID: "u-1", ResourceID: "sp-1", AppRoleID: "appRole-A"},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(page)
+		case http.MethodDelete:
+			deletePath = r.URL.Path
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected method %s", r.Method)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.httpClientFor = func(_ context.Context, _ Config, _ Secrets) httpDoer {
+		return &serverFirstFakeClient{base: server.URL, http: server.Client()}
+	}
+	err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "u-1", ResourceExternalID: "sp-1", Role: "appRole-A",
+	})
+	if err != nil {
+		t.Fatalf("RevokeAccess: %v", err)
+	}
+	if !strings.HasSuffix(deletePath, "/appRoleAssignments/a-2") {
+		t.Fatalf("DELETE path = %q, want it to end with /appRoleAssignments/a-2", deletePath)
+	}
+}
+
+func TestRevokeAccess_NoMatchingAssignmentIsIdempotent(t *testing.T) {
+	deleteCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			deleteCalled = true
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(graphAppRoleAssignmentsPage{Value: nil})
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.httpClientFor = func(_ context.Context, _ Config, _ Secrets) httpDoer {
+		return &serverFirstFakeClient{base: server.URL, http: server.Client()}
+	}
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "u-1", ResourceExternalID: "missing", Role: "x",
+	}); err != nil {
+		t.Fatalf("RevokeAccess: %v", err)
+	}
+	if deleteCalled {
+		t.Fatal("DELETE should not be called when no matching assignment")
+	}
+}
+
+func TestRevokeAccess_404OnDeleteIsIdempotent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			page := graphAppRoleAssignmentsPage{
+				Value: []graphAppRoleAssignment{
+					{ID: "a-1", PrincipalID: "u-1", ResourceID: "sp-1", AppRoleID: "appRole-A"},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(page)
+		case http.MethodDelete:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.httpClientFor = func(_ context.Context, _ Config, _ Secrets) httpDoer {
+		return &serverFirstFakeClient{base: server.URL, http: server.Client()}
+	}
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "u-1", ResourceExternalID: "sp-1", Role: "appRole-A",
+	}); err != nil {
+		t.Fatalf("RevokeAccess: %v", err)
+	}
+}
+
+func TestListEntitlements_PagesAndMaps(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.RawQuery, "skiptoken=p2") {
+			page := graphAppRoleAssignmentsPage{
+				Value: []graphAppRoleAssignment{
+					{ID: "a-1", PrincipalID: "u-1", ResourceID: "sp-1", AppRoleID: "role-1"},
+				},
+				NextLink: server2URL(r) + "?skiptoken=p2",
+			}
+			_ = json.NewEncoder(w).Encode(page)
+			return
+		}
+		page := graphAppRoleAssignmentsPage{
+			Value: []graphAppRoleAssignment{
+				{ID: "a-2", PrincipalID: "u-1", ResourceID: "sp-2", AppRoleID: "role-2"},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(page)
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.httpClientFor = func(_ context.Context, _ Config, _ Secrets) httpDoer {
+		return &serverFirstFakeClient{base: server.URL, http: server.Client()}
+	}
+	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "u-1")
+	if err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d entitlements, want 2", len(got))
+	}
+	if got[0].ResourceExternalID != "sp-1" || got[0].Role != "role-1" || got[0].Source != "direct" {
+		t.Fatalf("entitlement[0] = %+v", got[0])
+	}
+	if got[1].ResourceExternalID != "sp-2" || got[1].Role != "role-2" {
+		t.Fatalf("entitlement[1] = %+v", got[1])
+	}
+}
+
+func TestListEntitlements_4xxReturnsError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.httpClientFor = func(_ context.Context, _ Config, _ Secrets) httpDoer {
+		return &serverFirstFakeClient{base: server.URL, http: server.Client()}
+	}
+	if _, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "u-1"); err == nil {
+		t.Fatal("expected error on 401")
 	}
 }
 

@@ -8,10 +8,12 @@
 //   - GroupSyncer (CountGroups, SyncGroups, SyncGroupMembers)
 //   - GetSSOMetadata (Google OIDC metadata)
 //   - GetCredentialsMetadata (returns service-account key id + client email)
-//   - ProvisionAccess / RevokeAccess / ListEntitlements: Phase 0 stubs.
+//   - ProvisionAccess / RevokeAccess / ListEntitlements: real Phase 10 group
+//     membership routing (and license:* prefix for the Licensing API).
 package google_workspace
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,6 +21,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -26,20 +29,37 @@ import (
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
-// ErrNotImplemented is returned by the Phase 0 stubbed methods.
-var ErrNotImplemented = errors.New("google_workspace: capability not implemented in Phase 0")
+// ErrNotImplemented is retained for any future capability that is not yet
+// implemented; ProvisionAccess / RevokeAccess / ListEntitlements no longer
+// return it as of Phase 10.
+var ErrNotImplemented = errors.New("google_workspace: capability not implemented")
 
 const (
 	directoryBaseURL = "https://admin.googleapis.com/admin/directory/v1"
+	licensingBaseURL = "https://www.googleapis.com/apps/licensing/v1/product"
 	googleOIDCURL    = "https://accounts.google.com/.well-known/openid-configuration"
 )
 
 // adminSDKScopes are the Admin SDK Directory scopes required for read-only
-// identity / group sync.
+// identity / group sync. Used by directoryClient (Connect probe, identity
+// sync, group sync, ListEntitlements).
 var adminSDKScopes = []string{
 	"https://www.googleapis.com/auth/admin.directory.user.readonly",
 	"https://www.googleapis.com/auth/admin.directory.group.readonly",
 	"https://www.googleapis.com/auth/admin.directory.group.member.readonly",
+}
+
+// adminSDKWriteScopes are required for ProvisionAccess / RevokeAccess: the
+// non-readonly group.member scope authorizes POST / DELETE on
+// /groups/{id}/members, and apps.licensing authorizes the Licensing API
+// product/sku assign + unassign endpoints. The read-only directory.user
+// scope is retained so the same client can still drive ListEntitlements
+// pagination if a caller chooses to share it.
+var adminSDKWriteScopes = []string{
+	"https://www.googleapis.com/auth/admin.directory.user.readonly",
+	"https://www.googleapis.com/auth/admin.directory.group.readonly",
+	"https://www.googleapis.com/auth/admin.directory.group.member",
+	"https://www.googleapis.com/auth/apps.licensing",
 }
 
 type httpDoer interface {
@@ -50,6 +70,11 @@ type httpDoer interface {
 // access.GroupSyncer for Google Workspace.
 type GoogleWorkspaceAccessConnector struct {
 	httpClientFor func(ctx context.Context, cfg Config, secrets Secrets) (httpDoer, error)
+	// writeHTTPClientFor mirrors httpClientFor for tests that want to
+	// assert that ProvisionAccess / RevokeAccess use the write-capable
+	// client. When nil, write paths fall back to httpClientFor (so
+	// existing tests continue to work without modification).
+	writeHTTPClientFor func(ctx context.Context, cfg Config, secrets Secrets) (httpDoer, error)
 	// scimBearerTokenFor lets the SCIM composition skip the JWT
 	// dance in tests and return a static token. Production paths
 	// leave this nil and acquire a token via the service-account
@@ -344,18 +369,230 @@ func (c *GoogleWorkspaceAccessConnector) SyncGroupMembers(
 	}
 }
 
-// ---------- Phase 0 stubs ----------
+// ---------- Phase 10 advanced capabilities ----------
 
-func (c *GoogleWorkspaceAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ProvisionAccess routes by grant.Role prefix:
+//   - "license:<productId>/<skuId>" → Licensing API: assign the SKU to the user.
+//   - default                       → Admin SDK Directory: add the user as a
+//     member of the group identified by grant.ResourceExternalID. The role
+//     payload (`MEMBER` / `MANAGER` / `OWNER`) defaults to `MEMBER` and may be
+//     overridden by stripping the `group:` prefix from grant.Role.
+//
+// 409 Conflict on group-add and "already exists" on license-assign are treated
+// as idempotent success per PROPOSAL §2.1.
+func (c *GoogleWorkspaceAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if err := validateGrantPair(grant); err != nil {
+		return err
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	client, err := c.directoryWriteClient(ctx, cfg, secrets)
+	if err != nil {
+		return err
+	}
+
+	if productID, skuID, ok := parseLicenseRole(grant.Role); ok {
+		return provisionLicense(ctx, client, productID, skuID, grant.UserExternalID)
+	}
+
+	role := strings.TrimPrefix(grant.Role, "group:")
+	if role == "" {
+		role = "MEMBER"
+	}
+	body, err := json.Marshal(directoryMemberAdd{Email: grant.UserExternalID, Role: role})
+	if err != nil {
+		return fmt.Errorf("google_workspace: marshal member: %w", err)
+	}
+	urlStr := fmt.Sprintf("%s/groups/%s/members", directoryBaseURL, url.PathEscape(grant.ResourceExternalID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("google_workspace: provision request: %w", err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusCreated:
+		return nil
+	case http.StatusConflict:
+		return nil
+	default:
+		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("google_workspace: provision status %d: %s", resp.StatusCode, string(rb))
+	}
 }
 
-func (c *GoogleWorkspaceAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// RevokeAccess removes the user from a group (or unassigns a license). 404 is
+// idempotent success.
+func (c *GoogleWorkspaceAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if err := validateGrantPair(grant); err != nil {
+		return err
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	client, err := c.directoryWriteClient(ctx, cfg, secrets)
+	if err != nil {
+		return err
+	}
+
+	var urlStr string
+	if productID, skuID, ok := parseLicenseRole(grant.Role); ok {
+		urlStr = fmt.Sprintf("%s/%s/sku/%s/user/%s",
+			licensingBaseURL,
+			url.PathEscape(productID),
+			url.PathEscape(skuID),
+			url.PathEscape(grant.UserExternalID),
+		)
+	} else {
+		urlStr = fmt.Sprintf("%s/groups/%s/members/%s",
+			directoryBaseURL,
+			url.PathEscape(grant.ResourceExternalID),
+			url.PathEscape(grant.UserExternalID),
+		)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, urlStr, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("google_workspace: revoke request: %w", err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusNoContent:
+		return nil
+	case http.StatusNotFound:
+		return nil
+	default:
+		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("google_workspace: revoke status %d: %s", resp.StatusCode, string(rb))
+	}
 }
 
-func (c *GoogleWorkspaceAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+// ListEntitlements pages through the user's group memberships. Each group is
+// surfaced as Entitlement{ResourceExternalID: groupID, Role: "member",
+// Source: "direct"}.
+func (c *GoogleWorkspaceAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	if userExternalID == "" {
+		return nil, errors.New("google_workspace: user external id is required")
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	client, err := c.directoryClient(ctx, cfg, secrets)
+	if err != nil {
+		return nil, err
+	}
+
+	var out []access.Entitlement
+	pageToken := ""
+	for {
+		next, err := url.Parse(directoryBaseURL + "/groups")
+		if err != nil {
+			return nil, err
+		}
+		q := next.Query()
+		q.Set("userKey", userExternalID)
+		q.Set("maxResults", "200")
+		if pageToken != "" {
+			q.Set("pageToken", pageToken)
+		}
+		next.RawQuery = q.Encode()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, next.String(), nil)
+		if err != nil {
+			return nil, err
+		}
+		body, err := doJSON(client, req)
+		if err != nil {
+			return nil, err
+		}
+		var page directoryGroupsPage
+		if err := json.Unmarshal(body, &page); err != nil {
+			return nil, fmt.Errorf("google_workspace: decode groups page: %w", err)
+		}
+		for _, g := range page.Groups {
+			out = append(out, access.Entitlement{
+				ResourceExternalID: g.ID,
+				Role:               "member",
+				Source:             "direct",
+			})
+		}
+		if page.NextPageToken == "" {
+			return out, nil
+		}
+		pageToken = page.NextPageToken
+	}
+}
+
+func validateGrantPair(grant access.AccessGrant) error {
+	if grant.UserExternalID == "" {
+		return errors.New("google_workspace: grant.UserExternalID is required")
+	}
+	if grant.ResourceExternalID == "" {
+		return errors.New("google_workspace: grant.ResourceExternalID is required")
+	}
+	return nil
+}
+
+// parseLicenseRole returns (productID, skuID, true) for grant roles of the
+// form "license:<productId>/<skuId>".
+func parseLicenseRole(role string) (string, string, bool) {
+	if !strings.HasPrefix(role, "license:") {
+		return "", "", false
+	}
+	spec := strings.TrimPrefix(role, "license:")
+	parts := strings.SplitN(spec, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+func provisionLicense(ctx context.Context, client httpDoer, productID, skuID, userKey string) error {
+	urlStr := fmt.Sprintf("%s/%s/sku/%s/user", licensingBaseURL, url.PathEscape(productID), url.PathEscape(skuID))
+	body, err := json.Marshal(map[string]string{"userId": userKey})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("google_workspace: license assign request: %w", err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusCreated, http.StatusConflict:
+		return nil
+	default:
+		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("google_workspace: license assign status %d: %s", resp.StatusCode, string(rb))
+	}
 }
 
 // ---------- Metadata ----------
@@ -413,13 +650,34 @@ func decodeBoth(configRaw, secretsRaw map[string]interface{}) (Config, Secrets, 
 }
 
 // directoryClient builds a JWT-config OAuth2 client that impersonates
-// AdminEmail via domain-wide delegation. Tests inject a stub via
-// httpClientFor so they never reach Google.
+// AdminEmail via domain-wide delegation. Used for read-only paths
+// (Connect probe, identity sync, group sync, ListEntitlements). Tests
+// inject a stub via httpClientFor so they never reach Google.
 func (c *GoogleWorkspaceAccessConnector) directoryClient(ctx context.Context, cfg Config, secrets Secrets) (httpDoer, error) {
 	if c.httpClientFor != nil {
 		return c.httpClientFor(ctx, cfg, secrets)
 	}
-	jwtConfig, err := google.JWTConfigFromJSON([]byte(secrets.ServiceAccountKey), adminSDKScopes...)
+	return c.buildDirectoryClient(ctx, cfg, secrets, adminSDKScopes)
+}
+
+// directoryWriteClient is the write-capable counterpart used by
+// ProvisionAccess and RevokeAccess (group member POST/DELETE and the
+// Licensing API). It mints a token under adminSDKWriteScopes so the
+// production OAuth2 path is authorized to mutate state. Tests can
+// inject writeHTTPClientFor to observe write traffic separately, or
+// rely on httpClientFor as the shared fallback.
+func (c *GoogleWorkspaceAccessConnector) directoryWriteClient(ctx context.Context, cfg Config, secrets Secrets) (httpDoer, error) {
+	if c.writeHTTPClientFor != nil {
+		return c.writeHTTPClientFor(ctx, cfg, secrets)
+	}
+	if c.httpClientFor != nil {
+		return c.httpClientFor(ctx, cfg, secrets)
+	}
+	return c.buildDirectoryClient(ctx, cfg, secrets, adminSDKWriteScopes)
+}
+
+func (c *GoogleWorkspaceAccessConnector) buildDirectoryClient(ctx context.Context, cfg Config, secrets Secrets, scopes []string) (httpDoer, error) {
+	jwtConfig, err := google.JWTConfigFromJSON([]byte(secrets.ServiceAccountKey), scopes...)
 	if err != nil {
 		return nil, fmt.Errorf("google_workspace: parse service account key: %w", err)
 	}
@@ -510,6 +768,11 @@ type directoryMembersPage struct {
 type directoryMember struct {
 	ID    string `json:"id"`
 	Email string `json:"email"`
+}
+
+type directoryMemberAdd struct {
+	Email string `json:"email"`
+	Role  string `json:"role"`
 }
 
 // ---------- compile-time interface assertions ----------

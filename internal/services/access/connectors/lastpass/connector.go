@@ -7,7 +7,9 @@
 //   - CountIdentities, SyncIdentities (paginated cmd=getuserdata)
 //   - GetSSOMetadata returns nil — LastPass is a vault, not an SSO provider
 //   - GetCredentialsMetadata
-//   - ProvisionAccess / RevokeAccess / ListEntitlements: Phase 1 stubs.
+//   - ProvisionAccess / RevokeAccess / ListEntitlements: real Phase 10
+//     implementations against the cmd=batchchangegrp / cmd=getsfdata
+//     LastPass enterprise endpoints.
 package lastpass
 
 import (
@@ -25,8 +27,10 @@ import (
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
-// ErrNotImplemented is returned by Phase 1 stubbed methods.
-var ErrNotImplemented = errors.New("lastpass: capability not implemented in Phase 1")
+// ErrNotImplemented is retained for any future capability that is not yet
+// implemented; ProvisionAccess / RevokeAccess / ListEntitlements no longer
+// return it as of Phase 10.
+var ErrNotImplemented = errors.New("lastpass: capability not implemented")
 
 // defaultEndpoint is the LastPass Enterprise JSON API URL. Tests override it
 // via urlOverride.
@@ -173,18 +177,139 @@ func (c *LastPassAccessConnector) SyncIdentities(
 	}
 }
 
-// ---------- Phase 1 stubs ----------
+// ---------- Phase 10 advanced capabilities ----------
 
-func (c *LastPassAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ProvisionAccess adds the user to a LastPass shared group (cmd=batchchangegrp
+// with op=add). The LastPass admin API returns a JSON body whose top-level
+// status is "OK" on success or "FAIL" with an error message otherwise; we
+// treat "already a member" / "alreadyinthegroup" as idempotent success.
+func (c *LastPassAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	return c.batchChangeGroup(ctx, configRaw, secretsRaw, grant, "add")
 }
 
-func (c *LastPassAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// RevokeAccess removes the user from a LastPass shared group (cmd=batchchangegrp
+// with op=del). "not a member" / "notinthegroup" responses are treated as
+// idempotent success.
+func (c *LastPassAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	return c.batchChangeGroup(ctx, configRaw, secretsRaw, grant, "del")
 }
 
-func (c *LastPassAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+// ListEntitlements returns all shared groups the user is a member of via
+// cmd=getsfdata (shared-folder + group membership). Each group is mapped to
+// Entitlement{ResourceExternalID: groupName, Role: groupName, Source: "direct"}.
+func (c *LastPassAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	if userExternalID == "" {
+		return nil, errors.New("lastpass: user external id is required")
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	body := buildPayload(cfg, secrets, "getsfdata", map[string]interface{}{
+		"user": userExternalID,
+	})
+	respBody, err := c.postJSON(ctx, body)
+	if err != nil {
+		return nil, err
+	}
+	var resp lastpassSharedFolderDataResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("lastpass: decode getsfdata: %w", err)
+	}
+	out := make([]access.Entitlement, 0, len(resp.Folders))
+	for _, f := range resp.Folders {
+		if !folderHasMember(f, userExternalID) {
+			continue
+		}
+		out = append(out, access.Entitlement{
+			ResourceExternalID: f.SharedFolderID,
+			Role:               f.SharedFolderName,
+			Source:             "direct",
+		})
+	}
+	return out, nil
+}
+
+func (c *LastPassAccessConnector) batchChangeGroup(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+	op string,
+) error {
+	if err := validateGrantPair(grant); err != nil {
+		return err
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	body := buildPayload(cfg, secrets, "batchchangegrp", map[string]interface{}{
+		"groupname": grant.ResourceExternalID,
+		"username":  grant.UserExternalID,
+		"op":        op,
+	})
+	respBody, err := c.postJSONAllowFail(ctx, body)
+	if err != nil {
+		return err
+	}
+	lower := strings.ToLower(string(respBody))
+	if strings.Contains(lower, `"status":"ok"`) {
+		return nil
+	}
+	if op == "add" && (strings.Contains(lower, "already") || strings.Contains(lower, "alreadyinthegroup")) {
+		return nil
+	}
+	if op == "del" && (strings.Contains(lower, "not in") || strings.Contains(lower, "notinthegroup") || strings.Contains(lower, "notmember")) {
+		return nil
+	}
+	return fmt.Errorf("lastpass: %s status FAIL: %s", op, string(respBody))
+}
+
+func validateGrantPair(grant access.AccessGrant) error {
+	if grant.UserExternalID == "" {
+		return errors.New("lastpass: grant.UserExternalID is required")
+	}
+	if grant.ResourceExternalID == "" {
+		return errors.New("lastpass: grant.ResourceExternalID is required")
+	}
+	return nil
+}
+
+func folderHasMember(f lastpassSharedFolder, user string) bool {
+	lower := strings.ToLower(user)
+	for _, u := range f.Users {
+		if strings.ToLower(u.Username) == lower || u.UserID == user {
+			return true
+		}
+	}
+	return false
+}
+
+type lastpassSharedFolderDataResponse struct {
+	Folders []lastpassSharedFolder `json:"folders"`
+}
+
+type lastpassSharedFolder struct {
+	SharedFolderID   string                 `json:"sharedfolderid"`
+	SharedFolderName string                 `json:"sharedfoldername"`
+	Users            []lastpassFolderMember `json:"users"`
+}
+
+type lastpassFolderMember struct {
+	UserID   string `json:"user_id,omitempty"`
+	Username string `json:"username"`
 }
 
 // ---------- Metadata ----------
@@ -286,6 +411,32 @@ func (c *LastPassAccessConnector) doRaw(req *http.Request) (*http.Response, erro
 	}
 	client := &http.Client{Timeout: 30 * time.Second}
 	return client.Do(req)
+}
+
+// postJSONAllowFail mirrors postJSON but does not translate the LastPass
+// "status":"FAIL" body into an error — callers (provision/revoke) inspect
+// the body themselves to detect idempotent "already a member" responses.
+func (c *LastPassAccessConnector) postJSONAllowFail(ctx context.Context, body map[string]interface{}) ([]byte, error) {
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(), bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("lastpass: status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return io.ReadAll(resp.Body)
 }
 
 func mapLastPassUsers(users []lastpassUser) []*access.Identity {

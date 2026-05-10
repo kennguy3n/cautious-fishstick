@@ -211,3 +211,168 @@ func TestGetCredentialsMetadata_LooksUpKeyAge(t *testing.T) {
 		t.Errorf("iam_user_name = %v", md["iam_user_name"])
 	}
 }
+
+func TestProvisionAccess_AttachUserPolicy(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"ok", `<AttachUserPolicyResponse/>`},
+		{"already_attached_idempotent", `<ErrorResponse><Error><Code>EntityAlreadyExists</Code><Message>policy already attached</Message></Error></ErrorResponse>`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var seenAction, seenUser, seenPolicy string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := r.ParseForm(); err != nil {
+					t.Fatal(err)
+				}
+				seenAction = r.Form.Get("Action")
+				seenUser = r.Form.Get("UserName")
+				seenPolicy = r.Form.Get("PolicyArn")
+				if strings.Contains(tc.body, "ErrorResponse") {
+					w.WriteHeader(http.StatusBadRequest)
+				}
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(srv.Close)
+			c := New()
+			c.urlOverride = srv.URL
+			c.httpClient = func() httpDoer { return srv.Client() }
+			c.timeOverride = func() time.Time { return time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC) }
+			err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+				UserExternalID: "alice", ResourceExternalID: "arn:aws:iam::aws:policy/ReadOnlyAccess",
+			})
+			if err != nil {
+				t.Fatalf("ProvisionAccess: %v", err)
+			}
+			if seenAction != "AttachUserPolicy" || seenUser != "alice" || seenPolicy != "arn:aws:iam::aws:policy/ReadOnlyAccess" {
+				t.Fatalf("form = %s/%s/%s", seenAction, seenUser, seenPolicy)
+			}
+		})
+	}
+}
+
+func TestProvisionAccess_OtherErrorPropagates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`<ErrorResponse><Error><Code>NoSuchEntity</Code><Message>user does not exist</Message></Error></ErrorResponse>`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	c.timeOverride = func() time.Time { return time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC) }
+	err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "ghost", ResourceExternalID: "arn:aws:iam::aws:policy/ReadOnlyAccess",
+	})
+	if err == nil || !strings.Contains(err.Error(), "NoSuchEntity") {
+		t.Fatalf("expected NoSuchEntity error, got %v", err)
+	}
+}
+
+func TestRevokeAccess_DetachUserPolicy(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"ok", http.StatusOK, `<DetachUserPolicyResponse/>`},
+		{"not_attached_idempotent", http.StatusNotFound, `<ErrorResponse><Error><Code>NoSuchEntity</Code></Error></ErrorResponse>`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var seenAction string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := r.ParseForm(); err != nil {
+					t.Fatal(err)
+				}
+				seenAction = r.Form.Get("Action")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(srv.Close)
+			c := New()
+			c.urlOverride = srv.URL
+			c.httpClient = func() httpDoer { return srv.Client() }
+			c.timeOverride = func() time.Time { return time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC) }
+			err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+				UserExternalID: "alice", ResourceExternalID: "arn:aws:iam::aws:policy/ReadOnlyAccess",
+			})
+			if err != nil {
+				t.Fatalf("RevokeAccess: %v", err)
+			}
+			if seenAction != "DetachUserPolicy" {
+				t.Fatalf("action = %q", seenAction)
+			}
+		})
+	}
+}
+
+func TestRevokeAccess_OtherErrorPropagates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`<ErrorResponse><Error><Code>AccessDenied</Code></Error></ErrorResponse>`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	c.timeOverride = func() time.Time { return time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC) }
+	err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "alice", ResourceExternalID: "arn:aws:iam::aws:policy/ReadOnlyAccess",
+	})
+	if err == nil || !strings.Contains(err.Error(), "AccessDenied") {
+		t.Fatalf("expected AccessDenied error, got %v", err)
+	}
+}
+
+func TestListEntitlements_PaginatesAttachedPolicies(t *testing.T) {
+	page := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page++
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		if r.Form.Get("Action") != "ListAttachedUserPolicies" {
+			t.Errorf("Action = %q", r.Form.Get("Action"))
+		}
+		if page == 1 {
+			_, _ = w.Write([]byte(`<ListAttachedUserPoliciesResponse><ListAttachedUserPoliciesResult><IsTruncated>true</IsTruncated><Marker>NEXT</Marker><AttachedPolicies><member><PolicyName>ReadOnlyAccess</PolicyName><PolicyArn>arn:aws:iam::aws:policy/ReadOnlyAccess</PolicyArn></member></AttachedPolicies></ListAttachedUserPoliciesResult></ListAttachedUserPoliciesResponse>`))
+			return
+		}
+		if r.Form.Get("Marker") != "NEXT" {
+			t.Errorf("Marker = %q", r.Form.Get("Marker"))
+		}
+		_, _ = w.Write([]byte(`<ListAttachedUserPoliciesResponse><ListAttachedUserPoliciesResult><IsTruncated>false</IsTruncated><AttachedPolicies><member><PolicyName>S3FullAccess</PolicyName><PolicyArn>arn:aws:iam::aws:policy/S3FullAccess</PolicyArn></member></AttachedPolicies></ListAttachedUserPoliciesResult></ListAttachedUserPoliciesResponse>`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	c.timeOverride = func() time.Time { return time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC) }
+	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "alice")
+	if err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if len(got) != 2 || got[0].Role != "ReadOnlyAccess" || got[1].Role != "S3FullAccess" {
+		t.Fatalf("got %+v", got)
+	}
+	if got[0].Source != "direct" {
+		t.Fatalf("source = %q", got[0].Source)
+	}
+}
+
+func TestListEntitlements_4xxReturnsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	c.timeOverride = func() time.Time { return time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC) }
+	if _, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "alice"); err == nil {
+		t.Fatal("expected error on 403")
+	}
+}

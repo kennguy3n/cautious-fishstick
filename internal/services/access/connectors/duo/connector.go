@@ -8,7 +8,8 @@
 //   - SyncIdentities (paginated /admin/v1/users)
 //   - GetSSOMetadata returns nil — Duo is MFA, not SSO
 //   - GetCredentialsMetadata
-//   - ProvisionAccess / RevokeAccess / ListEntitlements: Phase 1 stubs.
+//   - ProvisionAccess / RevokeAccess / ListEntitlements: real Phase 10
+//     implementations against /admin/v1/users/{userId}/groups (HMAC-SHA1).
 package duo
 
 import (
@@ -31,8 +32,10 @@ import (
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
-// ErrNotImplemented is returned by Phase 1 stubbed methods.
-var ErrNotImplemented = errors.New("duo_security: capability not implemented in Phase 1")
+// ErrNotImplemented is retained for any future capability that is not yet
+// implemented; ProvisionAccess / RevokeAccess / ListEntitlements no longer
+// return it as of Phase 10.
+var ErrNotImplemented = errors.New("duo_security: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -162,18 +165,124 @@ func (c *DuoAccessConnector) SyncIdentities(
 	}
 }
 
-// ---------- Phase 1 stubs ----------
+// ---------- Phase 10 advanced capabilities ----------
 
-func (c *DuoAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ProvisionAccess adds the user to a Duo group via POST
+// /admin/v1/users/{userId}/groups (form-encoded group_id parameter). 400/409
+// with an "already a member" body is treated as idempotent success.
+func (c *DuoAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if err := validateGrantPair(grant); err != nil {
+		return err
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/admin/v1/users/%s/groups", url.PathEscape(grant.UserExternalID))
+	params := map[string]string{"group_id": grant.ResourceExternalID}
+	resp, body, err := c.signedRaw(ctx, cfg, secrets, http.MethodPost, path, params)
+	if err != nil {
+		return fmt.Errorf("duo_security: provision request: %w", err)
+	}
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusConflict:
+		return nil
+	case resp.StatusCode == http.StatusBadRequest && bytesContains(body, "already a member"):
+		return nil
+	default:
+		return fmt.Errorf("duo_security: provision status %d: %s", resp.StatusCode, string(body))
+	}
 }
 
-func (c *DuoAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// RevokeAccess removes the user from the Duo group via DELETE
+// /admin/v1/users/{userId}/groups/{groupId}. 404 is idempotent success.
+func (c *DuoAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if err := validateGrantPair(grant); err != nil {
+		return err
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/admin/v1/users/%s/groups/%s",
+		url.PathEscape(grant.UserExternalID), url.PathEscape(grant.ResourceExternalID))
+	resp, body, err := c.signedRaw(ctx, cfg, secrets, http.MethodDelete, path, nil)
+	if err != nil {
+		return fmt.Errorf("duo_security: revoke request: %w", err)
+	}
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return nil
+	default:
+		return fmt.Errorf("duo_security: revoke status %d: %s", resp.StatusCode, string(body))
+	}
 }
 
-func (c *DuoAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+// ListEntitlements returns the user's group memberships via GET
+// /admin/v1/users/{userId}/groups. Each group is mapped to
+// Entitlement{ResourceExternalID: groupID, Role: groupName, Source: "direct"}.
+func (c *DuoAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	if userExternalID == "" {
+		return nil, errors.New("duo_security: user external id is required")
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	path := fmt.Sprintf("/admin/v1/users/%s/groups", url.PathEscape(userExternalID))
+	var resp duoUserGroupsResponse
+	if err := c.signedJSON(ctx, cfg, secrets, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	out := make([]access.Entitlement, 0, len(resp.Response))
+	for _, g := range resp.Response {
+		out = append(out, access.Entitlement{
+			ResourceExternalID: g.GroupID,
+			Role:               g.Name,
+			Source:             "direct",
+		})
+	}
+	return out, nil
+}
+
+func validateGrantPair(grant access.AccessGrant) error {
+	if grant.UserExternalID == "" {
+		return errors.New("duo_security: grant.UserExternalID is required")
+	}
+	if grant.ResourceExternalID == "" {
+		return errors.New("duo_security: grant.ResourceExternalID is required")
+	}
+	return nil
+}
+
+func bytesContains(haystack []byte, needle string) bool {
+	return strings.Contains(string(haystack), needle)
+}
+
+type duoUserGroupsResponse struct {
+	Stat     string         `json:"stat"`
+	Response []duoUserGroup `json:"response"`
+}
+
+type duoUserGroup struct {
+	GroupID string `json:"group_id"`
+	Name    string `json:"name"`
 }
 
 // ---------- Metadata ----------
@@ -334,6 +443,58 @@ func (c *DuoAccessConnector) doRaw(req *http.Request) (*http.Response, error) {
 	}
 	client := &http.Client{Timeout: 30 * time.Second}
 	return client.Do(req)
+}
+
+// signedRaw builds and dispatches a Duo-signed request, returning the
+// response and body (already drained). Unlike signedJSON it does not
+// translate non-2xx into an error — callers that need to special-case
+// 404/409 idempotency use this entry point.
+func (c *DuoAccessConnector) signedRaw(
+	ctx context.Context,
+	cfg Config,
+	secrets Secrets,
+	method, path string,
+	params map[string]string,
+) (*http.Response, []byte, error) {
+	if params == nil {
+		params = map[string]string{}
+	}
+	host := cfg.normalisedHost()
+	date := c.now().Format(time.RFC1123Z)
+	authHeader := signDuoRequest(method, host, path, params, secrets.IntegrationKey, secrets.SecretKey, date)
+
+	reqURL := c.baseURL(cfg) + path
+	var bodyReader io.Reader
+	if method == http.MethodGet && len(params) > 0 {
+		v := url.Values{}
+		for k, val := range params {
+			v.Set(k, val)
+		}
+		reqURL = reqURL + "?" + v.Encode()
+	} else if method != http.MethodGet && len(params) > 0 {
+		v := url.Values{}
+		for k, val := range params {
+			v.Set(k, val)
+		}
+		bodyReader = strings.NewReader(v.Encode())
+	}
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, bodyReader)
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Authorization", authHeader)
+	req.Header.Set("Date", date)
+	req.Header.Set("Accept", "application/json")
+	if bodyReader != nil {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 65536))
+	return resp, body, nil
 }
 
 func (c *DuoAccessConnector) fetchSummary(ctx context.Context, cfg Config, secrets Secrets) (*duoSummary, error) {

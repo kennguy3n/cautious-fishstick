@@ -5,7 +5,9 @@
 package azure
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha1"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,11 +24,16 @@ import (
 )
 
 const (
-	ProviderName   = "azure"
-	defaultBaseURL = "https://graph.microsoft.com/v1.0"
+	ProviderName      = "azure"
+	defaultBaseURL    = "https://graph.microsoft.com/v1.0"
+	defaultARMBaseURL = "https://management.azure.com"
+	armAPIVersion     = "2022-04-01"
 )
 
-var ErrNotImplemented = errors.New("azure: capability not implemented in Phase 7")
+// ErrNotImplemented is retained for any future capability that is not yet
+// implemented; ProvisionAccess / RevokeAccess / ListEntitlements no longer
+// return it as of Phase 10.
+var ErrNotImplemented = errors.New("azure: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -305,14 +312,214 @@ func (c *AzureAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *AzureAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// armURL returns the absolute ARM URL for the given path. In tests the
+// urlOverride covers both Graph and ARM via the same httptest server.
+func (c *AzureAccessConnector) armURL(path string) string {
+	if c.urlOverride != "" {
+		return strings.TrimRight(c.urlOverride, "/") + path
+	}
+	return defaultARMBaseURL + path
 }
-func (c *AzureAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+// armClient mirrors graphClient but uses the management.azure.com scope when
+// running outside of tests.
+func (c *AzureAccessConnector) armClient(ctx context.Context, cfg Config, secrets Secrets) httpDoer {
+	if c.httpClient != nil {
+		return c.httpClient(ctx, cfg, secrets)
+	}
+	if c.tokenOverride != nil {
+		return &bearerTransportClient{ctx: ctx, cfg: cfg, secrets: secrets, token: c.tokenOverride, inner: &http.Client{Timeout: 30 * time.Second}}
+	}
+	cc := newClientCredentialsConfig(cfg, secrets)
+	cc.Scopes = []string{"https://management.azure.com/.default"}
+	return cc.Client(ctx)
 }
-func (c *AzureAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+// armRoleAssignmentName builds a deterministic GUID-formatted name from the
+// (scope, principalID, roleDefinitionID) tuple so that retries land on the
+// same role assignment and 409 / 404 can be treated as idempotent.
+func armRoleAssignmentName(scope, principalID, roleDefinitionID string) string {
+	sum := sha1.Sum([]byte(scope + "|" + principalID + "|" + roleDefinitionID))
+	b := sum[:16]
+	// Format as a GUID; this is just a deterministic identifier so we do
+	// not tag it as a specific UUID variant.
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// ProvisionAccess assigns an Azure RBAC role to the user via PUT
+// /subscriptions/{sub}/providers/Microsoft.Authorization/roleAssignments/{name}.
+// The assignment name is derived deterministically so 409 Conflict (the role
+// is already assigned) collapses to idempotent success.
+func (c *AzureAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if err := validateGrantPair(grant); err != nil {
+		return err
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	scope := "/subscriptions/" + cfg.SubscriptionID
+	name := armRoleAssignmentName(scope, grant.UserExternalID, grant.ResourceExternalID)
+	path := fmt.Sprintf("%s/providers/Microsoft.Authorization/roleAssignments/%s?api-version=%s",
+		scope, url.PathEscape(name), armAPIVersion)
+	payload := map[string]map[string]string{
+		"properties": {
+			"roleDefinitionId": grant.ResourceExternalID,
+			"principalId":      grant.UserExternalID,
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	client := c.armClient(ctx, cfg, secrets)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.armURL(path), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("azure: provision request: %w", err)
+	}
+	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusConflict:
+		return nil
+	default:
+		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if resp.StatusCode == http.StatusBadRequest && bytes.Contains(rb, []byte("RoleAssignmentExists")) {
+			return nil
+		}
+		return fmt.Errorf("azure: provision status %d: %s", resp.StatusCode, string(rb))
+	}
+}
+
+// RevokeAccess removes the deterministic role assignment via DELETE. 404 is
+// idempotent success.
+func (c *AzureAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if err := validateGrantPair(grant); err != nil {
+		return err
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	scope := "/subscriptions/" + cfg.SubscriptionID
+	name := armRoleAssignmentName(scope, grant.UserExternalID, grant.ResourceExternalID)
+	path := fmt.Sprintf("%s/providers/Microsoft.Authorization/roleAssignments/%s?api-version=%s",
+		scope, url.PathEscape(name), armAPIVersion)
+	client := c.armClient(ctx, cfg, secrets)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.armURL(path), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("azure: revoke request: %w", err)
+	}
+	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound:
+		return nil
+	default:
+		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return fmt.Errorf("azure: revoke status %d: %s", resp.StatusCode, string(rb))
+	}
+}
+
+// ListEntitlements returns the user's role assignments scoped to the
+// configured subscription. The OData $filter is used server-side; results
+// are paged via @odata.nextLink (the Azure ARM convention is the same as
+// Graph's).
+func (c *AzureAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	if userExternalID == "" {
+		return nil, errors.New("azure: user external id is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	client := c.armClient(ctx, cfg, secrets)
+	path := fmt.Sprintf("/subscriptions/%s/providers/Microsoft.Authorization/roleAssignments?api-version=%s&$filter=%s",
+		url.PathEscape(cfg.SubscriptionID), armAPIVersion,
+		url.QueryEscape("principalId eq '"+userExternalID+"'"))
+	next := c.armURL(path)
+	var out []access.Entitlement
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, next, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("azure: list entitlements: %w", err)
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("azure: list entitlements status %d: %s", resp.StatusCode, string(body))
+		}
+		var page armRoleAssignmentsResponse
+		if err := json.Unmarshal(body, &page); err != nil {
+			return nil, fmt.Errorf("azure: decode role assignments: %w", err)
+		}
+		for _, a := range page.Value {
+			out = append(out, access.Entitlement{
+				ResourceExternalID: a.Properties.RoleDefinitionID,
+				Role:               a.Properties.Scope,
+				Source:             "direct",
+			})
+		}
+		if page.NextLink == "" {
+			return out, nil
+		}
+		next = page.NextLink
+	}
+}
+
+func validateGrantPair(grant access.AccessGrant) error {
+	if grant.UserExternalID == "" {
+		return errors.New("azure: grant.UserExternalID is required")
+	}
+	if grant.ResourceExternalID == "" {
+		return errors.New("azure: grant.ResourceExternalID is required")
+	}
+	return nil
+}
+
+type armRoleAssignmentsResponse struct {
+	NextLink string              `json:"nextLink,omitempty"`
+	Value    []armRoleAssignment `json:"value"`
+}
+
+type armRoleAssignment struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Properties struct {
+		RoleDefinitionID string `json:"roleDefinitionId"`
+		PrincipalID      string `json:"principalId"`
+		Scope            string `json:"scope"`
+	} `json:"properties"`
 }
 func (c *AzureAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

@@ -24,12 +24,23 @@ import (
 )
 
 const (
-	ProviderName        = "gcp"
-	defaultBaseURL      = "https://cloudresourcemanager.googleapis.com"
-	cloudPlatformScope  = "https://www.googleapis.com/auth/cloud-platform.read-only"
+	ProviderName   = "gcp"
+	defaultBaseURL = "https://cloudresourcemanager.googleapis.com"
+	// cloudPlatformReadScope grants read-only access to GCP project
+	// metadata and IAM policies — sufficient for SyncIdentities,
+	// CountIdentities, and ListEntitlements.
+	cloudPlatformReadScope = "https://www.googleapis.com/auth/cloud-platform.read-only"
+	// cloudPlatformWriteScope is required for IAM mutations
+	// (setIamPolicy). ProvisionAccess and RevokeAccess use the
+	// write-capable client; the read-only client continues to power
+	// non-mutating paths.
+	cloudPlatformWriteScope = "https://www.googleapis.com/auth/cloud-platform"
 )
 
-var ErrNotImplemented = errors.New("gcp: capability not implemented in Phase 7")
+// ErrNotImplemented is retained for any future capability that is not yet
+// implemented; ProvisionAccess / RevokeAccess / ListEntitlements no longer
+// return it as of Phase 10.
+var ErrNotImplemented = errors.New("gcp: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -44,9 +55,15 @@ type Secrets struct {
 }
 
 type GCPAccessConnector struct {
-	httpClient    func(ctx context.Context, cfg Config, secrets Secrets) (httpDoer, error)
-	urlOverride   string
-	tokenOverride func(ctx context.Context, cfg Config, secrets Secrets) (string, error)
+	httpClient func(ctx context.Context, cfg Config, secrets Secrets) (httpDoer, error)
+	// httpWriteClient mirrors httpClient for tests that want to assert
+	// ProvisionAccess / RevokeAccess pick the write-capable client. When
+	// nil, write paths fall back to httpClient (so existing tests keep
+	// working). In production, both fields are nil and the JWT-config
+	// builder runs with the appropriate scope.
+	httpWriteClient func(ctx context.Context, cfg Config, secrets Secrets) (httpDoer, error)
+	urlOverride     string
+	tokenOverride   func(ctx context.Context, cfg Config, secrets Secrets) (string, error)
 }
 
 func New() *GCPAccessConnector { return &GCPAccessConnector{} }
@@ -131,14 +148,39 @@ func (c *GCPAccessConnector) decodeBoth(configRaw, secretsRaw map[string]interfa
 	return cfg, s, nil
 }
 
+// cloudResourceClient returns a read-only client used by all
+// non-mutating paths (Connect probe, SyncIdentities, CountIdentities,
+// ListEntitlements, and the initial getIamPolicy step of
+// modifyBinding).
 func (c *GCPAccessConnector) cloudResourceClient(ctx context.Context, cfg Config, secrets Secrets) (httpDoer, error) {
+	return c.cloudResourceClientWithScope(ctx, cfg, secrets, cloudPlatformReadScope)
+}
+
+// cloudResourceWriteClient returns a write-capable client used
+// exclusively by ProvisionAccess and RevokeAccess (which call
+// setIamPolicy). The write scope subsumes the read scope, so the
+// embedded getIamPolicy call still works. Tests may inject
+// httpWriteClient to observe write traffic separately from read
+// traffic.
+func (c *GCPAccessConnector) cloudResourceWriteClient(ctx context.Context, cfg Config, secrets Secrets) (httpDoer, error) {
+	if c.httpWriteClient != nil {
+		return c.httpWriteClient(ctx, cfg, secrets)
+	}
+	return c.cloudResourceClientWithScope(ctx, cfg, secrets, cloudPlatformWriteScope)
+}
+
+// cloudResourceClientWithScope is the underlying builder. Test
+// overrides (httpClient / tokenOverride) bypass the JWT exchange
+// entirely; the scope argument only matters for the production path
+// that minted a real OAuth2 access token.
+func (c *GCPAccessConnector) cloudResourceClientWithScope(ctx context.Context, cfg Config, secrets Secrets, scope string) (httpDoer, error) {
 	if c.httpClient != nil {
 		return c.httpClient(ctx, cfg, secrets)
 	}
 	if c.tokenOverride != nil {
 		return &bearerTransportClient{ctx: ctx, cfg: cfg, secrets: secrets, token: c.tokenOverride, inner: &http.Client{Timeout: 30 * time.Second}}, nil
 	}
-	jwtConfig, err := google.JWTConfigFromJSON([]byte(secrets.ServiceAccountJSON), cloudPlatformScope)
+	jwtConfig, err := google.JWTConfigFromJSON([]byte(secrets.ServiceAccountJSON), scope)
 	if err != nil {
 		return nil, fmt.Errorf("gcp: parse service account: %w", err)
 	}
@@ -214,6 +256,8 @@ func (c *GCPAccessConnector) VerifyPermissions(ctx context.Context, configRaw, s
 }
 
 type iamPolicyResponse struct {
+	Version  int          `json:"version,omitempty"`
+	Etag     string       `json:"etag,omitempty"`
 	Bindings []iamBinding `json:"bindings"`
 }
 
@@ -320,14 +364,167 @@ func principalToIdentity(member string) *access.Identity {
 	return nil
 }
 
-func (c *GCPAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ProvisionAccess adds the principal `user:{email}` to the IAM binding for
+// the requested role on the configured project. The implementation follows
+// the canonical GCP read-modify-write pattern: getIamPolicy -> mutate ->
+// setIamPolicy. "already bound" is treated as idempotent success.
+func (c *GCPAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	return c.modifyBinding(ctx, configRaw, secretsRaw, grant, true)
 }
-func (c *GCPAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+// RevokeAccess removes the `user:{email}` binding for the requested role.
+// "member already absent" is idempotent success.
+func (c *GCPAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	return c.modifyBinding(ctx, configRaw, secretsRaw, grant, false)
 }
-func (c *GCPAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+// ListEntitlements returns one Entitlement per role binding the user appears
+// in on the configured project's IAM policy.
+func (c *GCPAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	if userExternalID == "" {
+		return nil, errors.New("gcp: user external id is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	client, err := c.cloudResourceClient(ctx, cfg, secrets)
+	if err != nil {
+		return nil, err
+	}
+	policy, err := c.fetchPolicy(ctx, client, cfg)
+	if err != nil {
+		return nil, err
+	}
+	member := "user:" + userExternalID
+	var out []access.Entitlement
+	for _, b := range policy.Bindings {
+		for _, m := range b.Members {
+			if m == member {
+				out = append(out, access.Entitlement{
+					ResourceExternalID: cfg.ProjectID,
+					Role:               b.Role,
+					Source:             "direct",
+				})
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+func (c *GCPAccessConnector) modifyBinding(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+	add bool,
+) error {
+	if err := validateGrantPair(grant); err != nil {
+		return err
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	client, err := c.cloudResourceWriteClient(ctx, cfg, secrets)
+	if err != nil {
+		return err
+	}
+	policy, err := c.fetchPolicy(ctx, client, cfg)
+	if err != nil {
+		return err
+	}
+	member := "user:" + grant.UserExternalID
+	role := grant.ResourceExternalID
+	changed := false
+	if add {
+		changed = addMember(policy, role, member)
+	} else {
+		changed = removeMember(policy, role, member)
+	}
+	if !changed {
+		// Already in desired state — idempotent success.
+		return nil
+	}
+	wrap := map[string]interface{}{"policy": policy}
+	body, err := json.Marshal(wrap)
+	if err != nil {
+		return err
+	}
+	if _, err := c.doJSON(client, ctx, http.MethodPost,
+		"/v1/projects/"+cfg.ProjectID+":setIamPolicy", body); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *GCPAccessConnector) fetchPolicy(ctx context.Context, client httpDoer, cfg Config) (*iamPolicyResponse, error) {
+	body, err := c.doJSON(client, ctx, http.MethodPost,
+		"/v1/projects/"+cfg.ProjectID+":getIamPolicy", []byte(`{}`))
+	if err != nil {
+		return nil, err
+	}
+	var policy iamPolicyResponse
+	if err := json.Unmarshal(body, &policy); err != nil {
+		return nil, fmt.Errorf("gcp: decode policy: %w", err)
+	}
+	return &policy, nil
+}
+
+func addMember(policy *iamPolicyResponse, role, member string) bool {
+	for i, b := range policy.Bindings {
+		if b.Role != role {
+			continue
+		}
+		for _, m := range b.Members {
+			if m == member {
+				return false
+			}
+		}
+		policy.Bindings[i].Members = append(policy.Bindings[i].Members, member)
+		return true
+	}
+	policy.Bindings = append(policy.Bindings, iamBinding{Role: role, Members: []string{member}})
+	return true
+}
+
+func removeMember(policy *iamPolicyResponse, role, member string) bool {
+	for i, b := range policy.Bindings {
+		if b.Role != role {
+			continue
+		}
+		for j, m := range b.Members {
+			if m != member {
+				continue
+			}
+			policy.Bindings[i].Members = append(b.Members[:j], b.Members[j+1:]...)
+			return true
+		}
+		return false
+	}
+	return false
+}
+
+func validateGrantPair(grant access.AccessGrant) error {
+	if grant.UserExternalID == "" {
+		return errors.New("gcp: grant.UserExternalID is required")
+	}
+	if grant.ResourceExternalID == "" {
+		return errors.New("gcp: grant.ResourceExternalID is required")
+	}
+	return nil
 }
 func (c *GCPAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

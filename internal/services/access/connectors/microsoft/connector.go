@@ -9,14 +9,15 @@
 //   - GroupSyncer (CountGroups, SyncGroups, SyncGroupMembers)
 //   - GetSSOMetadata (OIDC discovery URL)
 //   - GetCredentialsMetadata (best-effort)
-//   - ProvisionAccess / RevokeAccess / ListEntitlements: stubs returning
-//     ErrNotImplemented; full implementations land in Phase 6+.
+//   - ProvisionAccess / RevokeAccess / ListEntitlements: real implementations
+//     against Microsoft Graph `appRoleAssignments` (Phase 10).
 //
 // API reference patterns are copied from the SN360 Microsoft connector
 // (uneycom/shieldnet360-backend/internal/services/connectors/microsoft).
 package microsoft
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -33,11 +34,10 @@ import (
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
-// ErrNotImplemented is returned by methods that are deliberately stubbed in
-// Phase 0 (ProvisionAccess, RevokeAccess, ListEntitlements). The corresponding
-// access_requests rows surface a clear "not yet supported" message in the
-// admin UI rather than crashing.
-var ErrNotImplemented = errors.New("microsoft: capability not implemented in Phase 0")
+// ErrNotImplemented is retained for any future capability that is deliberately
+// stubbed; ProvisionAccess / RevokeAccess / ListEntitlements no longer return
+// it as of Phase 10.
+var ErrNotImplemented = errors.New("microsoft: capability not implemented")
 
 const (
 	graphBaseURL = "https://graph.microsoft.com/v1.0"
@@ -394,22 +394,208 @@ func (c *M365AccessConnector) SyncGroupMembers(
 	return nil
 }
 
-// ---------- Phase 0 stubs ----------
+// ---------- Phase 10 advanced capabilities ----------
 
-// ProvisionAccess is a Phase 0 stub. Full provisioning over Microsoft Graph
-// (license/role assignment APIs) lands in Phase 6.
-func (c *M365AccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ProvisionAccess pushes a Microsoft Graph `appRoleAssignment` for the grant.
+// The connector posts to /v1.0/users/{userExternalID}/appRoleAssignments with
+// `principalId`, `resourceId` (the service principal), and `appRoleId` derived
+// from the grant. A 409 Conflict response is treated as idempotent success per
+// PROPOSAL §2.1: the assignment already exists. Non-2xx 4xx surfaces a
+// permanent error; 5xx is returned verbatim so the worker retries with backoff.
+func (c *M365AccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if err := validateGrantPair(grant); err != nil {
+		return err
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	client := c.graphClient(ctx, cfg, secrets)
+
+	body, err := json.Marshal(graphAppRoleAssignment{
+		PrincipalID: grant.UserExternalID,
+		ResourceID:  grant.ResourceExternalID,
+		AppRoleID:   grant.Role,
+	})
+	if err != nil {
+		return fmt.Errorf("microsoft: marshal assignment: %w", err)
+	}
+
+	urlStr := fmt.Sprintf("%s/users/%s/appRoleAssignments", graphBaseURL, url.PathEscape(grant.UserExternalID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("microsoft: provision request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	switch {
+	case resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK:
+		return nil
+	case resp.StatusCode == http.StatusConflict:
+		return nil
+	default:
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("microsoft: provision status %d: %s", resp.StatusCode, string(respBody))
+	}
 }
 
-// RevokeAccess is a Phase 0 stub.
-func (c *M365AccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// RevokeAccess removes an `appRoleAssignment` matching the grant. The connector
+// first lists the user's assignments, then issues a DELETE for the one whose
+// `resourceId` and `appRoleId` match the grant. A 404 on the DELETE is treated
+// as idempotent success.
+func (c *M365AccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if err := validateGrantPair(grant); err != nil {
+		return err
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	client := c.graphClient(ctx, cfg, secrets)
+
+	assignmentID, err := c.findAppRoleAssignmentID(ctx, client, grant)
+	if err != nil {
+		return err
+	}
+	if assignmentID == "" {
+		return nil
+	}
+
+	urlStr := fmt.Sprintf("%s/users/%s/appRoleAssignments/%s",
+		graphBaseURL,
+		url.PathEscape(grant.UserExternalID),
+		url.PathEscape(assignmentID),
+	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, urlStr, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("microsoft: revoke request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	switch {
+	case resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK:
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return nil
+	default:
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("microsoft: revoke status %d: %s", resp.StatusCode, string(respBody))
+	}
 }
 
-// ListEntitlements is a Phase 0 stub.
-func (c *M365AccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+// ListEntitlements pages through /v1.0/users/{userExternalID}/appRoleAssignments
+// and maps each assignment to an Entitlement{ResourceExternalID, Role,
+// Source: "direct"}.
+func (c *M365AccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	if userExternalID == "" {
+		return nil, errors.New("microsoft: user external id is required")
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	client := c.graphClient(ctx, cfg, secrets)
+
+	next := fmt.Sprintf("%s/users/%s/appRoleAssignments", graphBaseURL, url.PathEscape(userExternalID))
+	var out []access.Entitlement
+	for next != "" {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, next, nil)
+		if err != nil {
+			return nil, err
+		}
+		body, err := doJSON(client, req)
+		if err != nil {
+			return nil, err
+		}
+		var page graphAppRoleAssignmentsPage
+		if err := json.Unmarshal(body, &page); err != nil {
+			return nil, fmt.Errorf("microsoft: decode appRoleAssignments page: %w", err)
+		}
+		for _, a := range page.Value {
+			out = append(out, access.Entitlement{
+				ResourceExternalID: a.ResourceID,
+				Role:               a.AppRoleID,
+				Source:             "direct",
+			})
+		}
+		next = page.NextLink
+	}
+	return out, nil
+}
+
+func validateGrantPair(grant access.AccessGrant) error {
+	if grant.UserExternalID == "" {
+		return errors.New("microsoft: grant.UserExternalID is required")
+	}
+	if grant.ResourceExternalID == "" {
+		return errors.New("microsoft: grant.ResourceExternalID is required")
+	}
+	return nil
+}
+
+func (c *M365AccessConnector) findAppRoleAssignmentID(
+	ctx context.Context,
+	client httpDoer,
+	grant access.AccessGrant,
+) (string, error) {
+	next := fmt.Sprintf("%s/users/%s/appRoleAssignments", graphBaseURL, url.PathEscape(grant.UserExternalID))
+	for next != "" {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, next, nil)
+		if err != nil {
+			return "", err
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("microsoft: list assignments: %w", err)
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			_ = resp.Body.Close()
+			return "", nil
+		}
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+			_ = resp.Body.Close()
+			return "", fmt.Errorf("microsoft: list assignments status %d: %s", resp.StatusCode, string(body))
+		}
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			return "", err
+		}
+		var page graphAppRoleAssignmentsPage
+		if err := json.Unmarshal(body, &page); err != nil {
+			return "", fmt.Errorf("microsoft: decode appRoleAssignments page: %w", err)
+		}
+		for _, a := range page.Value {
+			if a.ResourceID == grant.ResourceExternalID && (grant.Role == "" || a.AppRoleID == grant.Role) {
+				return a.ID, nil
+			}
+		}
+		next = page.NextLink
+	}
+	return "", nil
 }
 
 // ---------- Metadata ----------
@@ -648,6 +834,18 @@ type graphMembersPage struct {
 
 type graphMember struct {
 	ID string `json:"id"`
+}
+
+type graphAppRoleAssignment struct {
+	ID          string `json:"id,omitempty"`
+	PrincipalID string `json:"principalId"`
+	ResourceID  string `json:"resourceId"`
+	AppRoleID   string `json:"appRoleId"`
+}
+
+type graphAppRoleAssignmentsPage struct {
+	Value    []graphAppRoleAssignment `json:"value"`
+	NextLink string                   `json:"@odata.nextLink"`
 }
 
 // ---------- compile-time interface assertions ----------

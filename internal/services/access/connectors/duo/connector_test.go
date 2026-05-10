@@ -79,16 +79,162 @@ func TestRegistryIntegration(t *testing.T) {
 	}
 }
 
-func TestStubsReturnErrNotImplemented(t *testing.T) {
+func TestProvisionAccess_AddsUserToGroup(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"created", http.StatusOK, `{"stat":"OK"}`},
+		{"already_member_idempotent", http.StatusBadRequest, `{"stat":"FAIL","message":"User is already a member of group"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var seenMethod, seenPath string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seenMethod, seenPath = r.Method, r.URL.Path
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(server.Close)
+
+			c := New()
+			c.urlOverride = server.URL
+			c.httpClient = func() httpDoer { return server.Client() }
+			c.nowFn = func() time.Time { return time.Date(2026, 5, 9, 8, 0, 0, 0, time.UTC) }
+			err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+				UserExternalID: "u-1", ResourceExternalID: "g-1",
+			})
+			if err != nil {
+				t.Fatalf("ProvisionAccess: %v", err)
+			}
+			if seenMethod != http.MethodPost {
+				t.Fatalf("method = %q", seenMethod)
+			}
+			if seenPath != "/admin/v1/users/u-1/groups" {
+				t.Fatalf("path = %q", seenPath)
+			}
+		})
+	}
+}
+
+func TestProvisionAccess_4xxFailsPermanently(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"stat":"FAIL"}`))
+	}))
+	t.Cleanup(server.Close)
+
 	c := New()
-	if err := c.ProvisionAccess(context.Background(), nil, nil, access.AccessGrant{}); !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("ProvisionAccess: got %v", err)
+	c.urlOverride = server.URL
+	c.httpClient = func() httpDoer { return server.Client() }
+	c.nowFn = func() time.Time { return time.Date(2026, 5, 9, 8, 0, 0, 0, time.UTC) }
+	err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "u-1", ResourceExternalID: "g-1",
+	})
+	if err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("expected 403, got %v", err)
 	}
-	if err := c.RevokeAccess(context.Background(), nil, nil, access.AccessGrant{}); !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("RevokeAccess: got %v", err)
+}
+
+func TestRevokeAccess_DeletesUserFromGroup(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+	}{
+		{"deleted", http.StatusOK},
+		{"not_found_idempotent", http.StatusNotFound},
 	}
-	if _, err := c.ListEntitlements(context.Background(), nil, nil, "user"); !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("ListEntitlements: got %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var seenMethod, seenPath string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seenMethod, seenPath = r.Method, r.URL.Path
+				w.WriteHeader(tc.status)
+			}))
+			t.Cleanup(server.Close)
+
+			c := New()
+			c.urlOverride = server.URL
+			c.httpClient = func() httpDoer { return server.Client() }
+			c.nowFn = func() time.Time { return time.Date(2026, 5, 9, 8, 0, 0, 0, time.UTC) }
+			err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+				UserExternalID: "u-1", ResourceExternalID: "g-1",
+			})
+			if err != nil {
+				t.Fatalf("RevokeAccess: %v", err)
+			}
+			if seenMethod != http.MethodDelete {
+				t.Fatalf("method = %q", seenMethod)
+			}
+			if seenPath != "/admin/v1/users/u-1/groups/g-1" {
+				t.Fatalf("path = %q", seenPath)
+			}
+		})
+	}
+}
+
+func TestRevokeAccess_4xxFailsPermanently(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.urlOverride = server.URL
+	c.httpClient = func() httpDoer { return server.Client() }
+	c.nowFn = func() time.Time { return time.Date(2026, 5, 9, 8, 0, 0, 0, time.UTC) }
+	err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "u-1", ResourceExternalID: "g-1",
+	})
+	if err == nil || !strings.Contains(err.Error(), "400") {
+		t.Fatalf("expected 400, got %v", err)
+	}
+}
+
+func TestListEntitlements_ReturnsGroups(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/admin/v1/users/u-1/groups" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(duoUserGroupsResponse{
+			Stat: "OK",
+			Response: []duoUserGroup{
+				{GroupID: "g-1", Name: "Engineering"},
+				{GroupID: "g-2", Name: "Ops"},
+			},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.urlOverride = server.URL
+	c.httpClient = func() httpDoer { return server.Client() }
+	c.nowFn = func() time.Time { return time.Date(2026, 5, 9, 8, 0, 0, 0, time.UTC) }
+	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "u-1")
+	if err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if len(got) != 2 || got[0].ResourceExternalID != "g-1" || got[1].ResourceExternalID != "g-2" {
+		t.Fatalf("got %+v", got)
+	}
+	if got[0].Source != "direct" || got[0].Role != "Engineering" {
+		t.Fatalf("entitlement[0] = %+v", got[0])
+	}
+}
+
+func TestListEntitlements_4xxReturnsError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.urlOverride = server.URL
+	c.httpClient = func() httpDoer { return server.Client() }
+	c.nowFn = func() time.Time { return time.Date(2026, 5, 9, 8, 0, 0, 0, time.UTC) }
+	if _, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "u-1"); err == nil {
+		t.Fatal("expected error on 401")
 	}
 }
 

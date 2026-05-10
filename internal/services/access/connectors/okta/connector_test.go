@@ -92,16 +92,172 @@ func TestRegistryIntegration(t *testing.T) {
 	}
 }
 
-func TestStubsReturnErrNotImplemented(t *testing.T) {
+func TestProvisionAccess_AssignsAppUser(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+	}{
+		{"created", http.StatusOK},
+		{"conflict_idempotent", http.StatusConflict},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var seenMethod, seenPath string
+			var seenBody []byte
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seenMethod, seenPath = r.Method, r.URL.Path
+				body := make([]byte, r.ContentLength)
+				_, _ = r.Body.Read(body)
+				seenBody = body
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			t.Cleanup(server.Close)
+
+			c := New()
+			c.urlOverride = server.URL
+			c.httpClient = func() httpDoer { return server.Client() }
+
+			err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+				UserExternalID:     "u-1",
+				ResourceExternalID: "app-1",
+				Role:               "Admin",
+			})
+			if err != nil {
+				t.Fatalf("ProvisionAccess: %v", err)
+			}
+			if seenMethod != http.MethodPut {
+				t.Fatalf("method = %q, want PUT", seenMethod)
+			}
+			if seenPath != "/api/v1/apps/app-1/users/u-1" {
+				t.Fatalf("path = %q", seenPath)
+			}
+			var body oktaAppUserAssignment
+			if err := json.Unmarshal(seenBody, &body); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if body.ID != "u-1" || body.Profile["role"] != "Admin" {
+				t.Fatalf("body = %+v", body)
+			}
+		})
+	}
+}
+
+func TestProvisionAccess_4xxFailsPermanently(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(server.Close)
+
 	c := New()
-	if err := c.ProvisionAccess(context.Background(), nil, nil, access.AccessGrant{}); !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("ProvisionAccess: got %v", err)
+	c.urlOverride = server.URL
+	c.httpClient = func() httpDoer { return server.Client() }
+	err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "u-1", ResourceExternalID: "app-1", Role: "Admin",
+	})
+	if err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("expected 403 error, got %v", err)
 	}
-	if err := c.RevokeAccess(context.Background(), nil, nil, access.AccessGrant{}); !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("RevokeAccess: got %v", err)
+}
+
+func TestRevokeAccess_DeletesAppUser(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+	}{
+		{"deleted", http.StatusNoContent},
+		{"not_found_idempotent", http.StatusNotFound},
 	}
-	if _, err := c.ListEntitlements(context.Background(), nil, nil, "user"); !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("ListEntitlements: got %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var seenMethod, seenPath string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seenMethod, seenPath = r.Method, r.URL.Path
+				w.WriteHeader(tc.status)
+			}))
+			t.Cleanup(server.Close)
+
+			c := New()
+			c.urlOverride = server.URL
+			c.httpClient = func() httpDoer { return server.Client() }
+			err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+				UserExternalID: "u-1", ResourceExternalID: "app-1", Role: "Admin",
+			})
+			if err != nil {
+				t.Fatalf("RevokeAccess: %v", err)
+			}
+			if seenMethod != http.MethodDelete {
+				t.Fatalf("method = %q, want DELETE", seenMethod)
+			}
+			if seenPath != "/api/v1/apps/app-1/users/u-1" {
+				t.Fatalf("path = %q", seenPath)
+			}
+		})
+	}
+}
+
+func TestRevokeAccess_4xxFailsPermanently(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.urlOverride = server.URL
+	c.httpClient = func() httpDoer { return server.Client() }
+	err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "u-1", ResourceExternalID: "app-1", Role: "Admin",
+	})
+	if err == nil || !strings.Contains(err.Error(), "400") {
+		t.Fatalf("expected 400 error, got %v", err)
+	}
+}
+
+func TestListEntitlements_PagesAppLinks(t *testing.T) {
+	hits := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		if !strings.HasPrefix(r.URL.Path, "/api/v1/users/u-1/appLinks") {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		if r.URL.Query().Get("after") == "" {
+			w.Header().Set("Link", `<https://uney.okta.com/api/v1/users/u-1/appLinks?after=p2>; rel="next"`)
+			_ = json.NewEncoder(w).Encode([]oktaAppLink{{AppInstanceID: "app-1", AppName: "Salesforce", Label: "Salesforce Prod"}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]oktaAppLink{{AppInstanceID: "app-2", AppName: "Slack", Label: "Slack"}})
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.urlOverride = server.URL
+	c.httpClient = func() httpDoer { return server.Client() }
+	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "u-1")
+	if err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if hits != 2 {
+		t.Fatalf("expected 2 page requests, got %d", hits)
+	}
+	if len(got) != 2 || got[0].ResourceExternalID != "app-1" || got[1].ResourceExternalID != "app-2" {
+		t.Fatalf("got = %+v", got)
+	}
+	if got[0].Role != "Salesforce Prod" || got[0].Source != "direct" {
+		t.Fatalf("entitlement[0] = %+v", got[0])
+	}
+}
+
+func TestListEntitlements_4xxReturnsError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.urlOverride = server.URL
+	c.httpClient = func() httpDoer { return server.Client() }
+	if _, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "u-1"); err == nil {
+		t.Fatal("expected error on 401")
 	}
 }
 
