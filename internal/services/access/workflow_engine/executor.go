@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -97,12 +98,15 @@ type StepPerformer interface {
 // Each step type is implemented as a method on the executor returning
 // (StepDecision, error) — see step_*.go in the same package.
 type WorkflowExecutor struct {
-	db                 *gorm.DB
-	performer          StepPerformer
-	retryPolicy        RetryPolicy
-	sleep              func(time.Duration)
-	stepHistoryChecked bool
-	stepHistoryOK      bool
+	db          *gorm.DB
+	performer   StepPerformer
+	retryPolicy RetryPolicy
+	sleep       func(time.Duration)
+	// stepHistoryOnce guards the lazy HasTable probe in
+	// stepHistoryAvailable so concurrent Execute calls don't race on
+	// stepHistoryOK. Initialised once and read freely thereafter.
+	stepHistoryOnce sync.Once
+	stepHistoryOK   bool
 }
 
 // NewWorkflowExecutor returns an executor backed by db and performer.

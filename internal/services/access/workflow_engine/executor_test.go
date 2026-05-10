@@ -26,8 +26,8 @@ func newTestDB(t *testing.T) *gorm.DB {
 }
 
 type recordingPerformer struct {
-	approves  int
-	pendings  []string
+	approves    int
+	pendings    []string
 	failApprove error
 	failPending error
 }

@@ -258,11 +258,9 @@ func (e *WorkflowExecutor) stepHistoryAvailable() bool {
 	if e == nil || e.db == nil {
 		return false
 	}
-	if e.stepHistoryChecked {
-		return e.stepHistoryOK
-	}
-	e.stepHistoryChecked = true
-	e.stepHistoryOK = e.db.Migrator().HasTable(&models.AccessWorkflowStepHistory{})
+	e.stepHistoryOnce.Do(func() {
+		e.stepHistoryOK = e.db.Migrator().HasTable(&models.AccessWorkflowStepHistory{})
+	})
 	return e.stepHistoryOK
 }
 
