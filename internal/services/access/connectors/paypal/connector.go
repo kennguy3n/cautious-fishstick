@@ -216,7 +216,7 @@ func (c *PayPalAccessConnector) Connect(ctx context.Context, configRaw, secretsR
 	if err != nil {
 		return fmt.Errorf("paypal: connect oauth2: %w", err)
 	}
-	probe := fmt.Sprintf("%s/v1/customer/partners/%s/merchant-integrations?page=1&page_size=1", c.baseURL(cfg), strings.TrimSpace(cfg.PartnerID))
+	probe := fmt.Sprintf("%s/v1/customer/partners/%s/merchant-integrations?page=1&page_size=1", c.baseURL(cfg), url.PathEscape(strings.TrimSpace(cfg.PartnerID)))
 	req, err := c.newRequest(ctx, token, http.MethodGet, probe)
 	if err != nil {
 		return err
@@ -285,7 +285,7 @@ func (c *PayPalAccessConnector) SyncIdentities(
 	}
 	base := c.baseURL(cfg)
 	for {
-		path := fmt.Sprintf("%s/v1/customer/partners/%s/merchant-integrations?page=%d&page_size=%d", base, strings.TrimSpace(cfg.PartnerID), page, pageSize)
+		path := fmt.Sprintf("%s/v1/customer/partners/%s/merchant-integrations?page=%d&page_size=%d", base, url.PathEscape(strings.TrimSpace(cfg.PartnerID)), page, pageSize)
 		req, err := c.newRequest(ctx, token, http.MethodGet, path)
 		if err != nil {
 			return err

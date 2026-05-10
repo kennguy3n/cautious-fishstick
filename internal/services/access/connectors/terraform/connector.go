@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -153,7 +154,7 @@ func (c *TerraformAccessConnector) Connect(ctx context.Context, configRaw, secre
 	if err != nil {
 		return err
 	}
-	probe := fmt.Sprintf("%s/api/v2/organizations/%s/organization-memberships?page%%5Bnumber%%5D=1&page%%5Bsize%%5D=1", c.baseURL(), strings.TrimSpace(cfg.Organization))
+	probe := fmt.Sprintf("%s/api/v2/organizations/%s/organization-memberships?page%%5Bnumber%%5D=1&page%%5Bsize%%5D=1", c.baseURL(), url.PathEscape(strings.TrimSpace(cfg.Organization)))
 	req, err := c.newRequest(ctx, secrets, http.MethodGet, probe)
 	if err != nil {
 		return err
@@ -242,7 +243,7 @@ func (c *TerraformAccessConnector) SyncIdentities(
 	base := c.baseURL()
 	for {
 		path := fmt.Sprintf("%s/api/v2/organizations/%s/organization-memberships?page%%5Bnumber%%5D=%d&page%%5Bsize%%5D=%d&include=user",
-			base, strings.TrimSpace(cfg.Organization), page, pageSize)
+			base, url.PathEscape(strings.TrimSpace(cfg.Organization)), page, pageSize)
 		req, err := c.newRequest(ctx, secrets, http.MethodGet, path)
 		if err != nil {
 			return err

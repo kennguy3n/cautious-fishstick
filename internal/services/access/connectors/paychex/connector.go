@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -149,7 +150,7 @@ func (c *PaychexAccessConnector) decodeBoth(configRaw, secretsRaw map[string]int
 }
 
 func (c *PaychexAccessConnector) workersURL(cfg Config, offset, limit int) string {
-	return fmt.Sprintf("%s/companies/%s/workers?offset=%d&limit=%d", c.baseURL(), strings.TrimSpace(cfg.CompanyID), offset, limit)
+	return fmt.Sprintf("%s/companies/%s/workers?offset=%d&limit=%d", c.baseURL(), url.PathEscape(strings.TrimSpace(cfg.CompanyID)), offset, limit)
 }
 
 func (c *PaychexAccessConnector) Connect(ctx context.Context, configRaw, secretsRaw map[string]interface{}) error {

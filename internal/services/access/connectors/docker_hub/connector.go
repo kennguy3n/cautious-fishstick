@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -130,7 +131,7 @@ func (c *DockerHubAccessConnector) login(ctx context.Context, secrets Secrets) (
 	req.Header.Set("Accept", "application/json")
 	resp, err := c.client().Do(req)
 	if err != nil {
-		return "", fmt.Errorf("docker_hub: login network error")
+		return "", fmt.Errorf("docker_hub: login: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -251,12 +252,12 @@ func (c *DockerHubAccessConnector) SyncIdentities(
 		return err
 	}
 	base := c.baseURL()
-	url := checkpoint
-	if url == "" {
-		url = fmt.Sprintf("%s/v2/orgs/%s/members?page=1&page_size=%d", base, strings.TrimSpace(cfg.Organization), pageSize)
+	nextURL := checkpoint
+	if nextURL == "" {
+		nextURL = fmt.Sprintf("%s/v2/orgs/%s/members?page=1&page_size=%d", base, url.PathEscape(strings.TrimSpace(cfg.Organization)), pageSize)
 	}
 	for {
-		req, err := c.newRequest(ctx, token, http.MethodGet, url)
+		req, err := c.newRequest(ctx, token, http.MethodGet, nextURL)
 		if err != nil {
 			return err
 		}
@@ -294,7 +295,7 @@ func (c *DockerHubAccessConnector) SyncIdentities(
 		if next == "" {
 			return nil
 		}
-		url = next
+		nextURL = next
 	}
 }
 
