@@ -283,7 +283,7 @@ func (c *SageIntacctAccessConnector) SyncIdentities(
 				display = strings.TrimSpace(u.UserID)
 			}
 			status := "active"
-			if !strings.EqualFold(strings.TrimSpace(u.Status), "active") {
+			if u.Status != "" && !strings.EqualFold(strings.TrimSpace(u.Status), "active") {
 				status = "inactive"
 			}
 			extID := strings.TrimSpace(u.UserID)
