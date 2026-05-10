@@ -286,10 +286,15 @@ func (c *GorgiasAccessConnector) SyncIdentities(
 				RawData:     map[string]interface{}{"role": u.Role},
 			})
 		}
+		// Emit the checkpoint that matches the page the loop will fetch
+		// next. Using the local `page+1` instead of the API-reported
+		// `resp.Meta.NextPage` keeps the persisted checkpoint in lock-step
+		// with the loop's own cursor, so a caller who persists the
+		// checkpoint and resumes will not skip pages if the API ever
+		// reports a NextPage that disagrees with the natural successor.
+		hasMore := (resp.Meta.NextPage > 0 && len(resp.Data) > 0) || len(resp.Data) == pageSize
 		next := ""
-		if resp.Meta.NextPage > 0 && len(resp.Data) > 0 {
-			next = fmt.Sprintf("%d", resp.Meta.NextPage)
-		} else if len(resp.Data) == pageSize {
+		if hasMore {
 			next = fmt.Sprintf("%d", page+1)
 		}
 		if err := handler(identities, next); err != nil {

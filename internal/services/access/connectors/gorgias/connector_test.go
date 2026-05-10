@@ -131,6 +131,53 @@ func TestConnect_Failure(t *testing.T) {
 	}
 }
 
+// TestSync_CheckpointTracksLocalCursor verifies that the checkpoint emitted to
+// the handler always corresponds to the page the loop will fetch next (i.e.
+// page+1) — never the API's reported `meta.next_page` value, which can
+// disagree and would otherwise cause page skipping on resume.
+func TestSync_CheckpointTracksLocalCursor(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		body := map[string]interface{}{}
+		items := make([]map[string]interface{}, 0, pageSize)
+		for i := 0; i < pageSize; i++ {
+			items = append(items, map[string]interface{}{"id": i, "firstname": "U", "lastname": page, "email": fmt.Sprintf("u%s@x.com", page), "active": true})
+		}
+		body["data"] = items
+		// Server reports a wildly out-of-band next_page on page 1 so we
+		// can prove the connector ignores it for checkpoint emission.
+		if page == "1" {
+			body["meta"] = map[string]interface{}{"next_page": 99}
+		} else {
+			body["data"] = []map[string]interface{}{}
+			body["meta"] = map[string]interface{}{"next_page": 0}
+		}
+		b, _ := json.Marshal(body)
+		_, _ = w.Write(b)
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	var seen []string
+	err := c.SyncIdentities(context.Background(), validConfig(), validSecrets(), "", func(_ []*access.Identity, next string) error {
+		seen = append(seen, next)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(seen) != 2 {
+		t.Fatalf("emitted %d checkpoints, want 2: %v", len(seen), seen)
+	}
+	if seen[0] != "2" {
+		t.Errorf("checkpoint after page 1 = %q, want %q (local cursor, not API next_page=99)", seen[0], "2")
+	}
+	if seen[1] != "" {
+		t.Errorf("final checkpoint = %q, want empty", seen[1])
+	}
+}
+
 func TestGetCredentialsMetadata_RedactsToken(t *testing.T) {
 	md, err := New().GetCredentialsMetadata(context.Background(), validConfig(), validSecrets())
 	if err != nil {

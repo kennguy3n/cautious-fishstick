@@ -116,6 +116,47 @@ func TestConnect_Failure(t *testing.T) {
 	}
 }
 
+func TestValidate_RejectsBadEndpoint(t *testing.T) {
+	c := New()
+	bad := map[string]string{
+		"http scheme":      "http://api.travis-ci.com",
+		"empty scheme":     "api.travis-ci.com",
+		"file scheme":      "file:///etc/passwd",
+		"ip literal":       "https://169.254.169.254",
+		"v6 ip literal":    "https://[::1]",
+		"with userinfo":    "https://attacker@api.travis-ci.com",
+		"with path":        "https://api.travis-ci.com/internal",
+		"with query":       "https://api.travis-ci.com?x=1",
+		"with fragment":    "https://api.travis-ci.com#frag",
+		"hyphen leading":   "https://-api.travis-ci.com",
+		"underscore label": "https://bad_label.travis-ci.com",
+		"empty host":       "https://",
+		"unparseable":      "https://%zz",
+	}
+	for name, ep := range bad {
+		t.Run(name, func(t *testing.T) {
+			err := c.Validate(context.Background(), map[string]interface{}{"endpoint": ep}, validSecrets())
+			if err == nil {
+				t.Errorf("expected error for endpoint %q", ep)
+			}
+		})
+	}
+}
+
+func TestValidate_AcceptsKnownEndpoints(t *testing.T) {
+	c := New()
+	for _, ep := range []string{
+		"https://api.travis-ci.com",
+		"https://api.travis-ci.com/",
+		"https://api.travis-ci.org",
+		"https://travis.enterprise.example",
+	} {
+		if err := c.Validate(context.Background(), map[string]interface{}{"endpoint": ep}, validSecrets()); err != nil {
+			t.Errorf("Validate(%q): %v", ep, err)
+		}
+	}
+}
+
 func TestGetCredentialsMetadata_RedactsToken(t *testing.T) {
 	md, err := New().GetCredentialsMetadata(context.Background(), validConfig(), validSecrets())
 	if err != nil {

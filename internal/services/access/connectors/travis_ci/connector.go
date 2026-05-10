@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -67,7 +69,72 @@ func DecodeSecrets(raw map[string]interface{}) (Secrets, error) {
 	return s, nil
 }
 
-func (Config) validate() error { return nil }
+func (c Config) validate() error {
+	e := strings.TrimSpace(c.Endpoint)
+	if e == "" {
+		return nil
+	}
+	// Endpoint is interpolated into the request URL where the bearer
+	// token is sent, so an unvalidated value is an SSRF / token-leak
+	// vector. Restrict to https:// URLs whose host is a DNS-shaped
+	// domain (not an IP literal), with no userinfo, path, query, or
+	// fragment. This still supports both the public Travis CI API
+	// (api.travis-ci.com / api.travis-ci.org) and Travis CI Enterprise
+	// installs at customer-controlled domains, while blocking the
+	// classic SSRF target (e.g. http://169.254.169.254/...).
+	u, err := url.Parse(e)
+	if err != nil {
+		return fmt.Errorf("travis_ci: endpoint must be a well-formed URL: %w", err)
+	}
+	if u.Scheme != "https" {
+		return errors.New("travis_ci: endpoint must use https://")
+	}
+	if u.User != nil {
+		return errors.New("travis_ci: endpoint must not contain userinfo")
+	}
+	if u.Path != "" && u.Path != "/" {
+		return errors.New("travis_ci: endpoint must not contain a path")
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("travis_ci: endpoint must not contain a query or fragment")
+	}
+	host := u.Hostname()
+	if host == "" {
+		return errors.New("travis_ci: endpoint must contain a host")
+	}
+	if net.ParseIP(host) != nil {
+		return errors.New("travis_ci: endpoint host must be a domain name, not an IP literal")
+	}
+	if !isHost(host) {
+		return errors.New("travis_ci: endpoint host must contain only DNS label characters and dots")
+	}
+	return nil
+}
+
+func isHost(s string) bool {
+	if s == "" || len(s) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(s, ".") {
+		if label == "" || len(label) > 63 {
+			return false
+		}
+		if label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, r := range label {
+			switch {
+			case r >= 'a' && r <= 'z':
+			case r >= 'A' && r <= 'Z':
+			case r >= '0' && r <= '9':
+			case r == '-':
+			default:
+				return false
+			}
+		}
+	}
+	return true
+}
 
 func (s Secrets) validate() error {
 	if strings.TrimSpace(s.Token) == "" {
