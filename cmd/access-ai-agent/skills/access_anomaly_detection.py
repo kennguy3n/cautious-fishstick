@@ -15,6 +15,8 @@ import logging
 from statistics import mean, pstdev
 from typing import Any, Dict, Iterable, List
 
+from .access_risk_assessment import PRIVILEGED_ROLES
+
 
 logger = logging.getLogger(__name__)
 
@@ -112,8 +114,12 @@ def run(payload: Dict[str, Any]) -> Dict[str, Any]:
     # Unused high-privilege grant: a grant with privileged role and
     # a stale signal. Higher severity than plain stale_grant since
     # the blast radius is larger.
+    # Use the canonical PRIVILEGED_ROLES set from access_risk_assessment so
+    # the two skills agree on what counts as privileged (covers admin,
+    # owner, root, superuser, domain_admin).
+    role = str(payload.get("role", "")).lower()
     is_privileged = bool(payload.get("is_privileged")) or any(
-        a["kind"] == "stale_grant" and (payload.get("role", "") in {"admin", "owner", "root"}) for a in anomalies
+        a["kind"] == "stale_grant" and role in PRIVILEGED_ROLES for a in anomalies
     )
     if is_privileged and any(a["kind"] == "stale_grant" for a in anomalies):
         anomalies.append({
