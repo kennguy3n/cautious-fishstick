@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -104,14 +105,17 @@ func (c *PersonioAccessConnector) client() httpDoer {
 }
 
 func (c *PersonioAccessConnector) authToken(ctx context.Context, secrets Secrets) (string, error) {
-	body := strings.NewReader(fmt.Sprintf("client_id=%s&client_secret=%s",
-		strings.TrimSpace(secrets.ClientID), strings.TrimSpace(secrets.ClientSecret)))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/v1/auth", body)
+	form := url.Values{}
+	form.Set("client_id", strings.TrimSpace(secrets.ClientID))
+	form.Set("client_secret", strings.TrimSpace(secrets.ClientSecret))
+	encoded := form.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/v1/auth", strings.NewReader(encoded))
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.ContentLength = int64(len(encoded))
 	resp, err := c.client().Do(req)
 	if err != nil {
 		return "", fmt.Errorf("personio: auth: network error")

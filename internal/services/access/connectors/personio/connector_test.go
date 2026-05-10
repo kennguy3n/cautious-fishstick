@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -128,6 +130,70 @@ func TestConnect_Failure(t *testing.T) {
 	c.httpClient = func() httpDoer { return srv.Client() }
 	if err := c.Connect(context.Background(), validConfig(), validSecrets()); err == nil || !strings.Contains(err.Error(), "401") {
 		t.Errorf("Connect err = %v; want 401", err)
+	}
+}
+
+// TestAuthToken_PercentEncodesSpecialCharacters guards against regressions in
+// the OAuth2 token-exchange form body. Personio (and most OAuth2 providers)
+// issue client secrets that may contain `&`, `=`, `+`, `%`, or whitespace; if
+// the body is built with naive string interpolation those characters will
+// either split into bogus form fields or mangle the secret on the wire,
+// causing silent auth failures. The connector MUST percent-encode the
+// credentials.
+func TestAuthToken_PercentEncodesSpecialCharacters(t *testing.T) {
+	const (
+		rawClientID     = "client id with spaces"
+		rawClientSecret = "abc&def=123+xyz%foo"
+	)
+	var captured string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/auth" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/x-www-form-urlencoded" {
+			t.Errorf("Content-Type = %q", got)
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		captured = string(body)
+		_, _ = w.Write([]byte(`{"success":true,"data":{"token":"tk-1"}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+
+	tok, err := c.authToken(context.Background(), Secrets{
+		ClientID:     rawClientID,
+		ClientSecret: rawClientSecret,
+	})
+	if err != nil {
+		t.Fatalf("authToken: %v", err)
+	}
+	if tok != "tk-1" {
+		t.Fatalf("token = %q", tok)
+	}
+
+	parsed, err := url.ParseQuery(captured)
+	if err != nil {
+		t.Fatalf("ParseQuery(%q): %v", captured, err)
+	}
+	if got := parsed.Get("client_id"); got != rawClientID {
+		t.Errorf("decoded client_id = %q; want %q", got, rawClientID)
+	}
+	if got := parsed.Get("client_secret"); got != rawClientSecret {
+		t.Errorf("decoded client_secret = %q; want %q", got, rawClientSecret)
+	}
+	if len(parsed) != 2 {
+		t.Errorf("parsed form had %d fields; want 2 (raw body = %q)", len(parsed), captured)
+	}
+	// Defense-in-depth: the raw body must NOT contain the unescaped secret.
+	if strings.Contains(captured, rawClientSecret) {
+		t.Errorf("raw body %q leaks unescaped client_secret", captured)
 	}
 }
 
