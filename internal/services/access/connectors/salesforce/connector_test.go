@@ -338,3 +338,54 @@ func TestListEntitlements_QuoteInUserIDDoesNotInjectSOQL(t *testing.T) {
 		t.Fatalf("expected escaped literal in SOQL; got: %s", capturedQuery)
 	}
 }
+
+// TestRevokeAccess_QueryErrorPropagates is a regression test for the bug
+// where RevokeAccess silently returned nil when the SOQL lookup query
+// failed (5xx, auth failure, network drop). The lookup error must surface
+// to the caller so the worker can retry per PROPOSAL.md §2.1 — a 5xx on
+// the lookup is NOT the same as "no matching assignment", which is the
+// legitimate idempotency case handled by len(Records) == 0.
+func TestRevokeAccess_QueryErrorPropagates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Only the SOQL query is issued; respond 500 so the worker sees
+		// a retriable error rather than a fake success.
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"internal error"}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{UserExternalID: "uid-1", ResourceExternalID: "ps-1"})
+	if err == nil {
+		t.Fatal("RevokeAccess returned nil on a 500 SOQL query; want error")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("err = %v; want it to surface the 500 status", err)
+	}
+	if !strings.Contains(err.Error(), "revoke query") {
+		t.Errorf("err = %v; want the wrapped %q prefix", err, "revoke query")
+	}
+}
+
+// TestRevokeAccess_QueryAuthErrorPropagates exercises a 401 on the SOQL
+// lookup — same shape as the 5xx case above. Without this fix a stale
+// access token would mark the revoke as successful when nothing was
+// actually deleted.
+func TestRevokeAccess_QueryAuthErrorPropagates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"errorCode":"INVALID_SESSION_ID"}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{UserExternalID: "uid-1", ResourceExternalID: "ps-1"})
+	if err == nil {
+		t.Fatal("RevokeAccess returned nil on a 401 SOQL query; want error")
+	}
+	if !strings.Contains(err.Error(), "401") {
+		t.Errorf("err = %v; want it to surface the 401 status", err)
+	}
+}

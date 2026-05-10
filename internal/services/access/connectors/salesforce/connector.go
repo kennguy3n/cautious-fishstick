@@ -335,12 +335,15 @@ func (c *SalesforceAccessConnector) RevokeAccess(
 	}
 	body, err := c.do(req)
 	if err != nil {
-		return nil
+		return fmt.Errorf("salesforce: revoke query: %w", err)
 	}
 	var result struct {
 		Records []struct{ ID string `json:"Id"` } `json:"records"`
 	}
-	if json.Unmarshal(body, &result) != nil || len(result.Records) == 0 {
+	if err := json.Unmarshal(body, &result); err != nil {
+		return fmt.Errorf("salesforce: decode revoke query: %w", err)
+	}
+	if len(result.Records) == 0 {
 		return nil
 	}
 	delURL := c.instanceURL(configRaw) + "/services/data/v59.0/sobjects/PermissionSetAssignment/" + result.Records[0].ID

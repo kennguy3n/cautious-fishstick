@@ -230,6 +230,10 @@ func TestProvisionAccess_Failure(t *testing.T) {
 
 func TestRevokeAccess_HappyPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "per_page=") {
+			_, _ = w.Write([]byte(`{"success":true,"result":[{"id":"m-abc","status":"accepted","user":{"id":"u-1","email":"user@example.com"}}],"result_info":{"page":1,"per_page":50,"total_pages":1,"total_count":1,"count":1}}`))
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(srv.Close)
@@ -243,7 +247,13 @@ func TestRevokeAccess_HappyPath(t *testing.T) {
 }
 
 func TestRevokeAccess_Idempotent(t *testing.T) {
+	// Empty member list — the email is not present, so the revoke is a
+	// no-op success (idempotent contract for 404/not-found).
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "per_page=") {
+			_, _ = w.Write([]byte(`{"success":true,"result":[],"result_info":{"page":1,"per_page":50,"total_pages":1,"total_count":0,"count":0}}`))
+			return
+		}
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	t.Cleanup(srv.Close)
@@ -258,6 +268,10 @@ func TestRevokeAccess_Idempotent(t *testing.T) {
 
 func TestRevokeAccess_Failure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "per_page=") {
+			_, _ = w.Write([]byte(`{"success":true,"result":[{"id":"m-abc","status":"accepted","user":{"id":"u-1","email":"user@example.com"}}],"result_info":{"page":1,"per_page":50,"total_pages":1,"total_count":1,"count":1}}`))
+			return
+		}
 		w.WriteHeader(http.StatusForbidden)
 	}))
 	t.Cleanup(srv.Close)
@@ -270,13 +284,17 @@ func TestRevokeAccess_Failure(t *testing.T) {
 
 func TestListEntitlements_HappyPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "per_page=") {
+			_, _ = w.Write([]byte(`{"success":true,"result":[{"id":"m-abc","status":"accepted","user":{"id":"u-1","email":"u-1@example.com"}}],"result_info":{"page":1,"per_page":50,"total_pages":1,"total_count":1,"count":1}}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"result":{"roles":[{"id":"r1","name":"Admin"}]}}`))
 	}))
 	t.Cleanup(srv.Close)
 	c := New()
 	c.urlOverride = srv.URL
 	c.httpClient = func() httpDoer { return srv.Client() }
-	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "u-1")
+	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "u-1@example.com")
 	if err != nil {
 		t.Fatalf("ListEntitlements: %v", err)
 	}
@@ -285,13 +303,17 @@ func TestListEntitlements_HappyPath(t *testing.T) {
 
 func TestListEntitlements_Empty(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "per_page=") {
+			_, _ = w.Write([]byte(`{"success":true,"result":[{"id":"m-abc","status":"accepted","user":{"id":"u-1","email":"u-1@example.com"}}],"result_info":{"page":1,"per_page":50,"total_pages":1,"total_count":1,"count":1}}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"result":{"roles":[]}}`))
 	}))
 	t.Cleanup(srv.Close)
 	c := New()
 	c.urlOverride = srv.URL
 	c.httpClient = func() httpDoer { return srv.Client() }
-	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "u-1")
+	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "u-1@example.com")
 	if err != nil {
 		t.Fatalf("ListEntitlements: %v", err)
 	}
@@ -345,12 +367,17 @@ func TestProvisionAccess_LegacyAPIKeyAuth(t *testing.T) {
 }
 
 // TestRevokeAccess_LegacyAPIKeyAuth mirrors the regression test for the
-// DELETE path.
+// DELETE path. The legacy headers must fire on BOTH the /members?
+// lookup and the /members/{id} DELETE.
 func TestRevokeAccess_LegacyAPIKeyAuth(t *testing.T) {
 	var gotEmail, gotKey string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotEmail = r.Header.Get("X-Auth-Email")
 		gotKey = r.Header.Get("X-Auth-Key")
+		if r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "per_page=") {
+			_, _ = w.Write([]byte(`{"success":true,"result":[{"id":"m-abc","status":"accepted","user":{"id":"u-1","email":"user@example.com"}}],"result_info":{"page":1,"per_page":50,"total_pages":1,"total_count":1,"count":1}}`))
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(srv.Close)
@@ -363,5 +390,204 @@ func TestRevokeAccess_LegacyAPIKeyAuth(t *testing.T) {
 	}
 	if gotEmail != "admin@example.com" || gotKey != "legacy-key-xyz" {
 		t.Errorf("legacy headers wrong: email=%q key=%q", gotEmail, gotKey)
+	}
+}
+
+// TestSyncIdentities_StoresEmailAsExternalID locks in the Option-2 fix
+// for the three-way UserExternalID semantics mismatch. The Cloudflare
+// Add-Account-Member API takes an email in the body; the per-member
+// CRUD endpoints take a member-ID (distinct from user.id) in the URL.
+// Storing email as ExternalID is what makes ProvisionAccess work
+// directly and lets RevokeAccess / ListEntitlements resolve the
+// member-ID via findMemberIDByEmail.
+func TestSyncIdentities_StoresEmailAsExternalID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"success": true,
+			"result": [{"id":"member-abc","status":"accepted","user":{"id":"user-uuid-xyz","email":"alice@example.com"}}],
+			"result_info": {"page":1,"per_page":50,"total_pages":1,"total_count":1,"count":1}
+		}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+
+	var got []*access.Identity
+	err := c.SyncIdentities(context.Background(), validConfig(), validSecrets(), "", func(batch []*access.Identity, next string) error {
+		got = append(got, batch...)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("SyncIdentities: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len(got) = %d; want 1", len(got))
+	}
+	if got[0].ExternalID != "alice@example.com" {
+		t.Errorf("ExternalID = %q; want %q (email, NOT user.id, per Option-2 fix)", got[0].ExternalID, "alice@example.com")
+	}
+	if got[0].ExternalID == "user-uuid-xyz" {
+		t.Errorf("ExternalID is still the user UUID — Option-2 fix did not land")
+	}
+	if got[0].Email != "alice@example.com" {
+		t.Errorf("Email = %q; want alice@example.com", got[0].Email)
+	}
+}
+
+// TestRevokeAccess_ResolvesMemberIDFromEmail verifies the two-call
+// shape introduced by the Option-2 fix: a paginated GET on /members?
+// to find the member whose user.email matches grant.UserExternalID,
+// followed by a DELETE on /members/{member_id}. The member-ID must
+// come from the lookup response, NOT from grant.UserExternalID.
+func TestRevokeAccess_ResolvesMemberIDFromEmail(t *testing.T) {
+	var deleteURL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "per_page=") {
+			_, _ = w.Write([]byte(`{
+				"success": true,
+				"result": [
+					{"id":"member-other","status":"accepted","user":{"id":"u-x","email":"other@example.com"}},
+					{"id":"member-target-id-xyz","status":"accepted","user":{"id":"u-1","email":"alice@example.com"}}
+				],
+				"result_info": {"page":1,"per_page":50,"total_pages":1,"total_count":2,"count":2}
+			}`))
+			return
+		}
+		deleteURL = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{UserExternalID: "alice@example.com", ResourceExternalID: "role-1"})
+	if err != nil {
+		t.Fatalf("RevokeAccess: %v", err)
+	}
+	if !strings.HasSuffix(deleteURL, "/members/member-target-id-xyz") {
+		t.Errorf("DELETE URL = %q; want suffix /members/member-target-id-xyz (the resolved member-ID, not the email)", deleteURL)
+	}
+	if strings.Contains(deleteURL, "alice@example.com") || strings.Contains(deleteURL, "alice%40example.com") {
+		t.Errorf("DELETE URL = %q; must NOT contain the email — the fix is to use the resolved member-ID", deleteURL)
+	}
+}
+
+// TestRevokeAccess_PaginatesMemberLookup verifies the lookup helper
+// walks every page of /members? until it finds the email or exhausts
+// the result set.
+func TestRevokeAccess_PaginatesMemberLookup(t *testing.T) {
+	var deleteURL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "per_page=") {
+			if strings.Contains(r.URL.RawQuery, "page=1") {
+				_, _ = w.Write([]byte(`{
+					"success": true,
+					"result": [{"id":"member-other","status":"accepted","user":{"id":"u-x","email":"other@example.com"}}],
+					"result_info": {"page":1,"per_page":50,"total_pages":2,"total_count":2,"count":1}
+				}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{
+				"success": true,
+				"result": [{"id":"member-page-2","status":"accepted","user":{"id":"u-1","email":"alice@example.com"}}],
+				"result_info": {"page":2,"per_page":50,"total_pages":2,"total_count":2,"count":1}
+			}`))
+			return
+		}
+		deleteURL = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{UserExternalID: "alice@example.com", ResourceExternalID: "role-1"})
+	if err != nil {
+		t.Fatalf("RevokeAccess: %v", err)
+	}
+	if !strings.HasSuffix(deleteURL, "/members/member-page-2") {
+		t.Errorf("DELETE URL = %q; want suffix /members/member-page-2 (found on page 2)", deleteURL)
+	}
+}
+
+// TestListEntitlements_ResolvesMemberIDFromEmail verifies the same
+// two-call shape for ListEntitlements: lookup the member-ID by email
+// on /members?, then GET /members/{member_id}.
+func TestListEntitlements_ResolvesMemberIDFromEmail(t *testing.T) {
+	var getURL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "per_page=") {
+			_, _ = w.Write([]byte(`{
+				"success": true,
+				"result": [{"id":"member-resolved-id","status":"accepted","user":{"id":"u-1","email":"alice@example.com"}}],
+				"result_info": {"page":1,"per_page":50,"total_pages":1,"total_count":1,"count":1}
+			}`))
+			return
+		}
+		getURL = r.URL.Path
+		_, _ = w.Write([]byte(`{"result":{"roles":[{"id":"r-admin","name":"Admin"}]}}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if len(got) != 1 || got[0].ResourceExternalID != "r-admin" {
+		t.Fatalf("ListEntitlements got = %+v; want one Admin entitlement", got)
+	}
+	if !strings.HasSuffix(getURL, "/members/member-resolved-id") {
+		t.Errorf("GET URL = %q; want suffix /members/member-resolved-id", getURL)
+	}
+}
+
+// TestListEntitlements_EmailNotFoundReturnsEmpty verifies that an
+// unknown email is treated as "no entitlements" rather than an error.
+// This matches the contract where SyncIdentities → ListEntitlements
+// is best-effort: a deleted member shouldn't panic the caller.
+func TestListEntitlements_EmailNotFoundReturnsEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"success": true,
+			"result": [],
+			"result_info": {"page":1,"per_page":50,"total_pages":1,"total_count":0,"count":0}
+		}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "ghost@example.com")
+	if err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %d entitlements; want 0 for unknown email", len(got))
+	}
+}
+
+// TestRevokeAccess_LookupErrorPropagates verifies that a 5xx on the
+// member-lookup call propagates as an error rather than being
+// swallowed (paralleling the Salesforce fix). Without this, a stale
+// API token or a Cloudflare outage during the lookup would make a
+// revoke silently no-op while the platform records it as completed.
+func TestRevokeAccess_LookupErrorPropagates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"errors":[{"message":"internal"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{UserExternalID: "alice@example.com", ResourceExternalID: "role-1"})
+	if err == nil {
+		t.Fatal("RevokeAccess returned nil on 500 lookup; want error")
+	}
+	if !strings.Contains(err.Error(), "member lookup") {
+		t.Errorf("err = %v; want it wrapped with %q", err, "member lookup")
 	}
 }
