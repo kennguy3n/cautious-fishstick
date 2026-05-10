@@ -22,6 +22,8 @@ import (
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/bamboohr"
 
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/basecamp"
+
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/box"
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/circleci"
@@ -32,6 +34,8 @@ import (
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/cloudsigma"
 
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/crisp"
+
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/crowdstrike"
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/datadog"
@@ -40,7 +44,11 @@ import (
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/digitalocean"
 
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/discord"
+
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/docker_hub"
+
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/drift"
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/dropbox"
 
@@ -66,7 +74,11 @@ import (
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/gitlab"
 
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/gong"
+
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/google_workspace"
+
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/gorgias"
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/grafana"
 
@@ -86,11 +98,25 @@ import (
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/jira"
 
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/klaviyo"
+
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/knowbe4"
+
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/lastpass"
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/launchdarkly"
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/linode"
+
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/liquidplanner"
+
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/livechat"
+
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/loom"
+
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/mailchimp"
+
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/mezmo"
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/microsoft"
 
@@ -128,15 +154,21 @@ import (
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/quickbooks"
 
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/quip"
+
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/rippling"
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/salesforce"
+
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/salesloft"
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/sentinelone"
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/sentry"
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/slack"
+
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/slack_enterprise"
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/smartsheet"
 
@@ -148,9 +180,15 @@ import (
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/stripe"
 
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/sumo_logic"
+
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/tailscale"
 
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/teamwork"
+
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/terraform"
+
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/travis_ci"
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/trello"
 
@@ -163,6 +201,8 @@ import (
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/wave"
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/workday"
+
+	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/wrike"
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/xero"
 

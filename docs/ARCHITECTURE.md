@@ -116,6 +116,26 @@ flowchart LR
         NAMELY[namely/]
         PAYPAL[paypal/]
         WAVE[wave/]
+        TRAVISCI[travis_ci/]
+        MEZMO[mezmo/]
+        SUMOLOGIC[sumo_logic/]
+        DRIFT[drift/]
+        CRISP[crisp/]
+        LIVECHAT[livechat/]
+        GORGIAS[gorgias/]
+        LOOM[loom/]
+        DISCORD[discord/]
+        SLACKENT[slack_enterprise/]
+        BASECAMP[basecamp/]
+        QUIP[quip/]
+        WRIKE[wrike/]
+        TEAMWORK[teamwork/]
+        LIQUIDPLANNER[liquidplanner/]
+        KNOWBE4[knowbe4/]
+        GONG[gong/]
+        SALESLOFT[salesloft/]
+        MAILCHIMP[mailchimp/]
+        KLAVIYO[klaviyo/]
         FUTURE[next provider]
     end
 
@@ -203,6 +223,8 @@ Reference points:
 - Phase 7 HR connectors batch B (4 of 4 implemented — minimum capabilities, PR #12): `internal/services/access/connectors/paychex/` (`/companies/{company_id}/workers` with OAuth2 `Authorization: Bearer …` + offset/limit + `content.metadata.pagination.totalItems`), `internal/services/access/connectors/deel/` (`/rest/v2/contracts` with `Authorization: Bearer …` + `page`/`page_size`; workers projected from `contract.worker.{id,first_name,last_name,email}` with dedupe across contracts), `internal/services/access/connectors/zenefits/` (`/core/people` with `Authorization: Bearer …` + `next_url` link pagination on `data.next_url` envelope), `internal/services/access/connectors/namely/` (`/api/v1/profiles` with `Authorization: Bearer …` + `page`/`per_page` + `meta.total_count` + subdomain-derived host).
 - Phase 7 Finance connectors batch B (2 of 2 implemented — minimum capabilities, PR #12): `internal/services/access/connectors/paypal/` (OAuth2 `client_credentials` at `/v1/oauth2/token` with HTTP Basic `client_id:client_secret`, then `/v1/customer/partners/{partner_id}/merchant-integrations` with `page`/`page_size` + `total_items`; merchants modelled as `IdentityTypeServiceAccount`, `payments_receivable=false` ⇒ `restricted`), `internal/services/access/connectors/wave/` (Wave Financial GraphQL POST `/graphql/public` with `Authorization: Bearer …`; `businesses(first, after)` connection with `pageInfo.endCursor` / `hasNextPage` cursor; `IdentityTypeServiceAccount` mapping + `isArchived` / `isActive` status).
 - Phase 7 Tier 3 SaaS connectors batch B (4 of 4 implemented — minimum capabilities, PR #11): `internal/services/access/connectors/smartsheet/` (`/2.0/users` with `Authorization: Bearer …` + page/pageSize/totalPages pagination), `internal/services/access/connectors/clickup/` (`/api/v2/team/{team_id}/member` with raw API token in `Authorization` header), `internal/services/access/connectors/dropbox/` (POST `/2/team/members/list_v2` then `/2/team/members/list/continue_v2` with `has_more`/`cursor` + `Authorization: Bearer …` + Dropbox Business SAML metadata at `https://www.dropbox.com/saml_login/metadata`), `internal/services/access/connectors/box/` (`/2.0/users?user_type=all` with `Authorization: Bearer …` + offset/limit + `total_count`).
+- Phase 7 Tier 3 completion (16 of 16 implemented — minimum capabilities, PR #14; closes Tier 3 at 55/55): `internal/services/access/connectors/travis_ci/` (`/users` with `Authorization: token …` + offset/limit pagination via `@pagination`), `internal/services/access/connectors/mezmo/` (`/v1/config/members` with `Authorization: servicekey …` — single-page), `internal/services/access/connectors/sumo_logic/` (`/api/v1/users` with HTTP Basic `accessId:accessKey` + offset/limit + `X-Sumo-Client` header + deployment-based host routing using `isDNSLabel` validation), `internal/services/access/connectors/drift/` (`/v1/users/list` with OAuth2 `Authorization: Bearer …` — single-page), `internal/services/access/connectors/crisp/` (`/v1/website/{website_id}/operators/list` with HTTP Basic `identifier:key` + URL-path-escaped website_id), `internal/services/access/connectors/livechat/` (`/v3.5/agents` with PAT `Authorization: Bearer …` + page/page_size pagination), `internal/services/access/connectors/gorgias/` (`/api/users` with HTTP Basic `email:api_key` + page/per_page + `X-Gorgias-Account` header + DNS-label-validated account subdomain), `internal/services/access/connectors/loom/` (`/v1/members` with `Authorization: Bearer …` + `next_cursor` cursor pagination + URL-encoded cursor), `internal/services/access/connectors/discord/` (`/api/v10/guilds/{guild_id}/members` with `Authorization: Bot …` token + `after` snowflake cursor + `limit` param + numeric guild_id validation; bot users projected to `IdentityTypeServiceAccount`), `internal/services/access/connectors/slack_enterprise/` (SCIM `/scim/v2/Users` with `Authorization: Bearer …` + `startIndex`/`count` pagination + `application/scim+json`), `internal/services/access/connectors/basecamp/` (`/people.json` with OAuth2 `Authorization: Bearer …` + numeric account_id + Basecamp-required `User-Agent`), `internal/services/access/connectors/quip/` (`/1/users/contacts` with `Authorization: Bearer …` — single-page), `internal/services/access/connectors/wrike/` (`/api/v4/contacts` with `Authorization: Bearer …` + `nextPageToken` cursor + URL-encoded token + Person/Group identity-type mapping), `internal/services/access/connectors/teamwork/` (`/people.json` with HTTP Basic `api_key:xxx` + page/pageSize pagination), `internal/services/access/connectors/liquidplanner/` (`/api/v1/workspaces/{workspace_id}/members` with `Authorization: Bearer …` + URL-path-escaped numeric workspace_id — single-page), `internal/services/access/connectors/knowbe4/` (`/v1/users` with `Authorization: Bearer …` + page/per_page + region-based host routing with `isDNSLabel` validation + `archived_at` → `archived` status mapping).
+- Phase 7 Tier 4 Sales / Marketing connectors (4 of 50 implemented — minimum capabilities, PR #14; first batch of Tier 4): `internal/services/access/connectors/gong/` (`/v2/users` with HTTP Basic `access_key:secret_key` + cursor `records.cursor` + URL-encoded cursor; both `key_short` and `secret_short` are 4+4-redacted in `GetCredentialsMetadata`), `internal/services/access/connectors/salesloft/` (`/v2/users` with `Authorization: Bearer …` + page/per_page + `metadata.paging.next_page`), `internal/services/access/connectors/mailchimp/` (`/3.0/lists/{list_id}/members` with HTTP Basic `anystring:api_key` + offset/count + datacenter-suffix-based host routing parsed from API-key suffix `…-us12` + URL-path-escaped list_id; alphanumeric list_id validation), `internal/services/access/connectors/klaviyo/` (`/api/accounts/` with `Authorization: Klaviyo-API-Key …` + JSON:API `page[cursor]` pagination extracted from `links.next` + `revision` header pinned; accounts modelled as `IdentityTypeServiceAccount`).
 - Phase 2 request lifecycle (implemented):
   - Request lifecycle FSM: `internal/services/access/request_state_machine.go` (pure logic, mirrors `ztna-business-layer/internal/state_machine/`).
   - `AccessRequestService` (`CreateRequest` / `ApproveRequest` / `DenyRequest` / `CancelRequest`, transactional state-history): `internal/services/access/request_service.go`.
