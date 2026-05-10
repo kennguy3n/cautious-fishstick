@@ -180,7 +180,7 @@ func (c *ShopifyAccessConnector) VerifyPermissions(ctx context.Context, configRa
 }
 
 type shopifyUser struct {
-	ID    string `json:"id"`
+	ID    json.Number `json:"id"`
 	Email string `json:"email"`
 	Name  string `json:"first_name"`
 }
@@ -239,7 +239,7 @@ func (c *ShopifyAccessConnector) SyncIdentities(
 				display = u.Email
 			}
 			identities = append(identities, &access.Identity{
-				ExternalID:  u.ID,
+				ExternalID:  u.ID.String(),
 				Type:        access.IdentityTypeUser,
 				DisplayName: display,
 				Email:       u.Email,

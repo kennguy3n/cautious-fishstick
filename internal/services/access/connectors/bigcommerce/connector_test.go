@@ -63,14 +63,14 @@ func TestSync_PaginatesUsers(t *testing.T) {
 		if calls == 1 {
 			for i := 0; i < pageSize; i++ {
 				arr = append(arr, map[string]interface{}{
-					"id":    fmt.Sprintf("u%d", i),
+					"id":    1000 + i,
 					"email": fmt.Sprintf("u%d@x.com", i),
 					"first_name":  fmt.Sprintf("U%d", i),
 				})
 			}
 		} else {
 			arr = []map[string]interface{}{{
-				"id":    "ulast",
+				"id":    9999,
 				"email": "last@x.com",
 				"first_name":  "Last",
 			}}

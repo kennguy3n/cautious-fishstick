@@ -177,7 +177,7 @@ func (c *WordPressAccessConnector) VerifyPermissions(ctx context.Context, config
 }
 
 type wordpressUser struct {
-	ID    string `json:"ID"`
+	ID    json.Number `json:"ID"`
 	Email string `json:"email"`
 	Name  string `json:"name"`
 }
@@ -239,7 +239,7 @@ func (c *WordPressAccessConnector) SyncIdentities(
 				display = u.Email
 			}
 			identities = append(identities, &access.Identity{
-				ExternalID:  u.ID,
+				ExternalID:  u.ID.String(),
 				Type:        access.IdentityTypeUser,
 				DisplayName: display,
 				Email:       u.Email,

@@ -194,9 +194,9 @@ func (c *MagentoAccessConnector) VerifyPermissions(ctx context.Context, configRa
 }
 
 type magentoUser struct {
-	ID    string `json:"id"`
-	Email string `json:"email"`
-	Name  string `json:"firstname"`
+	ID    json.Number `json:"id"`
+	Email string      `json:"email"`
+	Name  string      `json:"firstname"`
 }
 
 type magentoListResponse struct {
@@ -257,7 +257,7 @@ func (c *MagentoAccessConnector) SyncIdentities(
 				display = u.Email
 			}
 			identities = append(identities, &access.Identity{
-				ExternalID:  u.ID,
+				ExternalID:  u.ID.String(),
 				Type:        access.IdentityTypeUser,
 				DisplayName: display,
 				Email:       u.Email,
