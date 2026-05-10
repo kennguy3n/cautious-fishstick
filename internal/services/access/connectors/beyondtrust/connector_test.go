@@ -62,19 +62,23 @@ func TestSync_PaginatesUsers(t *testing.T) {
 		if r.URL.Path != "/api/v1/users" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		page := r.URL.Query().Get("page")
+		offset := r.URL.Query().Get("offset")
+		limit := r.URL.Query().Get("limit")
+		if limit != fmt.Sprintf("%d", pageSize) {
+			t.Errorf("limit = %q; want %d", limit, pageSize)
+		}
 		body := map[string]interface{}{}
 		var arr []map[string]interface{}
 		if calls == 1 {
-			if page != "1" {
-				t.Errorf("page = %q", page)
+			if offset != "0" {
+				t.Errorf("offset = %q; want 0", offset)
 			}
 			for i := 0; i < pageSize; i++ {
 				arr = append(arr, map[string]interface{}{"id": fmt.Sprintf("u%d", i), "email": fmt.Sprintf("u%d@x.com", i), "name": fmt.Sprintf("U%d", i)})
 			}
 		} else {
-			if page != "2" {
-				t.Errorf("page = %q", page)
+			if offset != fmt.Sprintf("%d", pageSize) {
+				t.Errorf("offset = %q; want %d", offset, pageSize)
 			}
 			arr = []map[string]interface{}{{"id": "ulast", "email": "last@x.com", "name": "Last"}}
 		}

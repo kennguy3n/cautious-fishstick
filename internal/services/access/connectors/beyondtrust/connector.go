@@ -148,7 +148,7 @@ func (c *BeyondTrustAccessConnector) Connect(ctx context.Context, configRaw, sec
 		return err
 	}
 	_ = cfg
-	probe := c.baseURL() + "/api/v1/users?page=1&per_page=1"
+	probe := c.baseURL() + "/api/v1/users?offset=0&limit=1"
 	req, err := c.newRequest(ctx, secrets, http.MethodGet, probe)
 	if err != nil {
 		return err
@@ -199,22 +199,21 @@ func (c *BeyondTrustAccessConnector) SyncIdentities(
 	if err != nil {
 		return err
 	}
-	page := 1
+	offset := 0
 	if checkpoint != "" {
-		fmt.Sscanf(checkpoint, "%d", &page)
-		if page < 1 {
-			page = 1
+		fmt.Sscanf(checkpoint, "%d", &offset)
+		if offset < 0 {
+			offset = 0
 		}
 	}
 	_ = cfg
 	base := c.baseURL()
 	for {
 		q := url.Values{
-			"page":     []string{fmt.Sprintf("%d", page)},
-			"per_page":    []string{fmt.Sprintf("%d", pageSize)},
+			"offset": []string{fmt.Sprintf("%d", offset)},
+			"limit":  []string{fmt.Sprintf("%d", pageSize)},
 		}
-	path := base + "/api/v1/users"
-		fullURL := path + "?" + q.Encode()
+		fullURL := base + "/api/v1/users?" + q.Encode()
 		req, err := c.newRequest(ctx, secrets, http.MethodGet, fullURL)
 		if err != nil {
 			return err
@@ -243,7 +242,7 @@ func (c *BeyondTrustAccessConnector) SyncIdentities(
 		}
 		next := ""
 		if len(resp.Items) == pageSize {
-			next = fmt.Sprintf("%d", page+1)
+			next = fmt.Sprintf("%d", offset+pageSize)
 		}
 		if err := handler(identities, next); err != nil {
 			return err
@@ -251,7 +250,7 @@ func (c *BeyondTrustAccessConnector) SyncIdentities(
 		if next == "" {
 			return nil
 		}
-		page++
+		offset += pageSize
 	}
 }
 
