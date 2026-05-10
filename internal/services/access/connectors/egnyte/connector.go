@@ -71,10 +71,31 @@ func DecodeSecrets(raw map[string]interface{}) (Secrets, error) {
 }
 
 func (c Config) validate() error {
-	if strings.TrimSpace(c.Domain) == "" {
+	domain := strings.TrimSpace(c.Domain)
+	if domain == "" {
 		return errors.New("egnyte: domain is required")
 	}
+	if !isDNSLabel(domain) {
+		return errors.New("egnyte: domain must be a single DNS label (letters, digits, hyphen)")
+	}
 	return nil
+}
+
+func isDNSLabel(s string) bool {
+	if s == "" || len(s) > 63 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '-':
+		default:
+			return false
+		}
+	}
+	return s[0] != '-' && s[len(s)-1] != '-'
 }
 
 func (s Secrets) validate() error {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -153,7 +154,7 @@ func (c *SonarCloudAccessConnector) Connect(ctx context.Context, configRaw, secr
 	if err != nil {
 		return err
 	}
-	probe := fmt.Sprintf("%s/api/organizations/search_members?organization=%s&p=1&ps=1", c.baseURL(), strings.TrimSpace(cfg.Organization))
+	probe := fmt.Sprintf("%s/api/organizations/search_members?organization=%s&p=1&ps=1", c.baseURL(), url.QueryEscape(strings.TrimSpace(cfg.Organization)))
 	req, err := c.newRequest(ctx, secrets, http.MethodGet, probe)
 	if err != nil {
 		return err
@@ -218,7 +219,7 @@ func (c *SonarCloudAccessConnector) SyncIdentities(
 	}
 	base := c.baseURL()
 	for {
-		path := fmt.Sprintf("%s/api/organizations/search_members?organization=%s&p=%d&ps=%d", base, strings.TrimSpace(cfg.Organization), page, pageSize)
+		path := fmt.Sprintf("%s/api/organizations/search_members?organization=%s&p=%d&ps=%d", base, url.QueryEscape(strings.TrimSpace(cfg.Organization)), page, pageSize)
 		req, err := c.newRequest(ctx, secrets, http.MethodGet, path)
 		if err != nil {
 			return err

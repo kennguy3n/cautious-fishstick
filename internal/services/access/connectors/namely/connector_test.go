@@ -38,6 +38,15 @@ func TestValidate_RejectsMissing(t *testing.T) {
 	}
 }
 
+func TestValidate_RejectsInvalidSubdomain(t *testing.T) {
+	c := New()
+	for _, bad := range []string{"acme.example", "acme/evil", "acme namely", "-acme", "acme-"} {
+		if err := c.Validate(context.Background(), map[string]interface{}{"subdomain": bad}, validSecrets()); err == nil {
+			t.Errorf("expected error for subdomain %q", bad)
+		}
+	}
+}
+
 func TestValidate_PureLocal(t *testing.T) {
 	prev := http.DefaultTransport
 	http.DefaultTransport = noNetworkRoundTripper{}

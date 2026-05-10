@@ -253,9 +253,14 @@ func (c *NewRelicAccessConnector) SyncIdentities(
 			return err
 		}
 		var (
-			batch    []*access.Identity
-			nextCur  string
+			batch   []*access.Identity
+			nextCur string
 		)
+		// The NerdGraph users connection takes a single $cursor variable
+		// shared across authenticationDomains, so this connector is only
+		// guaranteed correct for organizations with one auth domain. Pick
+		// the first non-empty nextCursor encountered to make pagination
+		// deterministic when more than one domain is returned.
 		for _, dom := range resp.Data.Actor.Organization.UserManagement.AuthenticationDomains.AuthenticationDomains {
 			for _, u := range dom.Users.Users {
 				display := u.Name
@@ -270,7 +275,7 @@ func (c *NewRelicAccessConnector) SyncIdentities(
 					Status:      "active",
 				})
 			}
-			if dom.Users.NextCursor != "" {
+			if nextCur == "" && dom.Users.NextCursor != "" {
 				nextCur = dom.Users.NextCursor
 			}
 		}
