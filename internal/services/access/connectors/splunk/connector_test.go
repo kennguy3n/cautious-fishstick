@@ -1,4 +1,4 @@
-package stripe
+package splunk
 
 import (
 	"context"
@@ -19,8 +19,10 @@ func (noNetworkRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) 
 	return nil, errors.New("network call attempted")
 }
 
-func validConfig() map[string]interface{}  { return map[string]interface{}{} }
-func validSecrets() map[string]interface{} { return map[string]interface{}{"secret_key": "sk_test_AAAA1234bbbbCCCC"} }
+func validConfig() map[string]interface{} {
+	return map[string]interface{}{"base_url": "https://acme.splunkcloud.com:8089"}
+}
+func validSecrets() map[string]interface{} { return map[string]interface{}{"token": "spkAAAA1234bbbbCCCC"} }
 
 func TestValidate_HappyPath(t *testing.T) {
 	if err := New().Validate(context.Background(), validConfig(), validSecrets()); err != nil {
@@ -30,8 +32,11 @@ func TestValidate_HappyPath(t *testing.T) {
 
 func TestValidate_RejectsMissing(t *testing.T) {
 	c := New()
+	if err := c.Validate(context.Background(), map[string]interface{}{}, validSecrets()); err == nil {
+		t.Error("missing base_url")
+	}
 	if err := c.Validate(context.Background(), validConfig(), map[string]interface{}{}); err == nil {
-		t.Error("missing key")
+		t.Error("missing token")
 	}
 }
 
@@ -57,38 +62,28 @@ func TestSync_PaginatesUsers(t *testing.T) {
 		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
 			t.Errorf("expected Bearer auth")
 		}
-		if r.URL.Path != "/v1/accounts" {
-			t.Errorf("path = %q; want /v1/accounts", r.URL.Path)
+		if r.URL.Path != "/services/authentication/users" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		offset := r.URL.Query().Get("offset")
+		body := map[string]interface{}{"entry": []map[string]interface{}{}, "paging": map[string]interface{}{"total": pageSize + 1}}
+		if calls == 1 && offset != "0" {
+			t.Errorf("offset = %q", offset)
+		}
+		if calls == 2 && offset != fmt.Sprintf("%d", pageSize) {
+			t.Errorf("offset = %q", offset)
 		}
 		if calls == 1 {
-			data := []map[string]interface{}{
-				{
-					"id":               "acct_1",
-					"email":            "a@x.com",
-					"business_profile": map[string]interface{}{"name": "Acme Inc."},
-					"charges_enabled":  true,
-					"payouts_enabled":  true,
-				},
-				{
-					"id":               "acct_2",
-					"email":            "b@x.com",
-					"business_profile": map[string]interface{}{"name": "Beta Co."},
-					"charges_enabled":  true,
-					"payouts_enabled":  false,
-				},
+			res := make([]map[string]interface{}, 0, pageSize)
+			for i := 0; i < pageSize; i++ {
+				res = append(res, map[string]interface{}{"name": fmt.Sprintf("user%d", i), "content": map[string]interface{}{"email": fmt.Sprintf("u%d@x.com", i), "realname": fmt.Sprintf("User %d", i), "locked-out": false}})
 			}
-			b, _ := json.Marshal(map[string]interface{}{
-				"object":   "list",
-				"has_more": true,
-				"data":     data,
-			})
-			_, _ = w.Write(b)
-			return
+			body["entry"] = res
+		} else {
+			body["entry"] = []map[string]interface{}{{"name": "lockout", "content": map[string]interface{}{"email": "lock@x.com", "realname": "Locked", "locked-out": true}}}
 		}
-		if r.URL.Query().Get("starting_after") != "acct_2" {
-			t.Errorf("starting_after = %q", r.URL.Query().Get("starting_after"))
-		}
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"object":"list","has_more":false,"data":[{"id":"acct_3","email":"c@x.com","charges_enabled":true,"payouts_enabled":true}]}`)))
+		b, _ := json.Marshal(body)
+		_, _ = w.Write(b)
 	}))
 	t.Cleanup(srv.Close)
 	c := New()
@@ -102,25 +97,14 @@ func TestSync_PaginatesUsers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	if len(got) != 3 {
+	if len(got) != pageSize+1 {
 		t.Fatalf("len = %d", len(got))
 	}
 	if calls != 2 {
 		t.Fatalf("calls = %d", calls)
 	}
-	for _, id := range got {
-		if id.Type != access.IdentityTypeServiceAccount {
-			t.Errorf("identity %q type = %q; want service_account (Stripe Connect accounts are merchant businesses, not human users)", id.ExternalID, id.Type)
-		}
-	}
-	if got[0].DisplayName != "Acme Inc." {
-		t.Errorf("acct_1 display = %q; want Acme Inc.", got[0].DisplayName)
-	}
-	if got[1].Status != "restricted" {
-		t.Errorf("acct_2 status = %q; want restricted (payouts_enabled=false)", got[1].Status)
-	}
-	if got[2].Status != "active" {
-		t.Errorf("acct_3 status = %q; want active", got[2].Status)
+	if got[len(got)-1].Status != "locked" {
+		t.Errorf("last status = %q", got[len(got)-1].Status)
 	}
 }
 
@@ -142,8 +126,8 @@ func TestGetCredentialsMetadata_RedactsToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	short, _ := md["key_short"].(string)
+	short, _ := md["token_short"].(string)
 	if short == "" || strings.Contains(short, "AAAA1234") {
-		t.Errorf("key_short = %q", short)
+		t.Errorf("token_short = %q", short)
 	}
 }
