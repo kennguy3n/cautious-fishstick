@@ -125,3 +125,158 @@ func TestGetSSOMetadata(t *testing.T) {
 		t.Errorf("metadata URL = %q", md.MetadataURL)
 	}
 }
+
+// ---------- Phase 10 advanced capability tests ----------
+
+func TestProvisionAccess_HappyPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || !strings.Contains(r.URL.Path, "/memberships/") {
+			t.Fatalf("method=%s path=%s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"role":"member","state":"active"}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "alice", ResourceExternalID: "engineering",
+	})
+	if err != nil {
+		t.Fatalf("ProvisionAccess: %v", err)
+	}
+}
+
+func TestProvisionAccess_Failure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"forbidden"}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "alice", ResourceExternalID: "engineering",
+	})
+	if err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("want 403 error, got %v", err)
+	}
+}
+
+func TestProvisionAccess_Idempotent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"role":"member","state":"active"}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "alice", ResourceExternalID: "engineering",
+	})
+	if err != nil {
+		t.Fatalf("ProvisionAccess idempotent: %v", err)
+	}
+}
+
+func TestRevokeAccess_HappyPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "alice", ResourceExternalID: "engineering",
+	})
+	if err != nil {
+		t.Fatalf("RevokeAccess: %v", err)
+	}
+}
+
+func TestRevokeAccess_Idempotent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "alice", ResourceExternalID: "engineering",
+	})
+	if err != nil {
+		t.Fatalf("RevokeAccess idempotent: %v", err)
+	}
+}
+
+func TestRevokeAccess_Failure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"forbidden"}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "alice", ResourceExternalID: "engineering",
+	})
+	if err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("want 403 error, got %v", err)
+	}
+}
+
+func TestListEntitlements_HappyPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/memberships/alice") {
+			_, _ = w.Write([]byte(`{"role":"admin","state":"active"}`))
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/teams") {
+			_, _ = w.Write([]byte(`[{"slug":"backend"},{"slug":"frontend"}]`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/teams/backend/memberships/alice") {
+			_, _ = w.Write([]byte(`{"role":"member"}`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/teams/frontend/memberships/alice") {
+			_, _ = w.Write([]byte(`{"role":"maintainer"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "alice")
+	if err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d entitlements, want 3", len(got))
+	}
+}
+
+func TestListEntitlements_Empty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "nobody")
+	if err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d entitlements, want 0", len(got))
+	}
+}

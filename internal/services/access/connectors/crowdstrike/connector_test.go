@@ -153,3 +153,129 @@ func TestGetCredentialsMetadata_RedactsToken(t *testing.T) {
 		t.Errorf("redaction failed: id=%q sec=%q", id, sec)
 	}
 }
+
+
+// ---------- Phase 10 advanced capability tests ----------
+
+func csHandler(inner http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/oauth2/token" {
+			_, _ = w.Write([]byte(`{"access_token":"test-tok","expires_in":1800,"token_type":"bearer"}`))
+			return
+		}
+		inner(w, r)
+	}
+}
+
+func TestProvisionAccess_HappyPath(t *testing.T) {
+	srv := httptest.NewServer(csHandler(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	if err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{UserExternalID: "u-1", ResourceExternalID: "role-1"}); err != nil {
+		t.Fatalf("ProvisionAccess: %v", err)
+	}
+}
+
+func TestProvisionAccess_Idempotent(t *testing.T) {
+	srv := httptest.NewServer(csHandler(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"errors":[{"message":"already"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	if err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{UserExternalID: "u-1", ResourceExternalID: "role-1"}); err != nil {
+		t.Fatalf("ProvisionAccess idempotent: %v", err)
+	}
+}
+
+func TestProvisionAccess_Failure(t *testing.T) {
+	srv := httptest.NewServer(csHandler(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	if err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{UserExternalID: "u-1", ResourceExternalID: "role-1"}); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestRevokeAccess_HappyPath(t *testing.T) {
+	srv := httptest.NewServer(csHandler(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{UserExternalID: "u-1", ResourceExternalID: "role-1"}); err != nil {
+		t.Fatalf("RevokeAccess: %v", err)
+	}
+}
+
+func TestRevokeAccess_Idempotent(t *testing.T) {
+	srv := httptest.NewServer(csHandler(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"errors":[{"message":"already"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{UserExternalID: "u-1", ResourceExternalID: "role-1"}); err != nil {
+		t.Fatalf("RevokeAccess idempotent: %v", err)
+	}
+}
+
+func TestRevokeAccess_Failure(t *testing.T) {
+	srv := httptest.NewServer(csHandler(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{UserExternalID: "u-1", ResourceExternalID: "role-1"}); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestListEntitlements_HappyPath(t *testing.T) {
+	srv := httptest.NewServer(csHandler(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"resources":["admin","reader"]}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "u-1")
+	if err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if len(got) != 2 { t.Fatalf("got %d, want 2", len(got)) }
+}
+
+func TestListEntitlements_Empty(t *testing.T) {
+	srv := httptest.NewServer(csHandler(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"resources":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "u-1")
+	if err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d, want 0", len(got))
+	}
+}

@@ -94,11 +94,35 @@ const (
 //
 // Backward-compatibility: the Phase 2 short form `[{"type": "..."}]` still
 // decodes cleanly because every new field is optional.
+//
+// Phase 10 (DAG runtime) adds two more optional fields:
+//
+//   - `Next`: a list of step indices (0-based) that must run after this step
+//     completes successfully. When omitted, the executor falls back to the
+//     legacy linear semantics (step `i` is followed by step `i+1`). When
+//     `Next` has multiple entries, those branches are launched in parallel.
+//   - `Join`: a list of step indices that MUST complete (with status
+//     `completed`) before this step is allowed to start. The executor uses
+//     `Join` to implement fan-in / synchronisation barriers in DAG
+//     workflows.
+//
+// Both fields are honoured only by the new DAG executor path; the linear
+// executor ignores them, so an existing linear workflow keeps working
+// unchanged.
 type WorkflowStepDefinition struct {
 	Type             string               `json:"type"`
 	TimeoutHours     int                  `json:"timeout_hours,omitempty"`
 	EscalationTarget string               `json:"escalation_target,omitempty"`
 	Levels           []WorkflowStepLevel  `json:"levels,omitempty"`
+	// Next is the optional fan-out list of step indices that should run
+	// after this step finishes. Defaults to the implicit i+1 successor
+	// when omitted (Phase 2 / linear semantics).
+	Next []int `json:"next,omitempty"`
+	// Join is the optional fan-in list of step indices that must
+	// complete before this step is allowed to start. Defaults to the
+	// implicit i-1 predecessor when omitted (Phase 2 / linear
+	// semantics).
+	Join []int `json:"join,omitempty"`
 }
 
 // WorkflowStepLevel is one stage in a multi-level approval chain.

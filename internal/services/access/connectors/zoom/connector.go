@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"bytes"
+
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
@@ -24,7 +26,7 @@ const (
 	defaultTokenURL = "https://zoom.us/oauth/token"
 )
 
-var ErrNotImplemented = errors.New("zoom: capability not implemented in Phase 7")
+var ErrNotImplemented = errors.New("zoom: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -346,14 +348,67 @@ func (c *ZoomAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *ZoomAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+func (c *ZoomAccessConnector) ProvisionAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("zoom: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil { return err }
+	token, err := c.accessToken(ctx, cfg, secrets)
+	if err != nil { return err }
+	body, _ := json.Marshal(map[string]string{"id": grant.UserExternalID})
+	urlStr := fmt.Sprintf("%s/groups/%s/members", c.baseURL(), url.PathEscape(grant.ResourceExternalID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(body))
+	if err != nil { return err }
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := c.client().Do(req)
+	if err != nil { return fmt.Errorf("zoom: provision: %w", err) }
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK { return nil }
+	if resp.StatusCode == http.StatusConflict || strings.Contains(string(respBody), "already exists") { return nil }
+	return fmt.Errorf("zoom: provision status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *ZoomAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+func (c *ZoomAccessConnector) RevokeAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("zoom: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil { return err }
+	token, err := c.accessToken(ctx, cfg, secrets)
+	if err != nil { return err }
+	urlStr := fmt.Sprintf("%s/groups/%s/members/%s", c.baseURL(), url.PathEscape(grant.ResourceExternalID), url.PathEscape(grant.UserExternalID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, urlStr, nil)
+	if err != nil { return err }
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := c.client().Do(req)
+	if err != nil { return fmt.Errorf("zoom: revoke: %w", err) }
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNotFound { return nil }
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("zoom: revoke status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *ZoomAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+func (c *ZoomAccessConnector) ListEntitlements(ctx context.Context, configRaw, secretsRaw map[string]interface{}, userExternalID string) ([]access.Entitlement, error) {
+	if userExternalID == "" { return nil, errors.New("zoom: user external id is required") }
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil { return nil, err }
+	token, err := c.accessToken(ctx, cfg, secrets)
+	if err != nil { return nil, err }
+	urlStr := fmt.Sprintf("%s/users/%s/groups", c.baseURL(), url.PathEscape(userExternalID))
+	req, err := c.newRequest(ctx, token, http.MethodGet, urlStr[len(c.baseURL()):])
+	if err != nil { return nil, err }
+	body, err := c.do(req)
+	if err != nil { return nil, err }
+	var resp struct { Groups []struct { ID string `json:"id"`; Name string `json:"name"` } `json:"groups"` }
+	if json.Unmarshal(body, &resp) != nil { return nil, nil }
+	var out []access.Entitlement
+	for _, g := range resp.Groups {
+		out = append(out, access.Entitlement{ResourceExternalID: g.ID, Role: "member", Source: "direct"})
+	}
+	return out, nil
 }
 func (c *ZoomAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

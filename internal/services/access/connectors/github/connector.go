@@ -3,12 +3,14 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -21,7 +23,7 @@ const (
 	defaultBaseURL = "https://api.github.com"
 )
 
-var ErrNotImplemented = errors.New("github: capability not implemented in Phase 7")
+var ErrNotImplemented = errors.New("github: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -260,14 +262,181 @@ func (c *GitHubAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *GitHubAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ProvisionAccess adds a user to an org team via PUT /orgs/{org}/teams/{team_slug}/memberships/{username}.
+func (c *GitHubAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("github: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	role := grant.Role
+	if role == "" {
+		role = "member"
+	}
+	body, _ := json.Marshal(map[string]string{"role": role})
+	urlStr := fmt.Sprintf("%s/orgs/%s/teams/%s/memberships/%s",
+		c.baseURL(), url.PathEscape(cfg.Organization),
+		url.PathEscape(grant.ResourceExternalID), url.PathEscape(grant.UserExternalID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, urlStr, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return fmt.Errorf("github: provision request: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+		return nil
+	}
+	return fmt.Errorf("github: provision status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *GitHubAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+// RevokeAccess removes a user from an org team. 404 = idempotent.
+func (c *GitHubAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("github: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	urlStr := fmt.Sprintf("%s/orgs/%s/teams/%s/memberships/%s",
+		c.baseURL(), url.PathEscape(cfg.Organization),
+		url.PathEscape(grant.ResourceExternalID), url.PathEscape(grant.UserExternalID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, urlStr, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
+
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return fmt.Errorf("github: revoke request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("github: revoke status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *GitHubAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+// ListEntitlements returns org membership + team memberships for a user.
+func (c *GitHubAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	if userExternalID == "" {
+		return nil, errors.New("github: user external id is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	var out []access.Entitlement
+
+	// Org membership
+	urlStr := fmt.Sprintf("%s/orgs/%s/memberships/%s", c.baseURL(), url.PathEscape(cfg.Organization), url.PathEscape(userExternalID))
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, urlStr)
+	if err != nil {
+		return nil, err
+	}
+	_, body, err := c.doRaw(req)
+	if err == nil {
+		var m struct {
+			Role  string `json:"role"`
+			State string `json:"state"`
+		}
+		if json.Unmarshal(body, &m) == nil {
+			out = append(out, access.Entitlement{
+				ResourceExternalID: cfg.Organization,
+				Role:               m.Role,
+				Source:             "direct",
+			})
+		}
+	}
+
+	// Team memberships
+	nextURL := fmt.Sprintf("%s/orgs/%s/teams", c.baseURL(), url.PathEscape(cfg.Organization))
+	for nextURL != "" {
+		req, err := c.newRequest(ctx, secrets, http.MethodGet, nextURL)
+		if err != nil {
+			return nil, err
+		}
+		resp, body, err := c.doRaw(req)
+		if err != nil {
+			break
+		}
+		var teams []struct {
+			Slug string `json:"slug"`
+		}
+		if json.Unmarshal(body, &teams) != nil {
+			break
+		}
+		for _, team := range teams {
+			mURL := fmt.Sprintf("%s/orgs/%s/teams/%s/memberships/%s",
+				c.baseURL(), url.PathEscape(cfg.Organization),
+				url.PathEscape(team.Slug), url.PathEscape(userExternalID))
+			mReq, err := c.newRequest(ctx, secrets, http.MethodGet, mURL)
+			if err != nil {
+				continue
+			}
+			_, mBody, err := c.doRaw(mReq)
+			if err != nil {
+				continue
+			}
+			var mem struct {
+				Role string `json:"role"`
+			}
+			if json.Unmarshal(mBody, &mem) == nil {
+				out = append(out, access.Entitlement{
+					ResourceExternalID: team.Slug,
+					Role:               mem.Role,
+					Source:             "direct",
+				})
+			}
+		}
+		nextURL = parseLinkNext(resp)
+	}
+	return out, nil
+}
+
+func parseLinkNext(resp *http.Response) string {
+	if resp == nil {
+		return ""
+	}
+	link := resp.Header.Get("Link")
+	for _, part := range strings.Split(link, ",") {
+		part = strings.TrimSpace(part)
+		if strings.Contains(part, `rel="next"`) {
+			start := strings.Index(part, "<")
+			end := strings.Index(part, ">")
+			if start >= 0 && end > start {
+				return part[start+1 : end]
+			}
+		}
+	}
+	return ""
 }
 
 // GetSSOMetadata returns the SAML SSO metadata URL for GitHub Enterprise

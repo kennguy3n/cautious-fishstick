@@ -21,7 +21,7 @@ const (
 	pageSize     = 100
 )
 
-var ErrNotImplemented = errors.New("dropbox: capability not implemented in Phase 7")
+var ErrNotImplemented = errors.New("dropbox: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -259,14 +259,58 @@ func (c *DropboxAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *DropboxAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+func (c *DropboxAccessConnector) ProvisionAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("dropbox: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil { return err }
+	body, _ := json.Marshal(map[string]interface{}{".tag": "team_member_id", "team_member_id": grant.UserExternalID, "new_role": grant.ResourceExternalID})
+	urlStr := c.baseURL() + "/2/team/members/set_permissions"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(body))
+	if err != nil { return err }
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
+	resp, err := c.client().Do(req)
+	if err != nil { return fmt.Errorf("dropbox: provision: %w", err) }
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK { return nil }
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("dropbox: provision status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *DropboxAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+func (c *DropboxAccessConnector) RevokeAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("dropbox: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil { return err }
+	body, _ := json.Marshal(map[string]interface{}{".tag": "team_member_id", "team_member_id": grant.UserExternalID})
+	urlStr := c.baseURL() + "/2/team/members/remove"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(body))
+	if err != nil { return err }
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
+	resp, err := c.client().Do(req)
+	if err != nil { return fmt.Errorf("dropbox: revoke: %w", err) }
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if resp.StatusCode == http.StatusOK { return nil }
+	if strings.Contains(string(respBody), "user_not_found") || strings.Contains(string(respBody), "user_not_in_team") { return nil }
+	return fmt.Errorf("dropbox: revoke status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *DropboxAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+func (c *DropboxAccessConnector) ListEntitlements(ctx context.Context, configRaw, secretsRaw map[string]interface{}, userExternalID string) ([]access.Entitlement, error) {
+	if userExternalID == "" { return nil, errors.New("dropbox: user external id is required") }
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil { return nil, err }
+	payload := map[string]interface{}{".tag": "team_member_id", "team_member_id": userExternalID}
+	respBody, err := c.postJSON(ctx, secrets, c.baseURL()+"/2/team/members/get_info_v2", payload)
+	if err != nil { return nil, err }
+	var resp struct { Role struct { Tag string `json:".tag"` } `json:"role"` }
+	if json.Unmarshal(respBody, &resp) != nil { return nil, nil }
+	if resp.Role.Tag == "" { return nil, nil }
+	return []access.Entitlement{{ResourceExternalID: "team", Role: resp.Role.Tag, Source: "direct"}}, nil
 }
 
 func (c *DropboxAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {

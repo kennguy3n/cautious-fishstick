@@ -22,6 +22,10 @@ import (
 	"strings"
 	"time"
 
+	"bytes"
+
+	"net/url"
+
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
@@ -29,7 +33,7 @@ import (
 const ProviderName = "cloudflare"
 
 // ErrNotImplemented is returned by Phase 7 stubbed methods.
-var ErrNotImplemented = errors.New("cloudflare: capability not implemented in Phase 7")
+var ErrNotImplemented = errors.New("cloudflare: capability not implemented")
 
 const defaultBaseURL = "https://api.cloudflare.com/client/v4"
 
@@ -343,14 +347,107 @@ func mapMembers(in []cfMember) []*access.Identity {
 
 // ---------- Stubs ----------
 
-func (c *CloudflareAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+func (c *CloudflareAccessConnector) ProvisionAccess(
+	ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant,
+) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("cloudflare: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	body, _ := json.Marshal(map[string]interface{}{"email": grant.UserExternalID, "roles": []string{grant.ResourceExternalID}})
+	urlStr := fmt.Sprintf("%s/accounts/%s/members", c.baseURL(), url.PathEscape(cfg.AccountID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.APIToken))
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return fmt.Errorf("cloudflare: provision: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+		return nil
+	}
+	if strings.Contains(string(respBody), "already a member") {
+		return nil
+	}
+	return fmt.Errorf("cloudflare: provision status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *CloudflareAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+func (c *CloudflareAccessConnector) RevokeAccess(
+	ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant,
+) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("cloudflare: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	urlStr := fmt.Sprintf("%s/accounts/%s/members/%s", c.baseURL(), url.PathEscape(cfg.AccountID), url.PathEscape(grant.UserExternalID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, urlStr, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.APIToken))
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return fmt.Errorf("cloudflare: revoke: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("cloudflare: revoke status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *CloudflareAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+func (c *CloudflareAccessConnector) ListEntitlements(
+	ctx context.Context, configRaw, secretsRaw map[string]interface{}, userExternalID string,
+) ([]access.Entitlement, error) {
+	if userExternalID == "" {
+		return nil, errors.New("cloudflare: user external id is required")
+	}
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	urlStr := fmt.Sprintf("%s/accounts/%s/members/%s", c.baseURL(), url.PathEscape(cfg.AccountID), url.PathEscape(userExternalID))
+	req, err := c.newRequest(ctx, secrets, cfg, http.MethodGet, "")
+	if err != nil {
+		return nil, err
+	}
+	req.URL, _ = url.Parse(urlStr)
+	body, err := c.do(req)
+	if err != nil {
+		return nil, nil
+	}
+	var resp struct {
+		Result struct {
+			Roles []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"roles"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(body, &resp) != nil {
+		return nil, nil
+	}
+	var out []access.Entitlement
+	for _, r := range resp.Result.Roles {
+		out = append(out, access.Entitlement{
+			ResourceExternalID: r.ID,
+			Role:               r.Name,
+			Source:             "direct",
+		})
+	}
+	return out, nil
 }
 
 func (c *CloudflareAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {

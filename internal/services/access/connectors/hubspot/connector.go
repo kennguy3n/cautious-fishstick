@@ -12,6 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"bytes"
+
+	"net/url"
+
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
@@ -20,7 +24,7 @@ const (
 	defaultBaseURL = "https://api.hubapi.com"
 )
 
-var ErrNotImplemented = errors.New("hubspot: capability not implemented in Phase 7")
+var ErrNotImplemented = errors.New("hubspot: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -228,14 +232,60 @@ func (c *HubSpotAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *HubSpotAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+func (c *HubSpotAccessConnector) ProvisionAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("hubspot: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil { return err }
+	body, _ := json.Marshal(map[string]interface{}{"roleId": grant.ResourceExternalID})
+	urlStr := fmt.Sprintf("%s/settings/v3/users/%s/roles", c.baseURL(), url.PathEscape(grant.UserExternalID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, urlStr, bytes.NewReader(body))
+	if err != nil { return err }
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
+	resp, err := c.client().Do(req)
+	if err != nil { return fmt.Errorf("hubspot: provision: %w", err) }
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent { return nil }
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("hubspot: provision status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *HubSpotAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+func (c *HubSpotAccessConnector) RevokeAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("hubspot: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil { return err }
+	urlStr := fmt.Sprintf("%s/settings/v3/users/%s/roles/%s", c.baseURL(), url.PathEscape(grant.UserExternalID), url.PathEscape(grant.ResourceExternalID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, urlStr, nil)
+	if err != nil { return err }
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
+	resp, err := c.client().Do(req)
+	if err != nil { return fmt.Errorf("hubspot: revoke: %w", err) }
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound { return nil }
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("hubspot: revoke status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *HubSpotAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+func (c *HubSpotAccessConnector) ListEntitlements(ctx context.Context, configRaw, secretsRaw map[string]interface{}, userExternalID string) ([]access.Entitlement, error) {
+	if userExternalID == "" { return nil, errors.New("hubspot: user external id is required") }
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil { return nil, err }
+	path := fmt.Sprintf("/settings/v3/users/%s", url.PathEscape(userExternalID))
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, path)
+	if err != nil { return nil, err }
+	body, err := c.do(req)
+	if err != nil { return nil, err }
+	var resp struct { RoleIds []string `json:"roleIds"` }
+	if json.Unmarshal(body, &resp) != nil { return nil, nil }
+	var out []access.Entitlement
+	for _, r := range resp.RoleIds {
+		out = append(out, access.Entitlement{ResourceExternalID: r, Role: r, Source: "direct"})
+	}
+	return out, nil
 }
 func (c *HubSpotAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

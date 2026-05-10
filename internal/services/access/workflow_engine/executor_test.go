@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/glebarez/sqlite"
@@ -26,6 +27,7 @@ func newTestDB(t *testing.T) *gorm.DB {
 }
 
 type recordingPerformer struct {
+	mu          sync.Mutex
 	approves    int
 	pendings    []string
 	failApprove error
@@ -36,6 +38,8 @@ func (r *recordingPerformer) Approve(_ context.Context, _ *models.AccessRequest,
 	if r.failApprove != nil {
 		return r.failApprove
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.approves++
 	return nil
 }
@@ -43,6 +47,8 @@ func (r *recordingPerformer) MarkPending(_ context.Context, _ *models.AccessRequ
 	if r.failPending != nil {
 		return r.failPending
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.pendings = append(r.pendings, stepType)
 	return nil
 }

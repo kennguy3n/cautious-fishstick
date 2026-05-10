@@ -12,6 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"bytes"
+
+	"net/url"
+
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
@@ -21,7 +25,7 @@ const (
 	pageLimit      = 100
 )
 
-var ErrNotImplemented = errors.New("pagerduty: capability not implemented in Phase 7")
+var ErrNotImplemented = errors.New("pagerduty: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -234,14 +238,62 @@ func (c *PagerDutyAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *PagerDutyAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+func (c *PagerDutyAccessConnector) ProvisionAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("pagerduty: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil { return err }
+	role := grant.Role
+	if role == "" { role = "responder" }
+	body, _ := json.Marshal(map[string]string{"role": role})
+	urlStr := fmt.Sprintf("%s/teams/%s/users/%s", c.baseURL(), url.PathEscape(grant.ResourceExternalID), url.PathEscape(grant.UserExternalID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, urlStr, bytes.NewReader(body))
+	if err != nil { return err }
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Token token="+strings.TrimSpace(secrets.APIToken))
+	resp, err := c.client().Do(req)
+	if err != nil { return fmt.Errorf("pagerduty: provision: %w", err) }
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK { return nil }
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("pagerduty: provision status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *PagerDutyAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+func (c *PagerDutyAccessConnector) RevokeAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
+	if grant.UserExternalID == "" || grant.ResourceExternalID == "" {
+		return errors.New("pagerduty: grant.UserExternalID and grant.ResourceExternalID are required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil { return err }
+	urlStr := fmt.Sprintf("%s/teams/%s/users/%s", c.baseURL(), url.PathEscape(grant.ResourceExternalID), url.PathEscape(grant.UserExternalID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, urlStr, nil)
+	if err != nil { return err }
+	req.Header.Set("Authorization", "Token token="+strings.TrimSpace(secrets.APIToken))
+	resp, err := c.client().Do(req)
+	if err != nil { return fmt.Errorf("pagerduty: revoke: %w", err) }
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNotFound { return nil }
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("pagerduty: revoke status %d: %s", resp.StatusCode, string(respBody))
 }
-func (c *PagerDutyAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+func (c *PagerDutyAccessConnector) ListEntitlements(ctx context.Context, configRaw, secretsRaw map[string]interface{}, userExternalID string) ([]access.Entitlement, error) {
+	if userExternalID == "" { return nil, errors.New("pagerduty: user external id is required") }
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil { return nil, err }
+	path := fmt.Sprintf("/users/%s?include%%5B%%5D=teams", url.PathEscape(userExternalID))
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, path)
+	if err != nil { return nil, err }
+	body, err := c.do(req)
+	if err != nil { return nil, err }
+	var resp struct { User struct { Teams []struct { ID string `json:"id"`; Role string `json:"role"` } `json:"teams"` } `json:"user"` }
+	if json.Unmarshal(body, &resp) != nil { return nil, nil }
+	var out []access.Entitlement
+	for _, t := range resp.User.Teams {
+		out = append(out, access.Entitlement{ResourceExternalID: t.ID, Role: t.Role, Source: "direct"})
+	}
+	return out, nil
 }
 func (c *PagerDutyAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil
