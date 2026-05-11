@@ -27,10 +27,14 @@ import (
 // newest seen event for incremental pulls. The handler is invoked
 // once per batch.
 //
-// On HTTP 401/403 or LastPass `status:"FAIL"` the connector returns
-// access.ErrAuditNotAvailable so callers treat non-Enterprise tenants
-// (without reporting API access) as plan-gated rather than failing
-// the whole sync.
+// On HTTP 401/403, or on a LastPass `status:"FAIL"` response whose
+// error message names a permission/plan condition (e.g. "not
+// authorized", "license required", "subscription required"), the
+// connector returns access.ErrAuditNotAvailable so callers treat
+// non-Enterprise tenants as plan-gated. All other `status:"FAIL"`
+// responses (transient errors, rate limits, invalid params, etc.)
+// bubble up as ordinary errors so the sync retries rather than
+// silently classifying the connector as plan-gated.
 func (c *LastPassAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},
@@ -147,12 +151,48 @@ func mapLastPassAuditEvent(e lastpassAuditEvent) *access.AuditLogEntry {
 	}
 }
 
+// auditNotAvailableMarkers names the substrings that indicate a LastPass
+// `status:"FAIL"` response is plan-gated (cmd=reporting not available on
+// this account) rather than a transient/operational failure. Match is
+// case-insensitive against the full error string returned by postJSON,
+// which already embeds the LastPass response body.
+var auditNotAvailableMarkers = []string{
+	"not authorized",
+	"unauthorized",
+	"not allowed",
+	"no permission",
+	"permission denied",
+	"insufficient privileges",
+	"license required",
+	"subscription required",
+	"not enterprise",
+	"enterprise required",
+	"feature not available",
+	"reporting not available",
+}
+
 func isAuditNotAvailable(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
-	return strings.Contains(msg, "status 401") || strings.Contains(msg, "status 403") || strings.Contains(msg, "FAIL")
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "status 401") || strings.Contains(msg, "status 403") {
+		return true
+	}
+	// Only treat a LastPass-level `status:"FAIL"` as plan-gated when
+	// the message names a known permission/plan condition. Generic
+	// FAIL responses (rate limits, invalid params, transient backend
+	// errors) must bubble up so the sync retries instead of silently
+	// classifying the tenant as plan-gated.
+	if !strings.Contains(msg, "api fail") {
+		return false
+	}
+	for _, m := range auditNotAvailableMarkers {
+		if strings.Contains(msg, m) {
+			return true
+		}
+	}
+	return false
 }
 
 var _ access.AccessAuditor = (*LastPassAccessConnector)(nil)

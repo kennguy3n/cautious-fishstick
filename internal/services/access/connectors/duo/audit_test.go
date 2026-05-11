@@ -78,6 +78,71 @@ func TestFetchAccessAuditLogs_PaginatesAndMaps(t *testing.T) {
 	}
 }
 
+func TestFetchAccessAuditLogs_PassesNextOffsetCursor(t *testing.T) {
+	// Page 1 returns next_offset=AAAA and one event; page 2 must echo
+	// next_offset=AAAA back in the query string and returns the
+	// terminating empty-cursor page.
+	var pageCalls int
+	var sawCursor string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pageCalls++
+		w.Header().Set("Content-Type", "application/json")
+		if pageCalls == 1 {
+			if got := r.URL.Query().Get("next_offset"); got != "" {
+				t.Errorf("page 1 next_offset = %q; want empty", got)
+			}
+			_ = json.NewEncoder(w).Encode(duoAuthLogResponse{
+				Stat: "OK",
+				Response: struct {
+					Authlogs []duoAuthLog `json:"authlogs"`
+					Metadata duoAuthMeta  `json:"metadata"`
+				}{
+					Authlogs: []duoAuthLog{{Txid: "tx1", EventType: "authentication", Result: "success", ISOTimestamp: "2024-07-01T08:00:00.000Z", User: duoAuthLogUser{Name: "alice@example.com"}}},
+					Metadata: duoAuthMeta{NextOffset: "OFFSET-AAAA"},
+				},
+			})
+			return
+		}
+		sawCursor = r.URL.Query().Get("next_offset")
+		_ = json.NewEncoder(w).Encode(duoAuthLogResponse{
+			Stat: "OK",
+			Response: struct {
+				Authlogs []duoAuthLog `json:"authlogs"`
+				Metadata duoAuthMeta  `json:"metadata"`
+			}{
+				Authlogs: []duoAuthLog{{Txid: "tx2", EventType: "authentication", Result: "success", ISOTimestamp: "2024-07-01T08:00:00.000Z", User: duoAuthLogUser{Name: "bob@example.com"}}},
+				Metadata: duoAuthMeta{NextOffset: ""},
+			},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.urlOverride = server.URL
+	c.httpClient = func() httpDoer { return server.Client() }
+	c.nowFn = func() time.Time { return time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC) }
+
+	var collected []*access.AuditLogEntry
+	err := c.FetchAccessAuditLogs(context.Background(), validConfig(), validSecrets(),
+		map[string]time.Time{access.DefaultAuditPartition: time.Date(2024, 6, 30, 0, 0, 0, 0, time.UTC)},
+		func(batch []*access.AuditLogEntry, _ time.Time, _ string) error {
+			collected = append(collected, batch...)
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("FetchAccessAuditLogs: %v", err)
+	}
+	if pageCalls != 2 {
+		t.Fatalf("pageCalls = %d; want 2", pageCalls)
+	}
+	if sawCursor != "OFFSET-AAAA" {
+		t.Fatalf("page 2 next_offset = %q; want OFFSET-AAAA (cursor not propagated, events at same ms boundary can be lost)", sawCursor)
+	}
+	if len(collected) != 2 {
+		t.Fatalf("collected %d; want 2 (both pages mapped)", len(collected))
+	}
+}
+
 func TestFetchAccessAuditLogs_NotAvailable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)

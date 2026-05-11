@@ -49,6 +49,12 @@ func (c *DuoAccessConnector) FetchAccessAuditLogs(
 		// default to "last 24h" on cold start.
 		mintime = c.now().Add(-24 * time.Hour)
 	}
+	// nextOffset is the opaque pagination cursor returned by Duo. When
+	// non-empty it must be passed back as the next_offset query param;
+	// it encodes (timestamp, txid) so events at the same millisecond as
+	// the previous page-max are not lost. mintime is only used on the
+	// first page to bound the lookback window.
+	nextOffset := ""
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -56,6 +62,9 @@ func (c *DuoAccessConnector) FetchAccessAuditLogs(
 		params := map[string]string{
 			"mintime": strconv.FormatInt(mintime.UTC().UnixMilli(), 10),
 			"limit":   "1000",
+		}
+		if nextOffset != "" {
+			params["next_offset"] = nextOffset
 		}
 		resp, body, err := c.signedRaw(ctx, cfg, secrets, http.MethodGet, path, params)
 		if err != nil {
@@ -73,7 +82,6 @@ func (c *DuoAccessConnector) FetchAccessAuditLogs(
 		}
 		batch := make([]*access.AuditLogEntry, 0, len(page.Response.Authlogs))
 		batchMax := cursor
-		var newestMillis int64
 		for i := range page.Response.Authlogs {
 			entry := mapDuoAuthLog(&page.Response.Authlogs[i])
 			if entry == nil {
@@ -83,23 +91,14 @@ func (c *DuoAccessConnector) FetchAccessAuditLogs(
 				batchMax = entry.Timestamp
 			}
 			batch = append(batch, entry)
-			if ms := entry.Timestamp.UnixMilli(); ms > newestMillis {
-				newestMillis = ms
-			}
 		}
 		if err := handler(batch, batchMax, access.DefaultAuditPartition); err != nil {
 			return err
 		}
 		cursor = batchMax
-		next := strings.TrimSpace(page.Response.Metadata.NextOffset)
-		if next == "" || len(page.Response.Authlogs) == 0 {
+		nextOffset = strings.TrimSpace(page.Response.Metadata.NextOffset)
+		if nextOffset == "" || len(page.Response.Authlogs) == 0 {
 			return nil
-		}
-		// Advance mintime so the next signed request continues past
-		// the current page; Duo's v2 endpoint uses next_offset opaque
-		// to clients but mintime monotonically advances correctness.
-		if newestMillis > 0 {
-			mintime = time.UnixMilli(newestMillis).Add(time.Millisecond)
 		}
 	}
 }

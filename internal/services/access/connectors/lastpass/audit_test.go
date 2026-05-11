@@ -95,6 +95,64 @@ func TestFetchAccessAuditLogs_ProviderError(t *testing.T) {
 	}
 }
 
+func TestFetchAccessAuditLogs_GenericFailIsNotPlanGated(t *testing.T) {
+	// LastPass returns status:"FAIL" for many transient and
+	// parameter-level errors (rate limits, malformed args, backend
+	// outages). Those must bubble up as ordinary errors so the sync
+	// retries — not be classified silently as ErrAuditNotAvailable.
+	cases := []string{
+		`{"status":"FAIL","error":"rate limit exceeded"}`,
+		`{"status":"FAIL","error":"invalid date range"}`,
+		`{"status":"FAIL","error":"temporary failure"}`,
+	}
+	for _, body := range cases {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(body))
+		}))
+		c := New()
+		c.urlOverride = server.URL
+		c.httpClient = func() httpDoer { return server.Client() }
+		err := c.FetchAccessAuditLogs(context.Background(), validConfig(), validSecrets(),
+			map[string]time.Time{access.DefaultAuditPartition: time.Now().Add(-time.Hour)},
+			func(_ []*access.AuditLogEntry, _ time.Time, _ string) error { return nil })
+		server.Close()
+		if err == nil {
+			t.Errorf("body %q: err = nil; want generic provider error", body)
+			continue
+		}
+		if err == access.ErrAuditNotAvailable {
+			t.Errorf("body %q: err = ErrAuditNotAvailable; want generic error (no plan-gating marker)", body)
+		}
+	}
+}
+
+func TestFetchAccessAuditLogs_PermissionFailIsPlanGated(t *testing.T) {
+	// Conversely, FAIL responses whose error names a permission /
+	// plan condition must still be classified as plan-gated.
+	cases := []string{
+		`{"status":"FAIL","error":"Not authorized"}`,
+		`{"status":"FAIL","error":"License required for cmd=reporting"}`,
+		`{"status":"FAIL","error":"Subscription required"}`,
+	}
+	for _, body := range cases {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(body))
+		}))
+		c := New()
+		c.urlOverride = server.URL
+		c.httpClient = func() httpDoer { return server.Client() }
+		err := c.FetchAccessAuditLogs(context.Background(), validConfig(), validSecrets(),
+			map[string]time.Time{access.DefaultAuditPartition: time.Now().Add(-time.Hour)},
+			func(_ []*access.AuditLogEntry, _ time.Time, _ string) error { return nil })
+		server.Close()
+		if err != access.ErrAuditNotAvailable {
+			t.Errorf("body %q: err = %v; want ErrAuditNotAvailable", body, err)
+		}
+	}
+}
+
 func TestFetchAccessAuditLogs_ArrayResponseDecodes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

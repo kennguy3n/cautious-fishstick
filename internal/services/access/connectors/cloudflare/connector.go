@@ -108,7 +108,31 @@ func (c Config) validate() error {
 	if strings.TrimSpace(c.AccountID) == "" {
 		return errors.New("cloudflare: account_id is required")
 	}
+	if team := strings.TrimSpace(c.TeamDomain); team != "" && !isDNSLabel(team) {
+		return errors.New("cloudflare: team_domain must be a single DNS label (letters, digits, hyphen; no leading/trailing hyphen; \u226463 chars)")
+	}
 	return nil
+}
+
+// isDNSLabel reports whether s is a valid single DNS label (RFC 1035): 1–63
+// chars of [A-Za-z0-9-], with no leading or trailing hyphen. Used to guard
+// against injection into the team_domain URL interpolation in
+// GetSSOMetadata (e.g. an operator-supplied "evil.com/" must be rejected).
+func isDNSLabel(s string) bool {
+	if s == "" || len(s) > 63 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '-':
+		default:
+			return false
+		}
+	}
+	return s[0] != '-' && s[len(s)-1] != '-'
 }
 
 func (s Secrets) validate(cfg Config) error {
@@ -533,6 +557,9 @@ func (c *CloudflareAccessConnector) GetSSOMetadata(_ context.Context, configRaw,
 	team := strings.TrimSpace(cfg.TeamDomain)
 	if team == "" {
 		return nil, nil
+	}
+	if !isDNSLabel(team) {
+		return nil, fmt.Errorf("cloudflare: team_domain %q is not a valid DNS label", team)
 	}
 	base := "https://" + team + ".cloudflareaccess.com"
 	return &access.SSOMetadata{
