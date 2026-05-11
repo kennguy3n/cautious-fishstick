@@ -342,7 +342,7 @@ When the agent comes back, the platform self-heals: the next access request gets
 - Skills: `cmd/access-ai-agent/skills/access_risk_assessment.py`, `access_review_automation.py`, `access_anomaly_detection.py`, `connector_setup_assistant.py`, `policy_recommendation.py`.
 - LLM dispatcher: `cmd/access-ai-agent/skills/llm.py` (provider registry; configured via `ACCESS_AI_LLM_*` env vars).
 - Workflow engine: `cmd/access-workflow-engine/main.go`, `internal/services/access/workflow_engine/*.go`.
-- Schema: `internal/migrations/008_access_workflow_templates.go`, `009_access_workflow_step_history.go`.
+- Schema: `internal/migrations/008_seed_workflow_templates.go`, `009_create_workflow_step_history.go`.
 
 ## What's next
 
