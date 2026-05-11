@@ -232,8 +232,8 @@
 - `sync_identity` shipped: **194/200**
 - `provision_access` shipped: **50/200** ✅ (50 real provider integrations across five Phase 10 batches — top-50 by usage complete)
 - `list_entitlements` shipped: **50/200** ✅
-- `get_access_log` shipped: **10/200** (Microsoft Entra ID, Google Workspace, Okta, Auth0, AWS IAM, Azure RBAC, GCP IAM, Slack, GitHub, Salesforce — via the new `AccessAuditor` optional interface)
-- `sso_federation` shipped: **12/200**
+- `get_access_log` shipped: **20/200** (Microsoft Entra ID, Google Workspace, Okta, Auth0, AWS IAM, Azure RBAC, GCP IAM, Slack, GitHub, Salesforce — PR #25; Cloudflare, Zoom, HubSpot, Dropbox Business, PagerDuty, Sentry, Datadog, CrowdStrike, Snyk, Zendesk — this PR via the `AccessAuditor` optional interface)
+- `sso_federation` shipped: **13/200** (PR #25 added 12 wires; this PR adds Auth0 OIDC for 13 total — Zoom is `n/a`)
 
 ## How to update this file
 
