@@ -45,6 +45,10 @@ type httpDoer interface {
 type Config struct {
 	AccountID string `json:"account_id"`
 	Email     string `json:"email,omitempty"`
+	// TeamDomain is the Cloudflare Access team name (e.g. "acme" for
+	// https://acme.cloudflareaccess.com). When set, the connector
+	// advertises Cloudflare Access SAML metadata via GetSSOMetadata.
+	TeamDomain string `json:"team_domain,omitempty"`
 }
 
 // Secrets carries either an API token (preferred) or a legacy global API
@@ -78,6 +82,9 @@ func DecodeConfig(raw map[string]interface{}) (Config, error) {
 	}
 	if v, ok := raw["email"].(string); ok {
 		cfg.Email = v
+	}
+	if v, ok := raw["team_domain"].(string); ok {
+		cfg.TeamDomain = v
 	}
 	return cfg, nil
 }
@@ -509,8 +516,31 @@ func (c *CloudflareAccessConnector) ListEntitlements(
 	return out, nil
 }
 
-func (c *CloudflareAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata advertises Cloudflare Access SAML metadata when the
+// connector is configured with a team_domain. Cloudflare publishes
+// SAML metadata at
+//
+//	https://{team_domain}.cloudflareaccess.com/cdn-cgi/access/saml-metadata
+//
+// Wires into Keycloak as a SAML IdP broker. Returns (nil, nil) when
+// team_domain is not set so callers treat the connector as
+// SSO-unsupported (ErrSSOFederationUnsupported).
+func (c *CloudflareAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	cfg, err := DecodeConfig(configRaw)
+	if err != nil {
+		return nil, err
+	}
+	team := strings.TrimSpace(cfg.TeamDomain)
+	if team == "" {
+		return nil, nil
+	}
+	base := "https://" + team + ".cloudflareaccess.com"
+	return &access.SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: base + "/cdn-cgi/access/saml-metadata",
+		EntityID:    base,
+		SSOLoginURL: base + "/cdn-cgi/access/sso",
+	}, nil
 }
 
 // GetCredentialsMetadata returns token verification metadata from

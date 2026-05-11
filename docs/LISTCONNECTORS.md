@@ -1,6 +1,6 @@
 # Connector Capability Index
 
-> **Last updated:** 2026-05-11 (this PR — Phase 10 audit-log batch 3: 40 / 200 connectors with `get_access_log` — 40/50 of top-50 audit-log target, ~10 remaining)
+> **Last updated:** 2026-05-11 (this PR — Phase 10 audit-log batch 4: 50 / 200 connectors with `get_access_log` — 50/50 of top-50 audit-log target ✅ + SSO federation batch 3: +5 wires)
 > **Source of truth:** [`docs/PROGRESS.md`](./PROGRESS.md) §1
 > **How to keep in sync:** When you flip a capability column in `docs/PROGRESS.md`, mirror the change here. The audit script in §6 of `docs/PROGRESS.md` lints the two tables for drift.
 
@@ -31,14 +31,14 @@
 | 4 | Auth0 | T1 | IAM/SSO | `auth0/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 5 | Generic SAML | T1 | IAM/SSO | `generic_saml/` | n/a | n/a | n/a | n/a | 🟡 |
 | 6 | Generic OIDC | T1 | IAM/SSO | `generic_oidc/` | n/a | n/a | n/a | n/a | 🟡 |
-| 7 | Duo Security | T1 | IAM/MFA | `duo/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
-| 8 | 1Password | T1 | Secrets/Vault | `onepassword/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
-| 9 | LastPass | T1 | Secrets/Vault | `lastpass/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
-| 10 | Ping Identity | T1 | IAM/SSO | `ping_identity/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
+| 7 | Duo Security | T1 | IAM/MFA | `duo/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
+| 8 | 1Password | T1 | Secrets/Vault | `onepassword/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
+| 9 | LastPass | T1 | Secrets/Vault | `lastpass/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
+| 10 | Ping Identity | T1 | IAM/SSO | `ping_identity/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 11 | AWS IAM | T2 | Cloud Infra | `aws/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
 | 12 | Azure RBAC | T2 | Cloud Infra | `azure/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
 | 13 | GCP IAM | T2 | Cloud Infra | `gcp/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
-| 14 | Cloudflare | T2 | Cloud Infra | `cloudflare/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
+| 14 | Cloudflare | T2 | Cloud Infra | `cloudflare/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 15 | Tailscale | T2 | Network | `tailscale/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 16 | DigitalOcean | T2 | Cloud Infra | `digitalocean/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 17 | Heroku | T2 | Cloud Infra | `heroku/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
@@ -107,7 +107,7 @@
 | 80 | KnowBe4 | T3 | Security Training | `knowbe4/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 81 | BambooHR | T4 | HR | `bamboohr/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 82 | Gusto | T4 | HR | `gusto/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 83 | Rippling | T4 | HR | `rippling/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
+| 83 | Rippling | T4 | HR | `rippling/` | 🟡 | ⏳ | ⏳ | ⏳ | 🟡 |
 | 84 | Personio | T4 | HR | `personio/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 85 | Hibob | T4 | HR | `hibob/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 86 | Workday | T4 | HR | `workday/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
@@ -115,7 +115,7 @@
 | 88 | Deel | T4 | HR | `deel/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 89 | Zenefits | T4 | HR | `zenefits/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 90 | Namely | T4 | HR | `namely/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 91 | QuickBooks Online | T4 | Finance | `quickbooks/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
+| 91 | QuickBooks Online | T4 | Finance | `quickbooks/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 92 | Xero | T4 | Finance | `xero/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 93 | Stripe | T4 | Finance | `stripe/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 94 | PayPal | T4 | Finance | `paypal/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
@@ -129,7 +129,7 @@
 | 102 | Ramp | T4 | Finance | `ramp/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 103 | Clio | T4 | Legal | `clio/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 104 | Ironclad | T4 | Legal | `ironclad/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 105 | DocuSign | T4 | Legal | `docusign/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
+| 105 | DocuSign | T4 | Legal | `docusign/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
 | 106 | DocuSign CLM | T4 | Legal | `docusign_clm/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
 | 107 | MyCase | T4 | Legal | `mycase/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 108 | PandaDoc | T4 | Legal | `pandadoc/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
@@ -166,21 +166,21 @@
 | 139 | Sophos Central | T5 | Security | `sophos_central/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 140 | Sophos XG | T5 | Security | `sophos_xg/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 141 | CrowdStrike | T5 | Security | `crowdstrike/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
-| 142 | SentinelOne | T5 | Security | `sentinelone/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
+| 142 | SentinelOne | T5 | Security | `sentinelone/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 143 | Snyk | T5 | Security | `snyk/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 144 | HackerOne | T5 | Security | `hackerone/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 145 | HIBP | T5 | Security | `hibp/` | n/a | n/a | n/a | ⏳ | n/a |
 | 146 | BitSight | T5 | Security | `bitsight/` | n/a | n/a | n/a | ⏳ | n/a |
-| 147 | Tenable.io | T5 | Security | `tenable/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
+| 147 | Tenable.io | T5 | Security | `tenable/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 148 | Qualys VMDR | T5 | Security | `qualys/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 149 | Rapid7 | T5 | Security | `rapid7/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
+| 149 | Rapid7 | T5 | Security | `rapid7/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 150 | VirusTotal | T5 | Security | `virustotal/` | n/a | n/a | n/a | ⏳ | n/a |
 | 151 | Malwarebytes | T5 | Security | `malwarebytes/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 152 | ForgeRock | T5 | IAM | `forgerock/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
+| 152 | ForgeRock | T5 | IAM | `forgerock/` | 🟡 | ⏳ | ⏳ | ⏳ | 🟡 |
 | 153 | BeyondTrust | T5 | IAM/PAM | `beyondtrust/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 154 | Keeper | T5 | Secrets/Vault | `keeper/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
+| 154 | Keeper | T5 | Secrets/Vault | `keeper/` | 🟡 | ⏳ | ⏳ | ⏳ | 🟡 |
 | 155 | Wazuh | T5 | SIEM | `wazuh/` | n/a | n/a | n/a | ⏳ | n/a |
-| 156 | OpenAI (ChatGPT) | T5 | GenAI | `openai/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
+| 156 | OpenAI (ChatGPT) | T5 | GenAI | `openai/` | 🟡 | ⏳ | ⏳ | ⏳ | 🟡 |
 | 157 | Google Gemini | T5 | GenAI | `gemini/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
 | 158 | Anthropic (Claude) | T5 | GenAI | `anthropic/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 159 | Perplexity AI | T5 | GenAI | `perplexity/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
@@ -194,7 +194,7 @@
 | 167 | Yardi | T5 | Real Estate | `yardi/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 168 | Buildium | T5 | Real Estate | `buildium/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 169 | AppFolio | T5 | Real Estate | `appfolio/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 170 | NetSuite | T5 | ERP | `netsuite/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
+| 170 | NetSuite | T5 | ERP | `netsuite/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
 | 171 | Coursera | T5 | Education | `coursera/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 172 | LinkedIn Learning | T5 | Training | `linkedin_learning/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
 | 173 | Udemy Business | T5 | Training | `udemy_business/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
@@ -232,8 +232,8 @@
 - `sync_identity` shipped: **194/200**
 - `provision_access` shipped: **50/200** ✅ (50 real provider integrations across five Phase 10 batches — top-50 by usage complete)
 - `list_entitlements` shipped: **50/200** ✅
-- `get_access_log` shipped: **40/200** (Microsoft Entra ID, Google Workspace, Okta, Auth0, AWS IAM, Azure RBAC, GCP IAM, Slack, GitHub, Salesforce — PR #25; Cloudflare, Zoom, HubSpot, Dropbox Business, PagerDuty, Sentry, Datadog, CrowdStrike, Snyk, Zendesk — PR #27; GitLab, Atlassian Jira, MS Teams, Notion, BambooHR, Workday, Asana, Monday.com, Figma, Miro, Trello, Airtable, Smartsheet, ClickUp, Box, Egnyte, Freshdesk, Help Scout, Front, Intercom — this PR via the `AccessAuditor` optional interface). Closes **40/50** of the top-50 connector audit-log target with ~10 remaining.
-- `sso_federation` shipped: **17/200** (Microsoft Entra ID, Google Workspace, Okta, Ping Identity, Auth0, Generic SAML, Generic OIDC, Slack, MS Teams, Salesforce, Dropbox Business, GitHub, GitLab, Atlassian Jira, Zendesk, BambooHR, Workday — via Keycloak SAML/OIDC broker wiring; Zoom is `n/a`)
+- `get_access_log` shipped: **50/200** (Microsoft Entra ID, Google Workspace, Okta, Auth0, AWS IAM, Azure RBAC, GCP IAM, Slack, GitHub, Salesforce — PR #25; Cloudflare, Zoom, HubSpot, Dropbox Business, PagerDuty, Sentry, Datadog, CrowdStrike, Snyk, Zendesk — PR #27; GitLab, Atlassian Jira, MS Teams, Notion, BambooHR, Workday, Asana, Monday.com, Figma, Miro, Trello, Airtable, Smartsheet, ClickUp, Box, Egnyte, Freshdesk, Help Scout, Front, Intercom — PR #28; SentinelOne, NetSuite, QuickBooks Online, DocuSign, Tenable, Rapid7 InsightVM, Duo Security, 1Password, LastPass, Ping Identity — this PR via the `AccessAuditor` optional interface). Closes **50/50 ✅** of the top-50 connector audit-log target.
+- `sso_federation` shipped: **22/200** (Microsoft Entra ID, Google Workspace, Okta, Ping Identity, Auth0, Generic SAML, Generic OIDC, Slack, MS Teams, Salesforce, Dropbox Business, GitHub, GitLab, Atlassian Jira, Zendesk, BambooHR, Workday — prior PRs; Cloudflare, Rippling, ForgeRock, Keeper, OpenAI — this PR via Keycloak SAML/OIDC broker wiring; Zoom is `n/a`)
 
 ## How to update this file
 
