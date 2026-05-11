@@ -120,7 +120,10 @@ func mapZoomActivity(e *zoomActivity) *access.AuditLogEntry {
 	if e == nil || strings.TrimSpace(e.Time) == "" {
 		return nil
 	}
-	ts, _ := time.Parse(time.RFC3339, e.Time)
+	ts, _ := time.Parse(time.RFC3339Nano, e.Time)
+	if ts.IsZero() {
+		ts, _ = time.Parse(time.RFC3339, e.Time)
+	}
 	raw, _ := json.Marshal(e)
 	rawMap := map[string]interface{}{}
 	_ = json.Unmarshal(raw, &rawMap)

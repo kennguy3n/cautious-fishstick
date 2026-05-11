@@ -80,6 +80,28 @@ func TestFetchAccessAuditLogs_PaginatesAndMaps(t *testing.T) {
 	}
 }
 
+func TestMapZoomActivity_TimestampParsing(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want time.Time
+	}{
+		{"rfc3339", "2024-01-01T10:00:00Z", time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)},
+		{"rfc3339_nano", "2024-01-01T10:00:00.123456789Z", time.Date(2024, 1, 1, 10, 0, 0, 123456789, time.UTC)},
+		{"rfc3339_millis", "2024-01-01T10:00:00.123Z", time.Date(2024, 1, 1, 10, 0, 0, 123000000, time.UTC)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mapZoomActivity(&zoomActivity{Time: tc.in, Email: "u@x", Type: "t"})
+			if got == nil {
+				t.Fatalf("nil entry")
+			}
+			if !got.Timestamp.Equal(tc.want) {
+				t.Errorf("timestamp = %v; want %v", got.Timestamp, tc.want)
+			}
+		})
+	}
+}
+
 func TestFetchAccessAuditLogs_Unauthorized_SoftSkip(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
