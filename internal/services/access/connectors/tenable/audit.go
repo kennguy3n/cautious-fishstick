@@ -17,13 +17,18 @@ import (
 //
 // Endpoint:
 //
-//	GET /audit-log/v1/events?f=date.gt:{since}&limit=1000
+//	GET /audit-log/v1/events?f=date.gt:{since}&sort=received_asc&limit=1000
 //
 // Tenable's audit-log endpoint returns up to 1000 events per call and
 // does not expose cursor-based pagination — instead callers advance
 // the `f=date.gt:{since}` filter past the newest event in the previous
-// batch. The handler is invoked once per batch; callers persist
-// `nextSince` (the newest `received` timestamp) as a monotonic cursor.
+// batch. To drain backlogs larger than the 1000-event page size on a
+// single sync this loop keeps requesting in `sort=received_asc` order
+// and bumps `date.gt` to the newest `received` timestamp seen on each
+// page until a partial page (or empty page) signals the queue is
+// drained. The handler is invoked once per provider page in
+// chronological order so callers can persist `nextSince` (the newest
+// `received` timestamp) as a monotonic cursor.
 //
 // On HTTP 401/403 the connector returns access.ErrAuditNotAvailable
 // so callers treat the tenant as plan- or role-gated rather than
@@ -38,44 +43,60 @@ func (c *TenableAccessConnector) FetchAccessAuditLogs(
 	if err != nil {
 		return err
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
+	const pageLimit = 1000
 	since := sincePartitions[access.DefaultAuditPartition]
-	q := url.Values{}
-	q.Set("limit", "1000")
-	if !since.IsZero() {
-		q.Set("f", "date.gt:"+since.UTC().Format("2006-01-02T15:04:05"))
-	}
-	full := c.baseURL() + "/audit-log/v1/events?" + q.Encode()
-	req, err := c.newRequest(ctx, secrets, http.MethodGet, full)
-	if err != nil {
-		return err
-	}
-	body, err := c.do(req)
-	if err != nil {
-		if isAuditNotAvailable(err) {
-			return access.ErrAuditNotAvailable
+	cursor := since
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		return err
-	}
-	var page tenableAuditPage
-	if err := json.Unmarshal(body, &page); err != nil {
-		return fmt.Errorf("tenable: decode events: %w", err)
-	}
-	batch := make([]*access.AuditLogEntry, 0, len(page.Events))
-	batchMax := since
-	for i := range page.Events {
-		entry := mapTenableEvent(&page.Events[i])
-		if entry == nil {
-			continue
+		q := url.Values{}
+		q.Set("limit", fmt.Sprintf("%d", pageLimit))
+		q.Set("sort", "received_asc")
+		if !cursor.IsZero() {
+			q.Set("f", "date.gt:"+cursor.UTC().Format("2006-01-02T15:04:05"))
 		}
-		if entry.Timestamp.After(batchMax) {
-			batchMax = entry.Timestamp
+		full := c.baseURL() + "/audit-log/v1/events?" + q.Encode()
+		req, err := c.newRequest(ctx, secrets, http.MethodGet, full)
+		if err != nil {
+			return err
 		}
-		batch = append(batch, entry)
+		body, err := c.do(req)
+		if err != nil {
+			if isAuditNotAvailable(err) {
+				return access.ErrAuditNotAvailable
+			}
+			return err
+		}
+		var page tenableAuditPage
+		if err := json.Unmarshal(body, &page); err != nil {
+			return fmt.Errorf("tenable: decode events: %w", err)
+		}
+		batch := make([]*access.AuditLogEntry, 0, len(page.Events))
+		batchMax := cursor
+		for i := range page.Events {
+			entry := mapTenableEvent(&page.Events[i])
+			if entry == nil {
+				continue
+			}
+			if entry.Timestamp.After(batchMax) {
+				batchMax = entry.Timestamp
+			}
+			batch = append(batch, entry)
+		}
+		if err := handler(batch, batchMax, access.DefaultAuditPartition); err != nil {
+			return err
+		}
+		// Stop when the page is short (Tenable returned everything it had),
+		// or when the cursor didn't advance (no new events to bump past).
+		if len(page.Events) < pageLimit {
+			return nil
+		}
+		if !batchMax.After(cursor) {
+			return nil
+		}
+		cursor = batchMax
 	}
-	return handler(batch, batchMax, access.DefaultAuditPartition)
 }
 
 type tenableAuditPage struct {
