@@ -699,6 +699,99 @@ func TestHTTPKeycloakClient_EscapesURLPathSegments(t *testing.T) {
 	}
 }
 
+// --- Phase 10 SSO federation batch 4: AWS / Azure / GCP wiring ---
+
+func TestSSOFederation_AWSIAMSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://portal.sso.us-east-1.amazonaws.com/saml/metadata/MDEyMzQ1Njc4OTAyNDU2NzAxMjM",
+		EntityID:    "https://portal.sso.us-east-1.amazonaws.com/saml/metadata/MDEyMzQ1Njc4OTAyNDU2NzAxMjM",
+		SSOLoginURL: "https://d-1234567890.awsapps.com/start",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "aws-1", "AWS IAM Identity Center", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q", got.ProviderID)
+	}
+	if got.Config["entityId"] != meta.EntityID {
+		t.Errorf("entityId = %q", got.Config["entityId"])
+	}
+	if got.Config["singleSignOnServiceUrl"] != meta.SSOLoginURL {
+		t.Errorf("singleSignOnServiceUrl = %q", got.Config["singleSignOnServiceUrl"])
+	}
+}
+
+func TestSSOFederation_AzureEntraOIDC(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "oidc",
+		MetadataURL: "https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/v2.0/.well-known/openid-configuration",
+		EntityID:    "https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/v2.0",
+		SSOLoginURL: "https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/oauth2/v2.0/authorize",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "azure-1", "Azure Entra ID", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "oidc" {
+		t.Errorf("ProviderID = %q", got.ProviderID)
+	}
+	if got.Config["issuer"] != meta.EntityID {
+		t.Errorf("issuer = %q", got.Config["issuer"])
+	}
+}
+
+func TestSSOFederation_AzureEntraSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:     "saml",
+		MetadataURL:  "https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/federationmetadata/2007-06/federationmetadata.xml",
+		EntityID:     "https://sts.windows.net/11111111-2222-3333-4444-555555555555/",
+		SSOLoginURL:  "https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/saml2",
+		SSOLogoutURL: "https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/saml2/logout",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "azure-saml-1", "Azure Entra ID (SAML)", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q", got.ProviderID)
+	}
+	if got.Config["singleLogoutServiceUrl"] != meta.SSOLogoutURL {
+		t.Errorf("singleLogoutServiceUrl = %q", got.Config["singleLogoutServiceUrl"])
+	}
+}
+
+func TestSSOFederation_GCPWorkforcePoolOIDC(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "oidc",
+		MetadataURL: "https://iam.googleapis.com/locations/global/workforcePools/shieldnet-pool/.well-known/openid-configuration",
+		EntityID:    "https://iam.googleapis.com/locations/global/workforcePools/shieldnet-pool",
+		SSOLoginURL: "https://auth.cloud.google/signin/locations/global/workforcePools/shieldnet-pool",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "gcp-1", "GCP Workforce Pool", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "oidc" {
+		t.Errorf("ProviderID = %q", got.ProviderID)
+	}
+	if got.Config["issuer"] != meta.EntityID {
+		t.Errorf("issuer = %q", got.Config["issuer"])
+	}
+	if got.Config["metadataUrl"] != meta.MetadataURL {
+		t.Errorf("metadataUrl = %q", got.Config["metadataUrl"])
+	}
+}
+
 // contains is a substring helper that avoids pulling in `strings` for
 // just one use.
 func contains(haystack, needle string) bool {

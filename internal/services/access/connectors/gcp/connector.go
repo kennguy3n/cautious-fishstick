@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -48,6 +49,15 @@ type httpDoer interface {
 
 type Config struct {
 	ProjectID string `json:"project_id"`
+
+	// WorkforcePoolID is the GCP Workforce Identity Federation pool ID
+	// (e.g. "shieldnet-pool") used by GetSSOMetadata to advertise the
+	// pool's OIDC discovery endpoint to SSOFederationService. When
+	// empty the connector returns (nil, nil) from GetSSOMetadata.
+	WorkforcePoolID string `json:"workforce_pool_id,omitempty"`
+	// WorkforcePoolLocation defaults to "global". Other regions must be
+	// declared explicitly per GCP's per-region pool layout.
+	WorkforcePoolLocation string `json:"workforce_pool_location,omitempty"`
 }
 
 type Secrets struct {
@@ -76,6 +86,12 @@ func DecodeConfig(raw map[string]interface{}) (Config, error) {
 	var cfg Config
 	if v, ok := raw["project_id"].(string); ok {
 		cfg.ProjectID = v
+	}
+	if v, ok := raw["workforce_pool_id"].(string); ok {
+		cfg.WorkforcePoolID = v
+	}
+	if v, ok := raw["workforce_pool_location"].(string); ok {
+		cfg.WorkforcePoolLocation = v
 	}
 	return cfg, nil
 }
@@ -526,8 +542,40 @@ func validateGrantPair(grant access.AccessGrant) error {
 	}
 	return nil
 }
-func (c *GCPAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata returns OIDC federation metadata for a GCP Workforce
+// Identity Federation pool. The operator supplies a workforce_pool_id
+// (and optionally workforce_pool_location, default "global"); the
+// connector derives the canonical pool issuer and discovery URL that
+// SSOFederationService.ConfigureBroker feeds into Keycloak.
+//
+// When workforce_pool_id is empty the method returns (nil, nil) —
+// the connector still works for IAM identity sync but SSO federation
+// is opt-in.
+func (c *GCPAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	cfg, err := DecodeConfig(configRaw)
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+	pool := strings.TrimSpace(cfg.WorkforcePoolID)
+	if pool == "" {
+		return nil, nil
+	}
+	location := strings.TrimSpace(cfg.WorkforcePoolLocation)
+	if location == "" {
+		location = "global"
+	}
+	issuer := "https://iam.googleapis.com/locations/" + url.PathEscape(location) +
+		"/workforcePools/" + url.PathEscape(pool)
+	return &access.SSOMetadata{
+		Protocol:    "oidc",
+		MetadataURL: issuer + "/.well-known/openid-configuration",
+		EntityID:    issuer,
+		SSOLoginURL: "https://auth.cloud.google/signin/locations/" + url.PathEscape(location) +
+			"/workforcePools/" + url.PathEscape(pool),
+	}, nil
 }
 
 // GetCredentialsMetadata extracts the service account email + key id from
