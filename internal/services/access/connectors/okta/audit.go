@@ -36,11 +36,13 @@ func (c *OktaAccessConnector) FetchAccessAuditLogs(
 		return err
 	}
 	since := sincePartitions[access.DefaultAuditPartition]
-	sinceStr := since.UTC().Format(time.RFC3339)
-	if since.IsZero() {
-		sinceStr = time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339)
+	// When `since` is zero we omit the parameter so Okta returns
+	// events from the start of its retention window (~90 days).
+	query := "sortOrder=ASCENDING&limit=200"
+	if !since.IsZero() {
+		query += "&since=" + url.QueryEscape(since.UTC().Format(time.RFC3339))
 	}
-	startURL := c.absURL(cfg, "/api/v1/logs?sortOrder=ASCENDING&limit=200&since="+url.QueryEscape(sinceStr))
+	startURL := c.absURL(cfg, "/api/v1/logs?"+query)
 
 	cursor := since
 	for next := startURL; next != ""; {

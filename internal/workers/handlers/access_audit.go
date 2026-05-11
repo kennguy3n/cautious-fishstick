@@ -22,7 +22,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 
@@ -198,9 +197,11 @@ func encodeAuditCursors(cursors map[string]time.Time) (string, error) {
 	return string(buf), nil
 }
 
-// cursorsEqual returns true when two cursor maps are byte-identical
-// after UTC normalisation. Used by the worker to skip a no-op DB
-// write when no partition advanced.
+// cursorsEqual returns true when two cursor maps represent the same
+// logical instants for every partition. Used by the worker to skip
+// a no-op DB write when no partition advanced. Comparison goes
+// through time.Equal so JSON-roundtripped and freshly-parsed Time
+// values for the same instant compare as equal.
 func cursorsEqual(a, b map[string]time.Time) bool {
 	if len(a) != len(b) {
 		return false
@@ -210,7 +211,7 @@ func cursorsEqual(a, b map[string]time.Time) bool {
 		if !ok {
 			return false
 		}
-		if !reflect.DeepEqual(av.UTC(), bv.UTC()) {
+		if !av.Equal(bv) {
 			return false
 		}
 	}

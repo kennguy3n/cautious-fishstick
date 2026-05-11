@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -355,5 +356,100 @@ func TestAccessAudit_PersistedCursorRowIDIsULID(t *testing.T) {
 	}
 	if _, err := ulid.ParseStrict(state.ID); err != nil {
 		t.Errorf("persisted sync_state.id is not a valid ULID: %v (id=%q)", err, state.ID)
+	}
+}
+
+// TestCursorsEqual_SameInstantDifferentRepresentations documents
+// the cursorsEqual contract: two cursor maps holding the same
+// logical instants must compare as equal regardless of monotonic-
+// clock presence, location pointer, or wall-clock representation.
+func TestCursorsEqual_SameInstantDifferentRepresentations(t *testing.T) {
+	t.Run("monotonic vs non-monotonic", func(t *testing.T) {
+		withMono := time.Now()
+		withoutMono := time.Unix(withMono.Unix(), int64(withMono.Nanosecond()))
+		if !cursorsEqual(
+			map[string]time.Time{"p": withMono},
+			map[string]time.Time{"p": withoutMono},
+		) {
+			t.Error("monotonic vs non-monotonic Time at same instant should compare equal")
+		}
+	})
+	t.Run("UTC vs FixedZone same instant", func(t *testing.T) {
+		utc := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
+		pst := utc.In(time.FixedZone("PST", -8*60*60))
+		if !cursorsEqual(
+			map[string]time.Time{"p": utc},
+			map[string]time.Time{"p": pst},
+		) {
+			t.Error("same instant in UTC vs PST should compare equal")
+		}
+	})
+	t.Run("two FixedZones same instant", func(t *testing.T) {
+		// Two distinct *time.Location pointers that both
+		// represent UTC offset.
+		a := time.Date(2024, 6, 1, 12, 0, 0, 0, time.FixedZone("Z1", 0))
+		b := time.Date(2024, 6, 1, 12, 0, 0, 0, time.FixedZone("Z2", 0))
+		if !cursorsEqual(
+			map[string]time.Time{"p": a},
+			map[string]time.Time{"p": b},
+		) {
+			t.Error("same instant in distinct FixedZone pointers should compare equal")
+		}
+	})
+}
+
+// TestCursorsEqual_JSONRoundTripEquivalence exercises the
+// integration path the worker actually traverses: a cursor is
+// persisted via encodeAuditCursors (RFC3339Nano string) and later
+// read back through time.Parse. The freshly-parsed Time must compare
+// equal to the in-memory Time the worker holds before persistence so
+// the worker doesn't issue redundant AccessSyncState UPDATEs.
+func TestCursorsEqual_JSONRoundTripEquivalence(t *testing.T) {
+	live := time.Now()
+
+	encoded, err := encodeAuditCursors(map[string]time.Time{
+		access.DefaultAuditPartition: live,
+	})
+	if err != nil {
+		t.Fatalf("encodeAuditCursors: %v", err)
+	}
+	var decoded map[string]string
+	if err := json.Unmarshal([]byte(encoded), &decoded); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, decoded[access.DefaultAuditPartition])
+	if err != nil {
+		t.Fatalf("time.Parse: %v", err)
+	}
+
+	persisted := map[string]time.Time{access.DefaultAuditPartition: parsed}
+	inMemory := map[string]time.Time{access.DefaultAuditPartition: live}
+
+	if !cursorsEqual(persisted, inMemory) {
+		t.Error("JSON-roundtripped vs in-memory cursor for the same instant should compare equal")
+	}
+}
+
+// TestCursorsEqual_DifferentInstants is the negative case ensuring
+// genuinely-different instants still compare as not-equal so a real
+// cursor advance still triggers the DB UPDATE.
+func TestCursorsEqual_DifferentInstants(t *testing.T) {
+	a := map[string]time.Time{"p": time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)}
+	b := map[string]time.Time{"p": time.Date(2024, 6, 1, 12, 0, 1, 0, time.UTC)}
+
+	if cursorsEqual(a, b) {
+		t.Error("cursors 1s apart should compare not-equal")
+	}
+}
+
+// TestCursorsEqual_DifferentPartitions ensures the equality check
+// short-circuits when the partition key sets diverge.
+func TestCursorsEqual_DifferentPartitions(t *testing.T) {
+	now := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
+	a := map[string]time.Time{"signIns": now}
+	b := map[string]time.Time{"directoryAudits": now}
+
+	if cursorsEqual(a, b) {
+		t.Error("different partition keys should compare not-equal even with identical timestamps")
 	}
 }
