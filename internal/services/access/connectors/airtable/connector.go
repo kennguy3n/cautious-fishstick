@@ -439,6 +439,13 @@ func (c *AirtableAccessConnector) findCollaboratorIDForEmail(ctx context.Context
 // where the user appears as an individual collaborator. Airtable's
 // per-user "my bases" endpoint is restricted to the authed user, so we
 // enumerate bases and filter.
+//
+// Airtable's /meta/bases response often omits the inline
+// individualCollaborators array (it's only present when the caller has
+// the meta:read scope and an enterprise plan). When the inline list is
+// missing we fall back to a per-base GET /meta/bases/{baseId}/collaborators
+// call so the entitlement listing still works on standard plans. The
+// loop honours ctx cancellation between per-base calls.
 func (c *AirtableAccessConnector) ListEntitlements(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},
@@ -462,10 +469,10 @@ func (c *AirtableAccessConnector) ListEntitlements(
 	}
 	var resp struct {
 		Bases []struct {
-			ID                       string                 `json:"id"`
-			Name                     string                 `json:"name"`
-			PermissionLevel          string                 `json:"permissionLevel,omitempty"`
-			IndividualCollaborators  []airtableCollaborator `json:"individualCollaborators,omitempty"`
+			ID                      string                 `json:"id"`
+			Name                    string                 `json:"name"`
+			PermissionLevel         string                 `json:"permissionLevel,omitempty"`
+			IndividualCollaborators []airtableCollaborator `json:"individualCollaborators,omitempty"`
 		} `json:"bases"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
@@ -474,7 +481,18 @@ func (c *AirtableAccessConnector) ListEntitlements(
 	needle := strings.ToLower(userExternalID)
 	var out []access.Entitlement
 	for _, b := range resp.Bases {
-		for _, cc := range b.IndividualCollaborators {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		collabs := b.IndividualCollaborators
+		if len(collabs) == 0 {
+			perBase, err := c.listBaseCollaborators(ctx, secrets, b.ID)
+			if err != nil {
+				return nil, err
+			}
+			collabs = perBase
+		}
+		for _, cc := range collabs {
 			if strings.EqualFold(cc.UserID, userExternalID) || strings.ToLower(cc.Email) == needle {
 				role := cc.Permission
 				if role == "" {
@@ -490,6 +508,35 @@ func (c *AirtableAccessConnector) ListEntitlements(
 		}
 	}
 	return out, nil
+}
+
+// listBaseCollaborators issues GET /meta/bases/{baseId}/collaborators
+// and returns the individual collaborators array. Used as a fallback
+// when /meta/bases omits the inline IndividualCollaborators field. A
+// 404 is treated as "no collaborators" rather than an error so the
+// outer ListEntitlements call can continue past inaccessible bases.
+func (c *AirtableAccessConnector) listBaseCollaborators(ctx context.Context, secrets Secrets, baseID string) ([]airtableCollaborator, error) {
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, "/meta/bases/"+url.PathEscape(baseID)+"/collaborators")
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden {
+		return nil, nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("airtable: base collaborators GET status %d: %s", resp.StatusCode, string(body))
+	}
+	var list airtableBaseCollaboratorsResponse
+	if err := json.Unmarshal(body, &list); err != nil {
+		return nil, fmt.Errorf("airtable: decode base collaborators: %w", err)
+	}
+	return list.IndividualCollaborators, nil
 }
 func (c *AirtableAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

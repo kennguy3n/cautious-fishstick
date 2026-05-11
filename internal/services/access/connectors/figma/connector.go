@@ -204,12 +204,35 @@ type figmaTeamMembersResponse struct {
 	} `json:"cursor"`
 }
 
+// figmaProjectMembersResponse is the response type for
+// GET /v1/projects/{project_id}/members. Figma's team and project
+// member endpoints both return a top-level "members" array of objects
+// with the same fields, but they are documented as separate endpoints
+// with independently versioned schemas. We declare a distinct response
+// type for the project endpoint so the shape contract is explicit
+// per-endpoint — if Figma diverges the two in a future API release,
+// only this type needs to change.
+type figmaProjectMembersResponse struct {
+	Members []figmaProjectMember `json:"members"`
+}
+
 type figmaMember struct {
 	ID     string `json:"id"`
 	Name   string `json:"handle"`
 	Email  string `json:"email"`
 	Role   string `json:"role"`
 	ImgURL string `json:"img_url,omitempty"`
+}
+
+// figmaProjectMember mirrors figmaMember but is scoped to the project
+// members endpoint. Keeping it as a separate type guards against silent
+// breakage if Figma ever ships a project-specific shape (e.g., adding
+// project-scoped permission fields).
+type figmaProjectMember struct {
+	ID    string `json:"id"`
+	Name  string `json:"handle"`
+	Email string `json:"email"`
+	Role  string `json:"role"`
 }
 
 func (c *FigmaAccessConnector) CountIdentities(ctx context.Context, configRaw, secretsRaw map[string]interface{}) (int, error) {
@@ -384,9 +407,15 @@ func (c *FigmaAccessConnector) RevokeAccess(
 	}
 }
 
-// ListEntitlements walks /teams/{team_id}/projects and, for each project,
-// fetches /projects/{project_id}/members and filters for the supplied user.
-// Each matching membership emits a project-level Entitlement.
+// ListEntitlements walks /teams/{team_id}/projects and, for each
+// project, fetches /projects/{project_id}/members and filters for the
+// supplied user. Each matching membership emits a project-level
+// Entitlement.
+//
+// Cost: this issues 1 request to list projects + 1 request per project.
+// Figma has no per-user "my projects" endpoint, so this O(P) fan-out is
+// inherent to the API surface. The loop honours ctx cancellation between
+// per-project calls so long-running scans can be aborted promptly.
 func (c *FigmaAccessConnector) ListEntitlements(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},
@@ -414,6 +443,9 @@ func (c *FigmaAccessConnector) ListEntitlements(
 	}
 	var out []access.Entitlement
 	for _, p := range resp.Projects {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		memReq, err := c.newRequest(ctx, secrets, http.MethodGet, "/projects/"+url.PathEscape(p.ID)+"/members")
 		if err != nil {
 			return nil, err
@@ -422,7 +454,7 @@ func (c *FigmaAccessConnector) ListEntitlements(
 		if err != nil {
 			return nil, err
 		}
-		var mems figmaTeamMembersResponse
+		var mems figmaProjectMembersResponse
 		if err := json.Unmarshal(memBody, &mems); err != nil {
 			return nil, fmt.Errorf("figma: decode project members: %w", err)
 		}

@@ -20,6 +20,13 @@ import (
 const (
 	ProviderName = "quickbooks"
 	pageSize     = 100
+
+	// managedTitlePrefix tags the Employee.Title field so we never clear or
+	// overwrite an HR-owned job title. QuickBooks Online has no real RBAC
+	// surface for employees, so we co-opt Employee.Title as a single-slot
+	// access role; the prefix scopes the field so only access-managed
+	// values are touched by Provision / Revoke / ListEntitlements.
+	managedTitlePrefix = "shieldnet-access:"
 )
 
 var ErrNotImplemented = errors.New("quickbooks: capability not implemented in Phase 7")
@@ -360,8 +367,13 @@ func (c *QuickBooksAccessConnector) sparseUpdateEmployee(ctx context.Context, cf
 }
 
 // ProvisionAccess assigns a role to the employee via a sparse Employee
-// update (Title field). If the employee already holds the role, no POST
-// is issued (idempotent success).
+// update (Title field). QuickBooks Online has no employee-level RBAC
+// API, so the connector co-opts Employee.Title as a single-slot role.
+// To avoid trashing HR job-title data, the value is written with the
+// managedTitlePrefix marker — Revoke and ListEntitlements only act on
+// titles carrying this prefix, leaving non-managed titles untouched.
+// If the employee already holds the role, no POST is issued
+// (idempotent success).
 func (c *QuickBooksAccessConnector) ProvisionAccess(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},
@@ -384,15 +396,24 @@ func (c *QuickBooksAccessConnector) ProvisionAccess(
 	if emp == nil {
 		return fmt.Errorf("quickbooks: employee %s not found", grant.UserExternalID)
 	}
-	if emp.Title == grant.ResourceExternalID {
+	desired := managedTitlePrefix + grant.ResourceExternalID
+	if emp.Title == desired {
 		return nil
 	}
-	emp.Title = grant.ResourceExternalID
+	// Refuse to overwrite an unmanaged Title (i.e., an HR-owned job
+	// title). Operators must clear or migrate the field manually before
+	// the access platform may take ownership.
+	if emp.Title != "" && !strings.HasPrefix(emp.Title, managedTitlePrefix) {
+		return fmt.Errorf("quickbooks: employee %s Title is HR-owned (%q); refusing to overwrite", grant.UserExternalID, emp.Title)
+	}
+	emp.Title = desired
 	return c.sparseUpdateEmployee(ctx, cfg, secrets, *emp)
 }
 
-// RevokeAccess clears the employee's role via a sparse Employee update.
-// Missing employee ⇒ idempotent success.
+// RevokeAccess clears the employee's managed role via a sparse Employee
+// update. Only Title values carrying the managedTitlePrefix marker are
+// cleared — HR-owned titles are left untouched. Missing employee, role
+// mismatch, or unmanaged title ⇒ idempotent success.
 func (c *QuickBooksAccessConnector) RevokeAccess(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},
@@ -415,7 +436,8 @@ func (c *QuickBooksAccessConnector) RevokeAccess(
 	if emp == nil {
 		return nil
 	}
-	if emp.Title != grant.ResourceExternalID {
+	desired := managedTitlePrefix + grant.ResourceExternalID
+	if emp.Title != desired {
 		return nil
 	}
 	emp.Title = ""
@@ -423,7 +445,10 @@ func (c *QuickBooksAccessConnector) RevokeAccess(
 }
 
 // ListEntitlements reads /v3/company/{realm}/employee/{id} and emits
-// one Entitlement when the employee has a Title set.
+// one Entitlement when the employee's Title carries the
+// managedTitlePrefix marker (i.e., it was written by ProvisionAccess).
+// Unmanaged HR job titles are deliberately ignored so they are never
+// surfaced as access entitlements.
 func (c *QuickBooksAccessConnector) ListEntitlements(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},
@@ -441,12 +466,13 @@ func (c *QuickBooksAccessConnector) ListEntitlements(
 	if err != nil {
 		return nil, err
 	}
-	if emp == nil || emp.Title == "" {
+	if emp == nil || !strings.HasPrefix(emp.Title, managedTitlePrefix) {
 		return nil, nil
 	}
+	role := strings.TrimPrefix(emp.Title, managedTitlePrefix)
 	return []access.Entitlement{{
-		ResourceExternalID: emp.Title,
-		Role:               emp.Title,
+		ResourceExternalID: role,
+		Role:               role,
 		Source:             "direct",
 	}}, nil
 }

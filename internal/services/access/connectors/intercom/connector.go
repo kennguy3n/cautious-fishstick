@@ -342,7 +342,14 @@ func (c *IntercomAccessConnector) ProvisionAccess(
 			return nil
 		}
 	}
-	admins := append(team.AdminIDs, grant.UserExternalID)
+	// Build the admins slice by explicit copy rather than append to
+	// avoid mutating the underlying array of team.AdminIDs. The
+	// previous `append(team.AdminIDs, ...)` was safe today only
+	// because getTeam() returns a fresh slice per call; an explicit
+	// copy makes the contract independent of that detail.
+	admins := make([]string, len(team.AdminIDs), len(team.AdminIDs)+1)
+	copy(admins, team.AdminIDs)
+	admins = append(admins, grant.UserExternalID)
 	return c.putTeamAdmins(ctx, secrets, grant.ResourceExternalID, admins)
 }
 

@@ -455,9 +455,17 @@ func (c *SmartsheetAccessConnector) findShareIDForUser(ctx context.Context, secr
 	}
 }
 
-// ListEntitlements paginates GET /2.0/sheets, then for each sheet checks
-// /2.0/sheets/{sheetId}/shares for an entry matching the user. Returns
-// one Entitlement per matched sheet with the per-share accessLevel.
+// ListEntitlements paginates GET /2.0/sheets, then for each sheet
+// checks /2.0/sheets/{sheetId}/shares for an entry matching the user.
+// Returns one Entitlement per matched sheet with the per-share
+// accessLevel.
+//
+// Cost: this issues 1 request per sheets page (page size = pageSize)
+// plus 1 request per sheet returned by that page. Smartsheet has no
+// per-user "my shared sheets" endpoint, so the per-sheet shares call is
+// the only way to derive a user's access level. The outer loop honours
+// ctx cancellation between pages and the inner loop honours it between
+// per-sheet share lookups.
 func (c *SmartsheetAccessConnector) ListEntitlements(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},
@@ -475,6 +483,9 @@ func (c *SmartsheetAccessConnector) ListEntitlements(
 	var out []access.Entitlement
 	page := 1
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		fullURL := c.baseURL() + "/2.0/sheets?pageSize=" + strconv.Itoa(pageSize) + "&page=" + strconv.Itoa(page)
 		req, err := c.newRequest(ctx, secrets, http.MethodGet, fullURL)
 		if err != nil {
@@ -493,6 +504,9 @@ func (c *SmartsheetAccessConnector) ListEntitlements(
 			return nil, fmt.Errorf("smartsheet: decode sheets: %w", err)
 		}
 		for _, sheet := range resp.Data {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			role, err := c.lookupAccessLevelForUser(ctx, secrets, sheet.ID.String(), emailLower)
 			if err != nil {
 				return nil, err

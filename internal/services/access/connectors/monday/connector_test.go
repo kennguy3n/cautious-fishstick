@@ -249,3 +249,28 @@ func TestProvisionRevoke_RejectMissing(t *testing.T) {
 		t.Error("revoke should require board id")
 	}
 }
+
+// TestProvisionRevoke_RejectsNonNumericIDs ensures we reject any input
+// that isn't a positive integer before it reaches the GraphQL query
+// string. This is the regression test for the GraphQL-injection finding
+// (`42) { id } } mutation { delete_board(board_id: 99` style payloads).
+func TestProvisionRevoke_RejectsNonNumericIDs(t *testing.T) {
+	c := New()
+	injection := "42) { id } } mutation { delete_board(board_id: 99"
+	cases := []access.AccessGrant{
+		{UserExternalID: injection, ResourceExternalID: "42"},
+		{UserExternalID: "7", ResourceExternalID: injection},
+		{UserExternalID: "abc", ResourceExternalID: "42"},
+		{UserExternalID: "7", ResourceExternalID: "0x2a"},
+		{UserExternalID: "-1", ResourceExternalID: "42"},
+		{UserExternalID: "7", ResourceExternalID: "0"},
+	}
+	for i, g := range cases {
+		if err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), g); err == nil {
+			t.Errorf("case %d: provision should reject non-numeric id, grant=%+v", i, g)
+		}
+		if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), g); err == nil {
+			t.Errorf("case %d: revoke should reject non-numeric id, grant=%+v", i, g)
+		}
+	}
+}

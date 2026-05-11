@@ -10,11 +10,29 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
+
+// parseMondayID parses a Monday.com numeric ID (board_id, user_id) and
+// returns its canonical decimal form. Monday IDs are 64-bit integers;
+// rejecting non-numeric input prevents GraphQL injection when the value
+// is interpolated into a mutation string (see ProvisionAccess /
+// RevokeAccess below).
+func parseMondayID(label, raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", fmt.Errorf("monday: %s is required", label)
+	}
+	n, err := strconv.ParseInt(trimmed, 10, 64)
+	if err != nil || n <= 0 {
+		return "", fmt.Errorf("monday: %s must be a positive numeric id", label)
+	}
+	return strconv.FormatInt(n, 10), nil
+}
 
 const (
 	ProviderName   = "monday"
@@ -301,13 +319,13 @@ func (c *MondayAccessConnector) ProvisionAccess(
 	configRaw, secretsRaw map[string]interface{},
 	grant access.AccessGrant,
 ) error {
-	userID := strings.TrimSpace(grant.UserExternalID)
-	boardID := strings.TrimSpace(grant.ResourceExternalID)
-	if userID == "" {
-		return errors.New("monday: grant.UserExternalID is required")
+	userID, err := parseMondayID("grant.UserExternalID", grant.UserExternalID)
+	if err != nil {
+		return err
 	}
-	if boardID == "" {
-		return errors.New("monday: grant.ResourceExternalID (board_id) is required")
+	boardID, err := parseMondayID("grant.ResourceExternalID (board_id)", grant.ResourceExternalID)
+	if err != nil {
+		return err
 	}
 	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
 	if err != nil {
@@ -343,13 +361,13 @@ func (c *MondayAccessConnector) RevokeAccess(
 	configRaw, secretsRaw map[string]interface{},
 	grant access.AccessGrant,
 ) error {
-	userID := strings.TrimSpace(grant.UserExternalID)
-	boardID := strings.TrimSpace(grant.ResourceExternalID)
-	if userID == "" {
-		return errors.New("monday: grant.UserExternalID is required")
+	userID, err := parseMondayID("grant.UserExternalID", grant.UserExternalID)
+	if err != nil {
+		return err
 	}
-	if boardID == "" {
-		return errors.New("monday: grant.ResourceExternalID (board_id) is required")
+	boardID, err := parseMondayID("grant.ResourceExternalID (board_id)", grant.ResourceExternalID)
+	if err != nil {
+		return err
 	}
 	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
 	if err != nil {
@@ -373,10 +391,24 @@ func (c *MondayAccessConnector) RevokeAccess(
 	return nil
 }
 
+// maxBoardPages bounds the number of board pages ListEntitlements will
+// scan. Monday.com has no per-user "my boards" query and the boards
+// query is the only way to derive subscriptions for an arbitrary user,
+// so the call is inherently O(boards / pageSize). On workspaces with
+// hundreds of thousands of boards an unbounded scan would burn through
+// the API complexity quota; capping at maxBoardPages keeps a single
+// ListEntitlements call within a known request budget. Operators who
+// need a complete view on very large workspaces should use the bulk
+// SyncIdentities pipeline + a downstream join instead.
+const maxBoardPages = 100
+
 // ListEntitlements paginates boards via boards(limit:N,page:P) and emits
 // one Entitlement per board the user is currently subscribed to. Monday
-// does not expose a per-user "my boards" query for arbitrary users, so we
-// walk the workspace boards and filter subscribers in-process.
+// does not expose a per-user "my boards" query for arbitrary users, so
+// we walk the workspace boards and filter subscribers in-process. The
+// scan honours ctx cancellation between pages and stops after
+// maxBoardPages pages have been visited; see the maxBoardPages comment
+// for the rationale.
 func (c *MondayAccessConnector) ListEntitlements(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},
@@ -391,8 +423,10 @@ func (c *MondayAccessConnector) ListEntitlements(
 		return nil, err
 	}
 	var out []access.Entitlement
-	page := 1
-	for {
+	for page := 1; page <= maxBoardPages; page++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		query := fmt.Sprintf("query { boards(limit: %d, page: %d) { id name subscribers { id } } }", pageSize, page)
 		body, err := c.postRaw(ctx, secrets, query)
 		if err != nil {
@@ -420,8 +454,8 @@ func (c *MondayAccessConnector) ListEntitlements(
 		if len(resp.Data.Boards) < pageSize {
 			return out, nil
 		}
-		page++
 	}
+	return out, nil
 }
 func (c *MondayAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil
