@@ -33,9 +33,33 @@ func (h *AccessRequestHandler) Register(r *gin.Engine) {
 	g := r.Group("/access/requests")
 	g.POST("", h.CreateRequest)
 	g.GET("", h.ListRequests)
+	g.GET("/:id", h.GetRequest)
 	g.POST("/:id/approve", h.ApproveRequest)
 	g.POST("/:id/deny", h.DenyRequest)
 	g.POST("/:id/cancel", h.CancelRequest)
+}
+
+// GetRequest handles GET /access/requests/:id. Returns the request
+// row along with its full state-history audit trail so the operator
+// admin UI can render the "request detail" drawer without making N
+// follow-up calls. Returns 400 when :id is missing, 404 when the
+// request does not exist, 500 on DB errors.
+func (h *AccessRequestHandler) GetRequest(c *gin.Context) {
+	id := GetStringParam(c, "id")
+	if id == "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
+			Error:   "id path parameter is required",
+			Code:    "validation_failed",
+			Message: "id path parameter is required",
+		})
+		return
+	}
+	detail, err := h.requestService.GetRequest(c.Request.Context(), id)
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, err)
+		return
+	}
+	c.JSON(http.StatusOK, detail)
 }
 
 // createRequestBody mirrors access.CreateAccessRequestInput on the

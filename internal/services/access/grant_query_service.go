@@ -2,6 +2,7 @@ package access
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -64,4 +65,23 @@ func (s *AccessGrantQueryService) ListActiveGrants(ctx context.Context, q GrantQ
 		return nil, fmt.Errorf("access: list access_grants: %w", err)
 	}
 	return out, nil
+}
+
+// GetGrant loads a single grant by ULID and returns it. Returns
+// ErrGrantNotFound (wrapped) when the row does not exist or has been
+// soft-deleted. Used by GET /access/grants/:id/entitlements to look
+// up the (connector_id, user_id) the entitlements lookup is scoped
+// to.
+func (s *AccessGrantQueryService) GetGrant(ctx context.Context, grantID string) (*models.AccessGrant, error) {
+	if grantID == "" {
+		return nil, fmt.Errorf("%w: grant id is required", ErrValidation)
+	}
+	var grant models.AccessGrant
+	if err := s.db.WithContext(ctx).Where("id = ?", grantID).First(&grant).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%w: %s", ErrGrantNotFound, grantID)
+		}
+		return nil, fmt.Errorf("access: get access_grant: %w", err)
+	}
+	return &grant, nil
 }

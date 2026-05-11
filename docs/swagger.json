@@ -48,6 +48,14 @@
         "responses": { "200": { "description": "OK" }, "400": { "description": "Validation error" } }
       }
     },
+    "/access/requests/{id}": {
+      "get": {
+        "summary": "Get an access request with its state-history audit trail",
+        "tags": ["access-requests"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Request + history" }, "404": { "description": "Not found" } }
+      }
+    },
     "/access/requests/{id}/approve": {
       "post": {
         "summary": "Approve an access request",
@@ -81,6 +89,37 @@
           { "name": "connector_id", "in": "query", "required": false, "schema": { "type": "string" } }
         ],
         "responses": { "200": { "description": "OK" }, "400": { "description": "At least one filter required" } }
+      }
+    },
+    "/access/grants/{id}/entitlements": {
+      "get": {
+        "summary": "List live app permissions for the user on the grant's connector",
+        "tags": ["access-grants"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK" },
+          "404": { "description": "Grant not found" },
+          "503": { "description": "App permission lookup not configured" }
+        }
+      }
+    },
+    "/access/connectors": {
+      "get": {
+        "summary": "List access connectors with last-sync timestamps and capability flags",
+        "tags": ["access-connectors"],
+        "parameters": [
+          { "name": "workspace_id", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "status", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "400": { "description": "workspace_id required" } }
+      }
+    },
+    "/access/connectors/{id}/health": {
+      "get": {
+        "summary": "Get the operational health view of an access connector",
+        "tags": ["access-connectors"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Connector not found" } }
       }
     },
     "/access/reviews": {

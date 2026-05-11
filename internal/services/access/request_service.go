@@ -305,6 +305,42 @@ func (s *AccessRequestService) ListRequests(ctx context.Context, q ListAccessReq
 	return out, nil
 }
 
+// AccessRequestDetail bundles a request row with its full state-history
+// audit trail. Returned by GetRequest so the GET /access/requests/:id
+// endpoint can serve the canonical "request + audit log" view that an
+// operator needs when triaging a stuck request.
+type AccessRequestDetail struct {
+Request models.AccessRequest                `json:"request"`
+History []models.AccessRequestStateHistory  `json:"history"`
+}
+
+// GetRequest loads a single request by ULID and returns it alongside
+// its state-history rows ordered oldest-first. Returns ErrRequestNotFound
+// (wrapped) when the row does not exist; the state-history fetch is a
+// best-effort SELECT — a DB error there is bubbled up rather than masked
+// as "not found" because that would hide reconcilable corruption.
+func (s *AccessRequestService) GetRequest(ctx context.Context, requestID string) (*AccessRequestDetail, error) {
+if requestID == "" {
+return nil, fmt.Errorf("%w: request id is required", ErrValidation)
+}
+var req models.AccessRequest
+err := s.db.WithContext(ctx).Where("id = ?", requestID).First(&req).Error
+if err != nil {
+if errors.Is(err, gorm.ErrRecordNotFound) {
+return nil, fmt.Errorf("%w: %s", ErrRequestNotFound, requestID)
+}
+return nil, fmt.Errorf("access: get access_request: %w", err)
+}
+var history []models.AccessRequestStateHistory
+if err := s.db.WithContext(ctx).
+Where("request_id = ?", requestID).
+Order("created_at asc").
+Find(&history).Error; err != nil {
+return nil, fmt.Errorf("access: list access_request_state_history: %w", err)
+}
+return &AccessRequestDetail{Request: req, History: history}, nil
+}
+
 // transitionRequest is the shared implementation behind Approve / Deny /
 // Cancel and Phase-2-internal callers. It runs in a DB transaction:
 //

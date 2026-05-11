@@ -54,6 +54,18 @@ type Dependencies struct {
 	// is only registered when wired so dev binaries without a DB
 	// stay healthy.
 	ConnectorHealthReader ConnectorHealthReader
+
+	// ConnectorListReader backs GET /access/connectors (per-workspace
+	// connector catalogue with last-sync timestamps and registry-
+	// derived capability flags). May be nil; the route is only
+	// registered when wired.
+	ConnectorListReader ConnectorListReader
+
+	// GrantEntitlementsReader backs GET /access/grants/:id/entitlements.
+	// May be nil; the entitlements sub-route is only registered when
+	// wired so dev binaries without a credential manager keep serving
+	// the rest of the /access/grants surface.
+	GrantEntitlementsReader GrantEntitlementsReader
 }
 
 // Router builds the *gin.Engine that serves the access platform's
@@ -84,6 +96,9 @@ func Router(deps Dependencies) *gin.Engine {
 	}
 	if deps.AccessGrantReader != nil {
 		gh := NewAccessGrantHandler(deps.AccessGrantReader)
+		if deps.GrantEntitlementsReader != nil {
+			gh.WithEntitlements(deps.GrantEntitlementsReader)
+		}
 		gh.Register(r)
 	}
 	if deps.AccessReviewService != nil {
@@ -105,6 +120,11 @@ func Router(deps Dependencies) *gin.Engine {
 	if deps.ConnectorHealthReader != nil {
 		hh := NewConnectorHealthHandler(deps.ConnectorHealthReader)
 		hh.Register(r)
+	}
+
+	if deps.ConnectorListReader != nil {
+		clh := NewConnectorListHandler(deps.ConnectorListReader)
+		clh.Register(r)
 	}
 
 	return r
