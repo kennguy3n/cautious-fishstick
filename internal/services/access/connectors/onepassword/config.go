@@ -10,11 +10,23 @@ import (
 const ProviderName = "onepassword"
 
 // Config is the operator-visible configuration for a 1Password connector
-// instance. AccountURL is the customer's 1Password account URL, e.g.
-// "https://uney.1password.com" or "https://uney.1password.eu".
+// instance. AccountURL is the customer's 1Password account URL (used for
+// the SCIM bridge), e.g. "https://uney.1password.com" or
+// "https://uney.1password.eu". EventsAPIURL is the base URL of the
+// 1Password Events Reporting API and defaults to
+// "https://events.1password.com"; operators only need to override it
+// for regional events endpoints (e.g. "https://events.1password.eu")
+// or for tests against a mock server.
 type Config struct {
-	AccountURL string `json:"account_url"`
+	AccountURL   string `json:"account_url"`
+	EventsAPIURL string `json:"events_api_url,omitempty"`
 }
+
+// defaultEventsAPIURL is the global 1Password Events Reporting API host.
+// 1Password serves SCIM at scim.1password.com and audit events at
+// events.1password.com — they are different services with different
+// hosts. Keep them separate so requests do not hit the wrong service.
+const defaultEventsAPIURL = "https://events.1password.com"
 
 // Secrets holds the bearer credential used to authenticate against the
 // 1Password SCIM bridge or Events API. Operators provide either a
@@ -32,6 +44,9 @@ func DecodeConfig(raw map[string]interface{}) (Config, error) {
 	}
 	if v, ok := raw["account_url"].(string); ok {
 		cfg.AccountURL = v
+	}
+	if v, ok := raw["events_api_url"].(string); ok {
+		cfg.EventsAPIURL = v
 	}
 	return cfg, nil
 }
@@ -64,6 +79,16 @@ func (c Config) validate() error {
 	if scheme != "http" && scheme != "https" {
 		return errors.New("onepassword: account_url must use http or https")
 	}
+	if c.EventsAPIURL != "" {
+		eu, err := url.Parse(c.EventsAPIURL)
+		if err != nil || eu.Scheme == "" || eu.Host == "" {
+			return errors.New("onepassword: events_api_url must be an absolute URL")
+		}
+		escheme := strings.ToLower(eu.Scheme)
+		if escheme != "http" && escheme != "https" {
+			return errors.New("onepassword: events_api_url must use http or https")
+		}
+	}
 	return nil
 }
 
@@ -88,4 +113,14 @@ func (s Secrets) bearerToken() string {
 // normalisedAccountURL strips a trailing slash for stable URL composition.
 func (c Config) normalisedAccountURL() string {
 	return strings.TrimRight(c.AccountURL, "/")
+}
+
+// normalisedEventsAPIURL returns the Events Reporting API base URL with
+// any trailing slash stripped, falling back to the global default when
+// the operator has not configured an override.
+func (c Config) normalisedEventsAPIURL() string {
+	if c.EventsAPIURL == "" {
+		return defaultEventsAPIURL
+	}
+	return strings.TrimRight(c.EventsAPIURL, "/")
 }

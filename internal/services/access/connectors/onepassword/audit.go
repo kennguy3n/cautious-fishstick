@@ -173,7 +173,7 @@ func (c *OnePasswordAccessConnector) postEventsAPI(
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL(cfg)+path, bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.eventsBaseURL(cfg)+path, bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, err
 	}

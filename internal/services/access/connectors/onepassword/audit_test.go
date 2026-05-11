@@ -106,3 +106,57 @@ func TestFetchAccessAuditLogs_ProviderError(t *testing.T) {
 		t.Fatalf("err = ErrAuditNotAvailable; want generic error")
 	}
 }
+
+// TestFetchAccessAuditLogs_UsesEventsAPIBaseURL guards against the
+// Events Reporting API request being sent to the SCIM bridge. 1Password
+// serves SCIM at scim.1password.com and audit/sign-in events at
+// events.1password.com — different hosts and different services — so
+// hitting `/api/v1/signinattempts` against the SCIM bridge 404s every
+// page in production. This test wires distinct mock servers for the
+// two services without `urlOverride` and asserts the Events request
+// lands at the Events host and never touches SCIM.
+func TestFetchAccessAuditLogs_UsesEventsAPIBaseURL(t *testing.T) {
+	var (
+		scimHits   int
+		eventsHits int
+	)
+	scim := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		scimHits++
+		t.Errorf("SCIM bridge received an audit request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(scim.Close)
+	events := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		eventsHits++
+		if r.URL.Path != "/api/v1/signinattempts" {
+			t.Errorf("events server got unexpected path %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(onepasswordSigninPage{HasMore: false})
+	}))
+	t.Cleanup(events.Close)
+
+	c := New()
+	// Deliberately leave urlOverride empty so eventsBaseURL falls
+	// through to cfg.EventsAPIURL and baseURL falls through to
+	// cfg.AccountURL. This proves the two are wired to different
+	// hosts in production.
+	c.httpClient = func() httpDoer {
+		return &http.Client{Transport: &http.Transport{}}
+	}
+	cfg := map[string]interface{}{
+		"account_url":    scim.URL,
+		"events_api_url": events.URL,
+	}
+	err := c.FetchAccessAuditLogs(context.Background(), cfg, validSecrets(), nil,
+		func(_ []*access.AuditLogEntry, _ time.Time, _ string) error { return nil })
+	if err != nil {
+		t.Fatalf("FetchAccessAuditLogs: %v", err)
+	}
+	if eventsHits == 0 {
+		t.Fatalf("events server received 0 requests; want >=1")
+	}
+	if scimHits != 0 {
+		t.Fatalf("SCIM bridge received %d audit requests; want 0", scimHits)
+	}
+}

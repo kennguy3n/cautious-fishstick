@@ -397,6 +397,18 @@ func (c *OnePasswordAccessConnector) baseURL(cfg Config) string {
 	return cfg.normalisedAccountURL()
 }
 
+// eventsBaseURL returns the base URL for the 1Password Events Reporting
+// API. 1Password serves audit/sign-in events at events.1password.com,
+// which is a different host from the SCIM bridge at scim.1password.com,
+// so callers MUST NOT mix the two. Test paths can still inject a
+// urlOverride to point both services at a single httptest.Server.
+func (c *OnePasswordAccessConnector) eventsBaseURL(cfg Config) string {
+	if c.urlOverride != "" {
+		return c.urlOverride
+	}
+	return cfg.normalisedEventsAPIURL()
+}
+
 func (c *OnePasswordAccessConnector) newRequest(ctx context.Context, cfg Config, secrets Secrets, method, path string) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL(cfg)+path, nil)
 	if err != nil {
