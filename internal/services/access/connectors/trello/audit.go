@@ -7,10 +7,19 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
+)
+
+const (
+	trelloAuditPageSize = 50
+	// trelloAuditMaxPages bounds a single sweep to ~10k events. The
+	// `since` cursor narrows the window between runs so this only
+	// kicks in on the very first sync of a long-dormant workspace.
+	trelloAuditMaxPages = 200
 )
 
 // FetchAccessAuditLogs streams Trello organization-action events into
@@ -21,10 +30,22 @@ import (
 //	GET /1/organizations/{id}/actions?since={ts}&before={id}&limit=50
 //
 // Trello surfaces audit-style events through the generic /actions feed.
-// Pagination is reverse-chronological with a `before={id}` cursor; the
-// handler is invoked once per page with the chronologically advancing
-// `nextSince` so callers can persist the monotonic cursor between runs.
-// Tenants whose token is not a Workspace admin receive 401/403 which
+// The endpoint paginates reverse-chronologically with a `before={id}`
+// cursor: page 1 is the newest 50 events, page 2 is the next-newest
+// 50, and so on. The AccessAuditor contract requires that any
+// `nextSince` passed to the handler cover only events already yielded
+// to the handler — the worker persists this cursor even on partial
+// failure (see internal/workers/handlers/access_audit.go:124-132).
+//
+// To honour the contract under reverse-chronological pagination we
+// collect the full sweep first, then reverse the entire collection
+// into chronological (oldest-first) order, then call the handler once
+// with the maximum timestamp as `nextSince`. If the handler call
+// fails the cursor is never advanced past un-yielded events, so a
+// retry replays the same window rather than silently skipping older
+// events that the worker had already persisted past.
+//
+// Tenants whose token is not a Workspace admin receive 401/403, which
 // collapses to access.ErrAuditNotAvailable so the worker soft-skips
 // the tenant rather than looping.
 func (c *TrelloAccessConnector) FetchAccessAuditLogs(
@@ -38,14 +59,15 @@ func (c *TrelloAccessConnector) FetchAccessAuditLogs(
 		return err
 	}
 	since := sincePartitions[access.DefaultAuditPartition]
-	cursor := since
+
+	var collected []trelloAction
 	before := ""
-	for {
+	for page := 0; page < trelloAuditMaxPages; page++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		q := url.Values{}
-		q.Set("limit", "50")
+		q.Set("limit", strconv.Itoa(trelloAuditPageSize))
 		if !since.IsZero() {
 			q.Set("since", since.UTC().Format(time.RFC3339))
 		}
@@ -74,36 +96,42 @@ func (c *TrelloAccessConnector) FetchAccessAuditLogs(
 		if err := json.Unmarshal(body, &actions); err != nil {
 			return fmt.Errorf("trello: decode actions: %w", err)
 		}
-		// Trello returns newest-first; reverse so the batch is
-		// chronological and the cursor advances monotonically.
-		reversed := make([]trelloAction, 0, len(actions))
-		for i := len(actions) - 1; i >= 0; i-- {
-			reversed = append(reversed, actions[i])
+		if len(actions) == 0 {
+			break
 		}
-		batch := make([]*access.AuditLogEntry, 0, len(reversed))
-		batchMax := cursor
-		for i := range reversed {
-			entry := mapTrelloAction(&reversed[i])
-			if entry == nil {
-				continue
-			}
-			if entry.Timestamp.After(batchMax) {
-				batchMax = entry.Timestamp
-			}
-			batch = append(batch, entry)
+		collected = append(collected, actions...)
+		if len(actions) < trelloAuditPageSize {
+			break
 		}
-		if err := handler(batch, batchMax, access.DefaultAuditPartition); err != nil {
-			return err
-		}
-		cursor = batchMax
-		if len(actions) < 50 {
-			return nil
-		}
-		// `actions[len-1]` is the oldest in this page; use its id as
-		// the `before` cursor so the next call returns even older
-		// actions. (Reverse-chronological pagination.)
+		// `actions[len-1]` is the oldest action on this page; the
+		// next call walks further back in time by using it as the
+		// `before` cursor.
 		before = actions[len(actions)-1].ID
 	}
+
+	if len(collected) == 0 {
+		return nil
+	}
+
+	// Walk the collected pages oldest-first so the handler sees a
+	// chronologically ascending batch and `nextSince` covers every
+	// event we just yielded.
+	batch := make([]*access.AuditLogEntry, 0, len(collected))
+	batchMax := since
+	for i := len(collected) - 1; i >= 0; i-- {
+		entry := mapTrelloAction(&collected[i])
+		if entry == nil {
+			continue
+		}
+		if entry.Timestamp.After(batchMax) {
+			batchMax = entry.Timestamp
+		}
+		batch = append(batch, entry)
+	}
+	if len(batch) == 0 {
+		return nil
+	}
+	return handler(batch, batchMax, access.DefaultAuditPartition)
 }
 
 type trelloAction struct {
