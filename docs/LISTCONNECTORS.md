@@ -51,7 +51,7 @@
 | 24 | CloudSigma | T2 | Cloud Infra | `cloudsigma/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 25 | Wasabi | T2 | Storage | `wasabi/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 26 | Slack | T3 | Collab | `slack/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
-| 27 | MS Teams | T3 | Collab | `ms_teams/` | 🟡 | ⏳ | ⏳ | ⏳ | 🟡 |
+| 27 | MS Teams | T3 | Collab | `ms_teams/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
 | 28 | Zoom | T3 | Collab | `zoom/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
 | 29 | Notion | T3 | Productivity | `notion/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
 | 30 | Asana | T3 | Productivity | `asana/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
@@ -105,7 +105,7 @@
 | 78 | Teamwork | T3 | Productivity | `teamwork/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 79 | LiquidPlanner | T3 | Productivity | `liquidplanner/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 80 | KnowBe4 | T3 | Security Training | `knowbe4/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 81 | BambooHR | T4 | HR | `bamboohr/` | 🟡 | ⏳ | ⏳ | ⏳ | 🟡 |
+| 81 | BambooHR | T4 | HR | `bamboohr/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
 | 82 | Gusto | T4 | HR | `gusto/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 83 | Rippling | T4 | HR | `rippling/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
 | 84 | Personio | T4 | HR | `personio/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
@@ -230,8 +230,8 @@
 
 - Total connectors registered: **200**
 - `sync_identity` shipped: **194/200**
-- `provision_access` shipped: **27/200** (27 real provider integrations across two Phase 10 batches)
-- `list_entitlements` shipped: **27/200**
+- `provision_access` shipped: **29/200** (29 real provider integrations across three Phase 10 batches)
+- `list_entitlements` shipped: **29/200**
 - `get_access_log` shipped: **0/200** (Phase 10 backlog)
 - `sso_federation` shipped: **12/200**
 

@@ -7,12 +7,14 @@
 package msteams
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -200,6 +202,27 @@ func (c *MSTeamsAccessConnector) doJSON(client httpDoer, ctx context.Context, me
 	return body, nil
 }
 
+// doRaw issues a request with an optional JSON body and returns the
+// *http.Response so callers can dispatch on the status code (e.g.
+// treat 404 on DELETE as idempotent success). Unlike doJSON, doRaw
+// does NOT raise an error for non-2xx responses; callers MUST close
+// the returned body.
+func (c *MSTeamsAccessConnector) doRaw(client httpDoer, ctx context.Context, method, path string, jsonBody []byte) (*http.Response, error) {
+	var reader io.Reader
+	if jsonBody != nil {
+		reader = bytes.NewReader(jsonBody)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL()+path, reader)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	if jsonBody != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return client.Do(req)
+}
+
 func (c *MSTeamsAccessConnector) Connect(ctx context.Context, configRaw, secretsRaw map[string]interface{}) error {
 	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
 	if err != nil {
@@ -305,14 +328,206 @@ func (c *MSTeamsAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *MSTeamsAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ---------- Phase 10 advanced capabilities ----------
+
+// targetTeamID picks the team to operate on. Grants may carry a
+// ResourceExternalID, in which case it wins; otherwise the connector
+// falls back to the Config-bound team. This lets a single connector
+// instance fan out across multiple teams within the same tenant when
+// the workflow engine passes a fully-qualified grant.
+func targetTeamID(cfg Config, grant access.AccessGrant) string {
+	if strings.TrimSpace(grant.ResourceExternalID) != "" {
+		return grant.ResourceExternalID
+	}
+	return cfg.TeamID
 }
-func (c *MSTeamsAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+// findMembershipIDForUser paginates `/teams/{teamID}/members` and
+// returns the conversation-member ID whose `userId` matches the supplied
+// user external ID. Returns ("", nil) when no row matches so that
+// RevokeAccess can treat a missing user as idempotent success.
+func (c *MSTeamsAccessConnector) findMembershipIDForUser(ctx context.Context, client httpDoer, teamID, userExternalID string) (string, error) {
+	userExternalID = strings.TrimSpace(userExternalID)
+	if userExternalID == "" {
+		return "", nil
+	}
+	path := "/teams/" + url.PathEscape(teamID) + "/members"
+	for {
+		body, err := c.doJSON(client, ctx, http.MethodGet, path)
+		if err != nil {
+			return "", err
+		}
+		var resp teamMembersResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return "", fmt.Errorf("ms_teams: decode members: %w", err)
+		}
+		for _, m := range resp.Value {
+			if m.UserID == userExternalID {
+				return m.ID, nil
+			}
+		}
+		if resp.NextLink == "" {
+			return "", nil
+		}
+		path = strings.TrimPrefix(resp.NextLink, c.baseURL())
+	}
 }
-func (c *MSTeamsAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+// ProvisionAccess adds a user as a member (or owner) of the configured
+// team via POST /teams/{teamId}/members. The payload uses the Graph
+// aadUserConversationMember odata type. Idempotency: a 409 Conflict
+// and a 400 Bad Request response whose body mentions a duplicate-member
+// error code are both treated as success per PROPOSAL.md §2.1.
+func (c *MSTeamsAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("ms_teams: grant.UserExternalID is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	teamID := targetTeamID(cfg, grant)
+	if teamID == "" {
+		return errors.New("ms_teams: team_id is required (config or grant)")
+	}
+	roles := []string{"member"}
+	if strings.EqualFold(grant.Role, "owner") {
+		roles = []string{"owner"}
+	}
+	payload := map[string]interface{}{
+		"@odata.type":      "#microsoft.graph.aadUserConversationMember",
+		"roles":            roles,
+		"user@odata.bind":  fmt.Sprintf("%s/users('%s')", c.baseURL(), grant.UserExternalID),
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("ms_teams: marshal provision payload: %w", err)
+	}
+	client := c.graphClient(ctx, cfg, secrets)
+	resp, err := c.doRaw(client, ctx, http.MethodPost, "/teams/"+url.PathEscape(teamID)+"/members", body)
+	if err != nil {
+		return fmt.Errorf("ms_teams: provision request: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK:
+		return nil
+	case resp.StatusCode == http.StatusConflict:
+		return nil
+	case resp.StatusCode == http.StatusBadRequest && bytes.Contains(bytes.ToLower(respBody), []byte("already")):
+		return nil
+	default:
+		return fmt.Errorf("ms_teams: provision status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// RevokeAccess removes a user from the team by looking up the
+// membership id (Graph uses opaque conversation-member IDs rather than
+// the user object id for the DELETE URL) and then issuing
+// DELETE /teams/{teamId}/members/{membershipId}. 404 on either the
+// lookup or the DELETE is treated as idempotent success.
+func (c *MSTeamsAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("ms_teams: grant.UserExternalID is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	teamID := targetTeamID(cfg, grant)
+	if teamID == "" {
+		return errors.New("ms_teams: team_id is required (config or grant)")
+	}
+	client := c.graphClient(ctx, cfg, secrets)
+	membershipID, err := c.findMembershipIDForUser(ctx, client, teamID, grant.UserExternalID)
+	if err != nil {
+		// A 404 on the team itself is idempotent — treat the team as
+		// effectively absent from the user's joined set.
+		if strings.Contains(err.Error(), "status 404") {
+			return nil
+		}
+		return err
+	}
+	if membershipID == "" {
+		return nil
+	}
+	resp, err := c.doRaw(client, ctx, http.MethodDelete, "/teams/"+url.PathEscape(teamID)+"/members/"+url.PathEscape(membershipID), nil)
+	if err != nil {
+		return fmt.Errorf("ms_teams: revoke request: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK:
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return nil
+	default:
+		return fmt.Errorf("ms_teams: revoke status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+type joinedTeam struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"displayName"`
+	Description string `json:"description,omitempty"`
+}
+
+type joinedTeamsResponse struct {
+	NextLink string       `json:"@odata.nextLink,omitempty"`
+	Value    []joinedTeam `json:"value"`
+}
+
+// ListEntitlements pages through /users/{userId}/joinedTeams and
+// returns one Entitlement per team. The team ID is used as the
+// ResourceExternalID. Roles are not surfaced by joinedTeams — callers
+// that need owner-vs-member granularity must fall back to per-team
+// member lookups. We tag every entry with Source: "direct".
+func (c *MSTeamsAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	if strings.TrimSpace(userExternalID) == "" {
+		return nil, errors.New("ms_teams: user external id is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	client := c.graphClient(ctx, cfg, secrets)
+	path := "/users/" + url.PathEscape(userExternalID) + "/joinedTeams"
+	var out []access.Entitlement
+	for {
+		body, err := c.doJSON(client, ctx, http.MethodGet, path)
+		if err != nil {
+			return nil, err
+		}
+		var resp joinedTeamsResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, fmt.Errorf("ms_teams: decode joinedTeams: %w", err)
+		}
+		for _, t := range resp.Value {
+			out = append(out, access.Entitlement{
+				ResourceExternalID: t.ID,
+				Role:               "member",
+				Source:             "direct",
+			})
+		}
+		if resp.NextLink == "" {
+			return out, nil
+		}
+		path = strings.TrimPrefix(resp.NextLink, c.baseURL())
+	}
 }
 
 // GetSSOMetadata returns the Entra ID federation metadata URL for the

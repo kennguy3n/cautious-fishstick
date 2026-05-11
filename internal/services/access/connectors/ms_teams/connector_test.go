@@ -3,6 +3,7 @@ package msteams
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -116,5 +117,253 @@ func TestGetSSOMetadata_ReturnsTenantSAML(t *testing.T) {
 	}
 	if md == nil || !strings.Contains(md.MetadataURL, "tenant-1") || md.Protocol != "saml" {
 		t.Fatalf("md = %+v", md)
+	}
+}
+
+// ---------- Phase 10 advanced capability tests ----------
+
+func newAdvancedTestConnector(srv *httptest.Server) *MSTeamsAccessConnector {
+	c := New()
+	c.urlOverride = srv.URL
+	c.tokenOverride = func(_ context.Context, _ Config, _ Secrets) (string, error) { return "tok", nil }
+	return c
+}
+
+func TestProvisionAccess_HappyPath(t *testing.T) {
+	var captured struct {
+		method string
+		path   string
+		body   string
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured.method = r.Method
+		captured.path = r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		captured.body = string(b)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"membership-99"}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	grant := access.AccessGrant{UserExternalID: "user-1", ResourceExternalID: "team-1", Role: "member"}
+	if err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), grant); err != nil {
+		t.Fatalf("ProvisionAccess: %v", err)
+	}
+	if captured.method != http.MethodPost {
+		t.Errorf("method = %q", captured.method)
+	}
+	if !strings.HasSuffix(captured.path, "/teams/team-1/members") {
+		t.Errorf("path = %q", captured.path)
+	}
+	if !strings.Contains(captured.body, "#microsoft.graph.aadUserConversationMember") {
+		t.Errorf("body missing odata.type: %s", captured.body)
+	}
+	if !strings.Contains(captured.body, "users('user-1')") {
+		t.Errorf("body missing user@odata.bind: %s", captured.body)
+	}
+	if !strings.Contains(captured.body, `"member"`) {
+		t.Errorf("body missing role: %s", captured.body)
+	}
+}
+
+func TestProvisionAccess_OwnerRole(t *testing.T) {
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body = string(b)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	grant := access.AccessGrant{UserExternalID: "u1", ResourceExternalID: "team-1", Role: "owner"}
+	if err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), grant); err != nil {
+		t.Fatalf("ProvisionAccess: %v", err)
+	}
+	if !strings.Contains(body, `"owner"`) {
+		t.Errorf("expected owner role; body = %s", body)
+	}
+}
+
+func TestProvisionAccess_409Idempotent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":{"code":"Conflict","message":"already a member"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	grant := access.AccessGrant{UserExternalID: "u1", ResourceExternalID: "team-1", Role: "member"}
+	if err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), grant); err != nil {
+		t.Fatalf("409 should be idempotent success; got %v", err)
+	}
+}
+
+func TestProvisionAccess_400AlreadyExistsIdempotent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"code":"BadRequest","message":"User is already a member of the team."}}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	grant := access.AccessGrant{UserExternalID: "u1", ResourceExternalID: "team-1", Role: "member"}
+	if err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), grant); err != nil {
+		t.Fatalf("400 'already a member' should be idempotent success; got %v", err)
+	}
+}
+
+func TestProvisionAccess_PermissionFailureSurfaces(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":{"code":"Forbidden"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	grant := access.AccessGrant{UserExternalID: "u1", ResourceExternalID: "team-1", Role: "member"}
+	if err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), grant); err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("expected 403 error; got %v", err)
+	}
+}
+
+func TestRevokeAccess_HappyPath(t *testing.T) {
+	var captured struct {
+		method string
+		path   string
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/teams/team-1/members"):
+			_, _ = w.Write([]byte(`{"value":[{"id":"membership-77","userId":"u1","email":"a@b.com","roles":["member"]}]}`))
+		case r.Method == http.MethodDelete && strings.HasSuffix(r.URL.Path, "/teams/team-1/members/membership-77"):
+			captured.method = r.Method
+			captured.path = r.URL.Path
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	grant := access.AccessGrant{UserExternalID: "u1", ResourceExternalID: "team-1"}
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), grant); err != nil {
+		t.Fatalf("RevokeAccess: %v", err)
+	}
+	if captured.method != http.MethodDelete {
+		t.Errorf("expected DELETE; got %q", captured.method)
+	}
+}
+
+func TestRevokeAccess_404IdempotentOnDelete(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"value":[{"id":"m1","userId":"u1","roles":["member"]}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	grant := access.AccessGrant{UserExternalID: "u1", ResourceExternalID: "team-1"}
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), grant); err != nil {
+		t.Fatalf("404 on DELETE should be idempotent; got %v", err)
+	}
+}
+
+func TestRevokeAccess_UserNotInTeamIdempotent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"value":[{"id":"other","userId":"someone-else","roles":["member"]}]}`))
+			return
+		}
+		t.Errorf("DELETE should not have been called; got %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	grant := access.AccessGrant{UserExternalID: "u1", ResourceExternalID: "team-1"}
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), grant); err != nil {
+		t.Fatalf("missing user should be idempotent; got %v", err)
+	}
+}
+
+func TestRevokeAccess_DeleteFailureSurfaces(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"value":[{"id":"m1","userId":"u1","roles":["member"]}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":{"code":"Forbidden"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	grant := access.AccessGrant{UserExternalID: "u1", ResourceExternalID: "team-1"}
+	err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), grant)
+	if err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("expected 403 error; got %v", err)
+	}
+}
+
+func TestListEntitlements_HappyPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "/users/u1/joinedTeams") {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"value":[{"id":"team-1","displayName":"Eng"},{"id":"team-2","displayName":"Ops"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "u1")
+	if err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 entitlements; got %d", len(got))
+	}
+	if got[0].ResourceExternalID != "team-1" || got[1].ResourceExternalID != "team-2" {
+		t.Errorf("got = %+v", got)
+	}
+	for _, e := range got {
+		if e.Role != "member" || e.Source != "direct" {
+			t.Errorf("unexpected entitlement shape: %+v", e)
+		}
+	}
+}
+
+func TestListEntitlements_Pagination(t *testing.T) {
+	calls := 0
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			_, _ = w.Write([]byte(`{"value":[{"id":"team-1"}],"@odata.nextLink":"` + srv.URL + `/users/u1/joinedTeams?$skiptoken=A"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"value":[{"id":"team-2"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "u1")
+	if err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if calls != 2 || len(got) != 2 {
+		t.Fatalf("calls=%d entitlements=%d", calls, len(got))
+	}
+}
+
+func TestListEntitlements_RejectsEmptyUser(t *testing.T) {
+	if _, err := New().ListEntitlements(context.Background(), validConfig(), validSecrets(), ""); err == nil {
+		t.Fatal("empty user should error")
+	}
+}
+
+func TestProvisionAndRevoke_RejectMissingUser(t *testing.T) {
+	c := New()
+	grant := access.AccessGrant{ResourceExternalID: "team-1"}
+	if err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), grant); err == nil {
+		t.Error("provision should reject missing UserExternalID")
+	}
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), grant); err == nil {
+		t.Error("revoke should reject missing UserExternalID")
 	}
 }

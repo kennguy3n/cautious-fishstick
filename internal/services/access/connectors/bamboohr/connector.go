@@ -3,6 +3,7 @@
 package bamboohr
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -249,14 +251,237 @@ func (c *BambooHRAccessConnector) SyncIdentities(
 	return handler(identities, "")
 }
 
-func (c *BambooHRAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ---------- Phase 10 advanced capabilities ----------
+
+// bambooAccessLevelRow is a row in the BambooHR customAccessLevels
+// table. BambooHR's employee custom-table API returns rows with a
+// numeric `id` plus a `value` (the access level name). We use those
+// two columns as ResourceExternalID and Role respectively so the
+// downstream RBAC code can resolve "which BambooHR access level does
+// this user have" without round-tripping to the directory.
+type bambooAccessLevelRow struct {
+	ID    json.Number `json:"id"`
+	Value string      `json:"value"`
 }
-func (c *BambooHRAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+// doRaw returns the *http.Response so callers can branch on the
+// status code (e.g. treat 404 on DELETE as idempotent). Callers MUST
+// close the body.
+func (c *BambooHRAccessConnector) doRaw(req *http.Request) (*http.Response, error) {
+	return c.client().Do(req)
 }
-func (c *BambooHRAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+// newRequestWithJSON is identical to newRequest but writes a JSON
+// payload on the wire and sets Content-Type. body may be nil.
+func (c *BambooHRAccessConnector) newRequestWithJSON(ctx context.Context, secrets Secrets, method, fullURL string, body []byte) (*http.Request, error) {
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, reader)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	creds := strings.TrimSpace(secrets.APIKey) + ":x"
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(creds)))
+	return req, nil
+}
+
+// findAccessLevelRowID returns the row id of the customAccessLevels
+// row whose `value` matches the requested access level (Role). A
+// missing row yields ("", nil) — callers treat this as idempotent
+// success for revoke.
+func (c *BambooHRAccessConnector) findAccessLevelRowID(ctx context.Context, cfg Config, secrets Secrets, employeeID, role string) (string, error) {
+	role = strings.TrimSpace(role)
+	if role == "" {
+		return "", nil
+	}
+	urlStr := c.baseURL(cfg) + "/v1/employees/" + url.PathEscape(employeeID) + "/tables/customAccessLevels"
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, urlStr)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return "", fmt.Errorf("bamboohr: GET customAccessLevels: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return "", nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("bamboohr: customAccessLevels GET status %d: %s", resp.StatusCode, string(body))
+	}
+	var rows []bambooAccessLevelRow
+	if err := json.Unmarshal(body, &rows); err != nil {
+		// BambooHR may wrap rows in an envelope; try the {"customAccessLevels":[...]} shape too.
+		var envelope struct {
+			CustomAccessLevels []bambooAccessLevelRow `json:"customAccessLevels"`
+		}
+		if e2 := json.Unmarshal(body, &envelope); e2 != nil {
+			return "", fmt.Errorf("bamboohr: decode customAccessLevels: %w", err)
+		}
+		rows = envelope.CustomAccessLevels
+	}
+	for _, r := range rows {
+		if strings.EqualFold(r.Value, role) {
+			return r.ID.String(), nil
+		}
+	}
+	return "", nil
+}
+
+// ProvisionAccess sets a BambooHR custom-access-level row on an
+// employee. The implementation uses POST + JSON body to create a new
+// row in /v1/employees/{employeeID}/tables/customAccessLevels with
+// `value` = grant.Role. Idempotency: a 409 Conflict response (or a
+// 400 whose body mentions "already") is treated as success.
+//
+// grant.UserExternalID is the BambooHR employee ID.
+// grant.ResourceExternalID is informational only — the access level
+// itself is encoded in grant.Role.
+func (c *BambooHRAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("bamboohr: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.Role) == "" {
+		return errors.New("bamboohr: grant.Role is required (access level name)")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	payload := map[string]string{"value": grant.Role}
+	body, _ := json.Marshal(payload)
+	urlStr := c.baseURL(cfg) + "/v1/employees/" + url.PathEscape(grant.UserExternalID) + "/tables/customAccessLevels"
+	req, err := c.newRequestWithJSON(ctx, secrets, http.MethodPost, urlStr, body)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return fmt.Errorf("bamboohr: provision request: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusNoContent:
+		return nil
+	case resp.StatusCode == http.StatusConflict:
+		return nil
+	case resp.StatusCode == http.StatusBadRequest && bytes.Contains(bytes.ToLower(respBody), []byte("already")):
+		return nil
+	default:
+		return fmt.Errorf("bamboohr: provision status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// RevokeAccess deletes the access-level row for the user. 404 on the
+// lookup or the DELETE is treated as idempotent success.
+func (c *BambooHRAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("bamboohr: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.Role) == "" {
+		return errors.New("bamboohr: grant.Role is required (access level name)")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	rowID, err := c.findAccessLevelRowID(ctx, cfg, secrets, grant.UserExternalID, grant.Role)
+	if err != nil {
+		return err
+	}
+	if rowID == "" {
+		return nil
+	}
+	urlStr := c.baseURL(cfg) + "/v1/employees/" + url.PathEscape(grant.UserExternalID) +
+		"/tables/customAccessLevels/" + url.PathEscape(rowID)
+	req, err := c.newRequest(ctx, secrets, http.MethodDelete, urlStr)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return fmt.Errorf("bamboohr: revoke request: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent:
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return nil
+	default:
+		return fmt.Errorf("bamboohr: revoke status %d: %s", resp.StatusCode, string(body))
+	}
+}
+
+// ListEntitlements returns all customAccessLevels rows for the
+// employee. Each row becomes one Entitlement{ResourceExternalID: id,
+// Role: value, Source: "direct"}.
+func (c *BambooHRAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	if strings.TrimSpace(userExternalID) == "" {
+		return nil, errors.New("bamboohr: user external id is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	urlStr := c.baseURL(cfg) + "/v1/employees/" + url.PathEscape(userExternalID) + "/tables/customAccessLevels"
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, urlStr)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return nil, fmt.Errorf("bamboohr: list entitlements: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("bamboohr: list entitlements status %d: %s", resp.StatusCode, string(body))
+	}
+	var rows []bambooAccessLevelRow
+	if err := json.Unmarshal(body, &rows); err != nil {
+		var envelope struct {
+			CustomAccessLevels []bambooAccessLevelRow `json:"customAccessLevels"`
+		}
+		if e2 := json.Unmarshal(body, &envelope); e2 != nil {
+			return nil, fmt.Errorf("bamboohr: decode customAccessLevels: %w", err)
+		}
+		rows = envelope.CustomAccessLevels
+	}
+	out := make([]access.Entitlement, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, access.Entitlement{
+			ResourceExternalID: r.ID.String(),
+			Role:               r.Value,
+			Source:             "direct",
+		})
+	}
+	return out, nil
 }
 
 func (c *BambooHRAccessConnector) GetSSOMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (*access.SSOMetadata, error) {
