@@ -36,7 +36,6 @@ func (c *M365AccessConnector) FetchAccessAuditLogs(
 	}
 	client := c.graphClient(ctx, cfg, secrets)
 
-	cursor := since
 	for _, ep := range []struct {
 		path      string
 		tsField   string
@@ -56,6 +55,16 @@ func (c *M365AccessConnector) FetchAccessAuditLogs(
 			eventKind: "directoryAudit",
 		},
 	} {
+		// cursor MUST reset per endpoint. Each endpoint paginates
+		// independently from `since`, so the handler's nextSince
+		// must reflect that endpoint's progress only. Sharing one
+		// cursor across endpoints would let the larger
+		// signIn-max timestamp shadow earlier directoryAudit
+		// entries: handler(batch, batchMax) would receive the
+		// inflated signIn max and the worker would persist it on
+		// partial failure, causing $filter ge {inflated} to skip
+		// older un-fetched directoryAudits on retry.
+		cursor := since
 		next, err := buildAuditStartURL(ep.path, ep.tsField, since)
 		if err != nil {
 			return err

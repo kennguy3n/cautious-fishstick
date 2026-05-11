@@ -155,6 +155,105 @@ func TestBuildAuditStartURL_AlwaysSetsOrderBy(t *testing.T) {
 	}
 }
 
+// TestFetchAccessAuditLogs_CursorResetsPerEndpoint guards against a
+// regression where cursor was shared across signIns and directoryAudits.
+// signIns return entries with timestamps newer than directoryAudits;
+// without per-endpoint cursor reset, the directoryAudit batch's
+// nextSince would be shadowed by the inflated signIn max, causing the
+// access-audit worker to persist an inflated cursor and skip older
+// directoryAudit events on retry after a partial failure.
+func TestFetchAccessAuditLogs_CursorResetsPerEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/auditLogs/signIns"):
+			// signIn entry is NEWER than directoryAudit entries.
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"value": []map[string]interface{}{
+					{
+						"id":                "si-late",
+						"createdDateTime":   "2024-01-01T12:00:00Z",
+						"userId":            "u-1",
+						"userPrincipalName": "u1@corp.example",
+						"status":            map[string]interface{}{"errorCode": 0},
+					},
+				},
+			})
+		case strings.Contains(r.URL.Path, "/auditLogs/directoryAudits"):
+			// directoryAudit entry is OLDER than the signIn above.
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"value": []map[string]interface{}{
+					{
+						"id":                  "da-early",
+						"activityDateTime":    "2024-01-01T09:00:00Z",
+						"activityDisplayName": "Add user",
+						"category":            "UserManagement",
+						"operationType":       "Add",
+						"result":              "success",
+						"initiatedBy": map[string]interface{}{
+							"user": map[string]interface{}{"id": "admin-1"},
+						},
+						"targetResources": []map[string]interface{}{
+							{"id": "u-99", "type": "User"},
+						},
+					},
+				},
+			})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.httpClientFor = func(_ context.Context, _ Config, _ Secrets) httpDoer {
+		return &serverFirstFakeClient{base: server.URL, http: server.Client()}
+	}
+
+	type batchCall struct {
+		eventType string
+		nextSince time.Time
+	}
+	var calls []batchCall
+	since := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	err := c.FetchAccessAuditLogs(context.Background(), validConfig(), validSecrets(), since,
+		func(batch []*access.AuditLogEntry, nextSince time.Time) error {
+			if len(batch) == 0 {
+				return nil
+			}
+			calls = append(calls, batchCall{eventType: batch[0].EventType, nextSince: nextSince})
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("FetchAccessAuditLogs: %v", err)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 handler invocations (one per endpoint); got %d (%+v)", len(calls), calls)
+	}
+
+	// signIns batch reports its own max (12:00Z).
+	signInCall := calls[0]
+	if signInCall.eventType != "signIn" {
+		t.Fatalf("first call should be signIn; got %q", signInCall.eventType)
+	}
+	wantSignInMax := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	if !signInCall.nextSince.Equal(wantSignInMax) {
+		t.Errorf("signIn nextSince = %v; want %v", signInCall.nextSince, wantSignInMax)
+	}
+
+	// directoryAudits batch MUST report its own max (09:00Z), NOT the
+	// inflated signIn cursor (12:00Z). This is the regression guard.
+	daCall := calls[1]
+	if daCall.eventType != "UserManagement" {
+		t.Fatalf("second call should be directoryAudit; got %q", daCall.eventType)
+	}
+	wantDaMax := time.Date(2024, 1, 1, 9, 0, 0, 0, time.UTC)
+	if !daCall.nextSince.Equal(wantDaMax) {
+		t.Errorf("directoryAudit nextSince = %v; want %v (cursor leaked from signIn endpoint)",
+			daCall.nextSince, wantDaMax)
+	}
+}
+
 func TestFetchAccessAuditLogs_Failure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
