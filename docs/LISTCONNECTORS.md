@@ -1,6 +1,6 @@
 # Connector Capability Index
 
-> **Last updated:** 2026-05-11 (this PR — Phase 10 audit-log batch 2: 20 / 200 connectors with `get_access_log` + 11 new SSO federation wires)
+> **Last updated:** 2026-05-11 (this PR — Phase 10 audit-log batch 3: 40 / 200 connectors with `get_access_log` — 40/50 of top-50 audit-log target, ~10 remaining)
 > **Source of truth:** [`docs/PROGRESS.md`](./PROGRESS.md) §1
 > **How to keep in sync:** When you flip a capability column in `docs/PROGRESS.md`, mirror the change here. The audit script in §6 of `docs/PROGRESS.md` lints the two tables for drift.
 
@@ -51,27 +51,27 @@
 | 24 | CloudSigma | T2 | Cloud Infra | `cloudsigma/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 25 | Wasabi | T2 | Storage | `wasabi/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 26 | Slack | T3 | Collab | `slack/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
-| 27 | MS Teams | T3 | Collab | `ms_teams/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
+| 27 | MS Teams | T3 | Collab | `ms_teams/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 28 | Zoom | T3 | Collab | `zoom/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
-| 29 | Notion | T3 | Productivity | `notion/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
-| 30 | Asana | T3 | Productivity | `asana/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
-| 31 | Monday.com | T3 | Productivity | `monday/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
-| 32 | Figma | T3 | Design | `figma/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
-| 33 | Miro | T3 | Whiteboard | `miro/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
-| 34 | Trello | T3 | Productivity | `trello/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
-| 35 | Airtable | T3 | Productivity | `airtable/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
-| 36 | Smartsheet | T3 | Productivity | `smartsheet/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
-| 37 | ClickUp | T3 | Productivity | `clickup/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
+| 29 | Notion | T3 | Productivity | `notion/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
+| 30 | Asana | T3 | Productivity | `asana/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
+| 31 | Monday.com | T3 | Productivity | `monday/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
+| 32 | Figma | T3 | Design | `figma/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
+| 33 | Miro | T3 | Whiteboard | `miro/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
+| 34 | Trello | T3 | Productivity | `trello/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
+| 35 | Airtable | T3 | Productivity | `airtable/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
+| 36 | Smartsheet | T3 | Productivity | `smartsheet/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
+| 37 | ClickUp | T3 | Productivity | `clickup/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
 | 38 | Salesforce | T3 | CRM | `salesforce/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 39 | HubSpot | T3 | CRM | `hubspot/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
 | 40 | Zoho CRM | T3 | CRM | `zoho_crm/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
 | 41 | Pipedrive | T3 | CRM | `pipedrive/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 42 | Dropbox Business | T3 | Storage | `dropbox/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
-| 43 | Box | T3 | Storage | `box/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
-| 44 | Egnyte | T3 | Storage | `egnyte/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
+| 43 | Box | T3 | Storage | `box/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
+| 44 | Egnyte | T3 | Storage | `egnyte/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
 | 45 | GitHub | T3 | DevOps | `github/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
-| 46 | GitLab | T3 | DevOps | `gitlab/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
-| 47 | Atlassian Jira | T3 | DevOps | `jira/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
+| 46 | GitLab | T3 | DevOps | `gitlab/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
+| 47 | Atlassian Jira | T3 | DevOps | `jira/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 48 | PagerDuty | T3 | DevOps | `pagerduty/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
 | 49 | Sentry | T3 | DevOps | `sentry/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
 | 50 | Terraform | T3 | DevOps | `terraform/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
@@ -88,10 +88,10 @@
 | 61 | Mezmo | T3 | Observability | `mezmo/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 62 | Sumo Logic | T3 | Observability | `sumo_logic/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
 | 63 | Zendesk | T3 | Support | `zendesk/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
-| 64 | Freshdesk | T3 | Support | `freshdesk/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
-| 65 | Help Scout | T3 | Support | `helpscout/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
-| 66 | Front | T3 | Support | `front/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
-| 67 | Intercom | T3 | Support | `intercom/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
+| 64 | Freshdesk | T3 | Support | `freshdesk/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
+| 65 | Help Scout | T3 | Support | `helpscout/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
+| 66 | Front | T3 | Support | `front/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
+| 67 | Intercom | T3 | Support | `intercom/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 68 | Drift | T3 | Marketing | `drift/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 69 | Crisp | T3 | Support | `crisp/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 70 | LiveChat | T3 | Support | `livechat/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
@@ -105,12 +105,12 @@
 | 78 | Teamwork | T3 | Productivity | `teamwork/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 79 | LiquidPlanner | T3 | Productivity | `liquidplanner/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 80 | KnowBe4 | T3 | Security Training | `knowbe4/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 81 | BambooHR | T4 | HR | `bamboohr/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
+| 81 | BambooHR | T4 | HR | `bamboohr/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 82 | Gusto | T4 | HR | `gusto/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 83 | Rippling | T4 | HR | `rippling/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
 | 84 | Personio | T4 | HR | `personio/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 85 | Hibob | T4 | HR | `hibob/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 86 | Workday | T4 | HR | `workday/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
+| 86 | Workday | T4 | HR | `workday/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 87 | Paychex | T4 | HR | `paychex/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 88 | Deel | T4 | HR | `deel/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 89 | Zenefits | T4 | HR | `zenefits/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
@@ -232,7 +232,7 @@
 - `sync_identity` shipped: **194/200**
 - `provision_access` shipped: **50/200** ✅ (50 real provider integrations across five Phase 10 batches — top-50 by usage complete)
 - `list_entitlements` shipped: **50/200** ✅
-- `get_access_log` shipped: **20/200** (Microsoft Entra ID, Google Workspace, Okta, Auth0, AWS IAM, Azure RBAC, GCP IAM, Slack, GitHub, Salesforce — PR #25; Cloudflare, Zoom, HubSpot, Dropbox Business, PagerDuty, Sentry, Datadog, CrowdStrike, Snyk, Zendesk — this PR via the `AccessAuditor` optional interface)
+- `get_access_log` shipped: **40/200** (Microsoft Entra ID, Google Workspace, Okta, Auth0, AWS IAM, Azure RBAC, GCP IAM, Slack, GitHub, Salesforce — PR #25; Cloudflare, Zoom, HubSpot, Dropbox Business, PagerDuty, Sentry, Datadog, CrowdStrike, Snyk, Zendesk — PR #27; GitLab, Atlassian Jira, MS Teams, Notion, BambooHR, Workday, Asana, Monday.com, Figma, Miro, Trello, Airtable, Smartsheet, ClickUp, Box, Egnyte, Freshdesk, Help Scout, Front, Intercom — this PR via the `AccessAuditor` optional interface). Closes **40/50** of the top-50 connector audit-log target with ~10 remaining.
 - `sso_federation` shipped: **17/200** (Microsoft Entra ID, Google Workspace, Okta, Ping Identity, Auth0, Generic SAML, Generic OIDC, Slack, MS Teams, Salesforce, Dropbox Business, GitHub, GitLab, Atlassian Jira, Zendesk, BambooHR, Workday — via Keycloak SAML/OIDC broker wiring; Zoom is `n/a`)
 
 ## How to update this file
