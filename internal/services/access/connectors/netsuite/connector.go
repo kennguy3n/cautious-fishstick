@@ -2,6 +2,7 @@
 package netsuite
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,7 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
-	
+
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
@@ -106,6 +107,25 @@ func (c *NetSuiteAccessConnector) newRequest(ctx context.Context, secrets Secret
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.Token))
 	return req, nil
+}
+
+func (c *NetSuiteAccessConnector) newJSONRequest(ctx context.Context, secrets Secrets, method, fullURL string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.Token))
+	return req, nil
+}
+
+func (c *NetSuiteAccessConnector) doRaw(req *http.Request) (*http.Response, error) {
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("netsuite: %s %s: %w", req.Method, req.URL.Path, err)
+	}
+	return resp, nil
 }
 
 func (c *NetSuiteAccessConnector) do(req *http.Request) ([]byte, error) {
@@ -252,14 +272,187 @@ func (c *NetSuiteAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *NetSuiteAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ---------- Phase 10 advanced capabilities ----------
+
+type netsuiteRoleRef struct {
+	ID     string `json:"id"`
+	RefName string `json:"refName,omitempty"`
 }
-func (c *NetSuiteAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+type netsuiteRolesEnvelope struct {
+	Items []netsuiteRoleRef `json:"items"`
 }
-func (c *NetSuiteAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+type netsuiteEmployeeDetail struct {
+	ID    string                `json:"id"`
+	Roles netsuiteRolesEnvelope `json:"roles"`
+}
+
+func (c *NetSuiteAccessConnector) getEmployee(ctx context.Context, secrets Secrets, employeeID string) (*netsuiteEmployeeDetail, error) {
+	fullURL := c.baseURL() + "/record/v1/employee/" + url.PathEscape(employeeID) + "?expandSubResources=true"
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, fullURL)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("netsuite: employee GET status %d: %s", resp.StatusCode, string(body))
+	}
+	var emp netsuiteEmployeeDetail
+	if err := json.Unmarshal(body, &emp); err != nil {
+		return nil, fmt.Errorf("netsuite: decode employee: %w", err)
+	}
+	return &emp, nil
+}
+
+func (c *NetSuiteAccessConnector) patchEmployeeRoles(ctx context.Context, secrets Secrets, employeeID string, roles []netsuiteRoleRef) error {
+	payload := map[string]interface{}{
+		"roles": map[string]interface{}{"items": roles},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("netsuite: marshal payload: %w", err)
+	}
+	fullURL := c.baseURL() + "/record/v1/employee/" + url.PathEscape(employeeID)
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodPatch, fullURL, body)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("netsuite: employee PATCH status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
+// ProvisionAccess adds a role to the employee via
+// PATCH /record/v1/employee/{id} with the full roles list. If the role
+// is already present, no PATCH is issued (idempotent success).
+func (c *NetSuiteAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("netsuite: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("netsuite: grant.ResourceExternalID (role id) is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	emp, err := c.getEmployee(ctx, secrets, grant.UserExternalID)
+	if err != nil {
+		return err
+	}
+	if emp == nil {
+		return fmt.Errorf("netsuite: employee %s not found", grant.UserExternalID)
+	}
+	for _, r := range emp.Roles.Items {
+		if r.ID == grant.ResourceExternalID {
+			return nil
+		}
+	}
+	// Build the roles slice by explicit copy rather than append to
+	// avoid mutating the underlying array of emp.Roles.Items. Today
+	// getEmployee returns a freshly-decoded slice with no spare
+	// capacity, but an explicit copy makes the contract independent
+	// of that detail (e.g. a future refactor that reuses a buffer).
+	roles := make([]netsuiteRoleRef, len(emp.Roles.Items), len(emp.Roles.Items)+1)
+	copy(roles, emp.Roles.Items)
+	roles = append(roles, netsuiteRoleRef{ID: grant.ResourceExternalID})
+	return c.patchEmployeeRoles(ctx, secrets, grant.UserExternalID, roles)
+}
+
+// RevokeAccess removes a role from the employee via
+// PATCH /record/v1/employee/{id}. Missing employee or missing role both
+// map to idempotent success.
+func (c *NetSuiteAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("netsuite: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("netsuite: grant.ResourceExternalID is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	emp, err := c.getEmployee(ctx, secrets, grant.UserExternalID)
+	if err != nil {
+		return err
+	}
+	if emp == nil {
+		return nil
+	}
+	found := false
+	roles := make([]netsuiteRoleRef, 0, len(emp.Roles.Items))
+	for _, r := range emp.Roles.Items {
+		if r.ID == grant.ResourceExternalID {
+			found = true
+			continue
+		}
+		roles = append(roles, r)
+	}
+	if !found {
+		return nil
+	}
+	return c.patchEmployeeRoles(ctx, secrets, grant.UserExternalID, roles)
+}
+
+// ListEntitlements reads /record/v1/employee/{id}?expandSubResources=true
+// and emits one Entitlement per role assignment.
+func (c *NetSuiteAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	userExternalID = strings.TrimSpace(userExternalID)
+	if userExternalID == "" {
+		return nil, errors.New("netsuite: user external id is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	emp, err := c.getEmployee(ctx, secrets, userExternalID)
+	if err != nil {
+		return nil, err
+	}
+	if emp == nil {
+		return nil, nil
+	}
+	out := make([]access.Entitlement, 0, len(emp.Roles.Items))
+	for _, r := range emp.Roles.Items {
+		out = append(out, access.Entitlement{
+			ResourceExternalID: r.ID,
+			Role:               r.RefName,
+			Source:             "direct",
+		})
+	}
+	return out, nil
 }
 func (c *NetSuiteAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

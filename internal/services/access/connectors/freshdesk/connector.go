@@ -3,6 +3,7 @@
 package freshdesk
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -10,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -121,6 +124,25 @@ func (c *FreshdeskAccessConnector) newRequest(ctx context.Context, secrets Secre
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", basicAuthHeader(secrets.APIKey))
 	return req, nil
+}
+
+func (c *FreshdeskAccessConnector) newJSONRequest(ctx context.Context, secrets Secrets, method, fullURL string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", basicAuthHeader(secrets.APIKey))
+	return req, nil
+}
+
+func (c *FreshdeskAccessConnector) doRaw(req *http.Request) (*http.Response, error) {
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("freshdesk: %s %s: %w", req.Method, req.URL.Path, err)
+	}
+	return resp, nil
 }
 
 func (c *FreshdeskAccessConnector) do(req *http.Request) ([]byte, error) {
@@ -266,14 +288,175 @@ func (c *FreshdeskAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *FreshdeskAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ---------- Phase 10 advanced capabilities ----------
+
+type freshdeskAgentDetail struct {
+	ID       int64   `json:"id"`
+	GroupIDs []int64 `json:"group_ids"`
 }
-func (c *FreshdeskAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+func (c *FreshdeskAccessConnector) getAgent(ctx context.Context, cfg Config, secrets Secrets, agentID string) (*freshdeskAgentDetail, error) {
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, c.baseURL(cfg)+"/api/v2/agents/"+url.PathEscape(agentID))
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("freshdesk: agent GET status %d: %s", resp.StatusCode, string(body))
+	}
+	var agent freshdeskAgentDetail
+	if err := json.Unmarshal(body, &agent); err != nil {
+		return nil, fmt.Errorf("freshdesk: decode agent: %w", err)
+	}
+	return &agent, nil
 }
-func (c *FreshdeskAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+func (c *FreshdeskAccessConnector) updateAgentGroups(ctx context.Context, cfg Config, secrets Secrets, agentID string, groupIDs []int64) error {
+	payload := map[string]interface{}{"group_ids": groupIDs}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("freshdesk: marshal payload: %w", err)
+	}
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodPut, c.baseURL(cfg)+"/api/v2/agents/"+url.PathEscape(agentID), body)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("freshdesk: agent PUT status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
+// ProvisionAccess adds the target group to an agent's group_ids via
+// PUT /api/v2/agents/{agentId}. If the agent already has the group,
+// PUT is still a no-op idempotent operation.
+func (c *FreshdeskAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("freshdesk: grant.UserExternalID (agent id) is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("freshdesk: grant.ResourceExternalID (group id) is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	groupID, err := strconv.ParseInt(grant.ResourceExternalID, 10, 64)
+	if err != nil {
+		return fmt.Errorf("freshdesk: group id must be numeric: %w", err)
+	}
+	agent, err := c.getAgent(ctx, cfg, secrets, grant.UserExternalID)
+	if err != nil {
+		return err
+	}
+	if agent == nil {
+		return fmt.Errorf("freshdesk: agent %s not found", grant.UserExternalID)
+	}
+	for _, g := range agent.GroupIDs {
+		if g == groupID {
+			return nil
+		}
+	}
+	agent.GroupIDs = append(agent.GroupIDs, groupID)
+	return c.updateAgentGroups(ctx, cfg, secrets, grant.UserExternalID, agent.GroupIDs)
+}
+
+// RevokeAccess removes the target group from an agent's group_ids via
+// PUT /api/v2/agents/{agentId}. Missing agent or missing group both map
+// to idempotent success.
+func (c *FreshdeskAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("freshdesk: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("freshdesk: grant.ResourceExternalID is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	groupID, err := strconv.ParseInt(grant.ResourceExternalID, 10, 64)
+	if err != nil {
+		return fmt.Errorf("freshdesk: group id must be numeric: %w", err)
+	}
+	agent, err := c.getAgent(ctx, cfg, secrets, grant.UserExternalID)
+	if err != nil {
+		return err
+	}
+	if agent == nil {
+		return nil
+	}
+	found := false
+	newGroups := make([]int64, 0, len(agent.GroupIDs))
+	for _, g := range agent.GroupIDs {
+		if g == groupID {
+			found = true
+			continue
+		}
+		newGroups = append(newGroups, g)
+	}
+	if !found {
+		return nil
+	}
+	return c.updateAgentGroups(ctx, cfg, secrets, grant.UserExternalID, newGroups)
+}
+
+// ListEntitlements reads /api/v2/agents/{agentId} and emits one
+// Entitlement per group_id.
+func (c *FreshdeskAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	userExternalID = strings.TrimSpace(userExternalID)
+	if userExternalID == "" {
+		return nil, errors.New("freshdesk: user external id is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	agent, err := c.getAgent(ctx, cfg, secrets, userExternalID)
+	if err != nil {
+		return nil, err
+	}
+	if agent == nil {
+		return nil, nil
+	}
+	out := make([]access.Entitlement, 0, len(agent.GroupIDs))
+	for _, g := range agent.GroupIDs {
+		out = append(out, access.Entitlement{
+			ResourceExternalID: strconv.FormatInt(g, 10),
+			Role:               "agent",
+			Source:             "direct",
+		})
+	}
+	return out, nil
 }
 func (c *FreshdeskAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

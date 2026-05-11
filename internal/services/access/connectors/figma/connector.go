@@ -3,12 +3,14 @@
 package figma
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -117,6 +119,27 @@ func (c *FigmaAccessConnector) newRequest(ctx context.Context, secrets Secrets, 
 	return req, nil
 }
 
+func (c *FigmaAccessConnector) newJSONRequest(ctx context.Context, secrets Secrets, method, path string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL()+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Figma-Token", strings.TrimSpace(secrets.AccessToken))
+	return req, nil
+}
+
+// doRaw issues a request and returns the *http.Response unchanged so the
+// caller can dispatch on the status code (idempotent provision / revoke).
+func (c *FigmaAccessConnector) doRaw(req *http.Request) (*http.Response, error) {
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("figma: %s %s: %w", req.Method, req.URL.Path, err)
+	}
+	return resp, nil
+}
+
 func (c *FigmaAccessConnector) do(req *http.Request) ([]byte, error) {
 	resp, err := c.client().Do(req)
 	if err != nil {
@@ -181,12 +204,35 @@ type figmaTeamMembersResponse struct {
 	} `json:"cursor"`
 }
 
+// figmaProjectMembersResponse is the response type for
+// GET /v1/projects/{project_id}/members. Figma's team and project
+// member endpoints both return a top-level "members" array of objects
+// with the same fields, but they are documented as separate endpoints
+// with independently versioned schemas. We declare a distinct response
+// type for the project endpoint so the shape contract is explicit
+// per-endpoint — if Figma diverges the two in a future API release,
+// only this type needs to change.
+type figmaProjectMembersResponse struct {
+	Members []figmaProjectMember `json:"members"`
+}
+
 type figmaMember struct {
 	ID     string `json:"id"`
 	Name   string `json:"handle"`
 	Email  string `json:"email"`
 	Role   string `json:"role"`
 	ImgURL string `json:"img_url,omitempty"`
+}
+
+// figmaProjectMember mirrors figmaMember but is scoped to the project
+// members endpoint. Keeping it as a separate type guards against silent
+// breakage if Figma ever ships a project-specific shape (e.g., adding
+// project-scoped permission fields).
+type figmaProjectMember struct {
+	ID    string `json:"id"`
+	Name  string `json:"handle"`
+	Email string `json:"email"`
+	Role  string `json:"role"`
 }
 
 func (c *FigmaAccessConnector) CountIdentities(ctx context.Context, configRaw, secretsRaw map[string]interface{}) (int, error) {
@@ -251,14 +297,183 @@ func (c *FigmaAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *FigmaAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ---------- Phase 10 advanced capabilities ----------
+
+type figmaProject struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
-func (c *FigmaAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+type figmaProjectsResponse struct {
+	Name     string         `json:"name"`
+	Projects []figmaProject `json:"projects"`
 }
-func (c *FigmaAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+func figmaRole(grantRole string) string {
+	switch strings.ToLower(strings.TrimSpace(grantRole)) {
+	case "editor", "edit":
+		return "editor"
+	case "owner":
+		return "owner"
+	case "viewer", "view", "":
+		return "viewer"
+	default:
+		return strings.TrimSpace(grantRole)
+	}
+}
+
+// ProvisionAccess shares a Figma project with a user via
+// POST /v1/projects/{project_id}/members. ResourceExternalID is the
+// project_id. 409 / already-member-style responses are idempotent.
+func (c *FigmaAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("figma: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("figma: grant.ResourceExternalID (project_id) is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	payload := map[string]interface{}{
+		"user_id": grant.UserExternalID,
+		"role":    figmaRole(grant.Role),
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("figma: marshal provision payload: %w", err)
+	}
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodPost, "/projects/"+url.PathEscape(grant.ResourceExternalID)+"/members", body)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusConflict:
+		return nil
+	case resp.StatusCode == http.StatusBadRequest && bytes.Contains(bytes.ToLower(respBody), []byte("already")):
+		return nil
+	default:
+		return fmt.Errorf("figma: project member POST status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// RevokeAccess removes a user from a Figma project via
+// DELETE /v1/projects/{project_id}/members/{user_id}. 404 is idempotent.
+func (c *FigmaAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("figma: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("figma: grant.ResourceExternalID (project_id) is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	req, err := c.newRequest(ctx, secrets, http.MethodDelete, "/projects/"+url.PathEscape(grant.ResourceExternalID)+"/members/"+url.PathEscape(grant.UserExternalID))
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return nil
+	default:
+		return fmt.Errorf("figma: project member DELETE status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// ListEntitlements walks /teams/{team_id}/projects and, for each
+// project, fetches /projects/{project_id}/members and filters for the
+// supplied user. Each matching membership emits a project-level
+// Entitlement.
+//
+// Cost: this issues 1 request to list projects + 1 request per project.
+// Figma has no per-user "my projects" endpoint, so this O(P) fan-out is
+// inherent to the API surface. The loop honours ctx cancellation between
+// per-project calls so long-running scans can be aborted promptly.
+func (c *FigmaAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	userExternalID = strings.TrimSpace(userExternalID)
+	if userExternalID == "" {
+		return nil, errors.New("figma: user external id is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, "/teams/"+url.PathEscape(cfg.TeamID)+"/projects")
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+	var resp figmaProjectsResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("figma: decode projects: %w", err)
+	}
+	var out []access.Entitlement
+	for _, p := range resp.Projects {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		memReq, err := c.newRequest(ctx, secrets, http.MethodGet, "/projects/"+url.PathEscape(p.ID)+"/members")
+		if err != nil {
+			return nil, err
+		}
+		memBody, err := c.do(memReq)
+		if err != nil {
+			return nil, err
+		}
+		var mems figmaProjectMembersResponse
+		if err := json.Unmarshal(memBody, &mems); err != nil {
+			return nil, fmt.Errorf("figma: decode project members: %w", err)
+		}
+		for _, m := range mems.Members {
+			if m.ID == userExternalID {
+				role := strings.ToLower(m.Role)
+				if role == "" {
+					role = "viewer"
+				}
+				out = append(out, access.Entitlement{
+					ResourceExternalID: p.ID,
+					Role:               role,
+					Source:             "direct",
+				})
+				break
+			}
+		}
+	}
+	return out, nil
 }
 func (c *FigmaAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

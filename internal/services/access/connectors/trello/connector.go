@@ -157,6 +157,16 @@ func (c *TrelloAccessConnector) do(req *http.Request) ([]byte, error) {
 	return body, nil
 }
 
+// doRaw issues a request and returns the *http.Response unchanged so the
+// caller can dispatch on the status code (idempotent provision / revoke).
+func (c *TrelloAccessConnector) doRaw(req *http.Request) (*http.Response, error) {
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("trello: %s %s: %w", req.Method, req.URL.Path, sanitizeURLError(err))
+	}
+	return resp, nil
+}
+
 func (c *TrelloAccessConnector) decodeBoth(configRaw, secretsRaw map[string]interface{}) (Config, Secrets, error) {
 	cfg, err := DecodeConfig(configRaw)
 	if err != nil {
@@ -259,14 +269,145 @@ func (c *TrelloAccessConnector) SyncIdentities(
 	return handler(identities, "")
 }
 
-func (c *TrelloAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ---------- Phase 10 advanced capabilities ----------
+
+type trelloBoard struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
-func (c *TrelloAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+func trelloMemberType(grantRole string) string {
+	switch strings.ToLower(strings.TrimSpace(grantRole)) {
+	case "admin":
+		return "admin"
+	case "observer":
+		return "observer"
+	default:
+		return "normal"
+	}
 }
-func (c *TrelloAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+// ProvisionAccess adds a Trello member to a board via
+// PUT /1/boards/{boardId}/members/{memberId}?type={role}. The Trello API
+// is naturally idempotent (PUT with the same role is a no-op), so a 200
+// response on a second call is treated as success.
+func (c *TrelloAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("trello: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("trello: grant.ResourceExternalID (boardId) is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	extra := url.Values{}
+	extra.Set("type", trelloMemberType(grant.Role))
+	path := "/boards/" + url.PathEscape(grant.ResourceExternalID) + "/members/" + url.PathEscape(grant.UserExternalID)
+	req, err := c.newRequest(ctx, secrets, http.MethodPut, path, extra)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusConflict:
+		return nil
+	default:
+		return fmt.Errorf("trello: board add member status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// RevokeAccess removes a Trello member from a board via
+// DELETE /1/boards/{boardId}/members/{memberId}. 404 (board or member
+// gone, or member not on the board) is treated as idempotent success.
+func (c *TrelloAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("trello: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("trello: grant.ResourceExternalID (boardId) is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	path := "/boards/" + url.PathEscape(grant.ResourceExternalID) + "/members/" + url.PathEscape(grant.UserExternalID)
+	req, err := c.newRequest(ctx, secrets, http.MethodDelete, path, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return nil
+	default:
+		return fmt.Errorf("trello: board remove member status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// ListEntitlements fetches /1/members/{memberId}/boards and emits one
+// Entitlement per board the member belongs to. Trello returns the
+// member's role per-board only on `/boards?fields=name,memberships`
+// expand paths; for simplicity we use Role = "member" as the source role.
+func (c *TrelloAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	userExternalID = strings.TrimSpace(userExternalID)
+	if userExternalID == "" {
+		return nil, errors.New("trello: user external id is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	extra := url.Values{}
+	extra.Set("fields", "id,name")
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, "/members/"+url.PathEscape(userExternalID)+"/boards", extra)
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+	var boards []trelloBoard
+	if err := json.Unmarshal(body, &boards); err != nil {
+		return nil, fmt.Errorf("trello: decode boards: %w", err)
+	}
+	out := make([]access.Entitlement, 0, len(boards))
+	for _, b := range boards {
+		out = append(out, access.Entitlement{
+			ResourceExternalID: b.ID,
+			Role:               "member",
+			Source:             "direct",
+		})
+	}
+	return out, nil
 }
 func (c *TrelloAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

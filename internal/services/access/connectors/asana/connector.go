@@ -3,12 +3,14 @@
 package asana
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -115,6 +117,31 @@ func (c *AsanaAccessConnector) newRequest(ctx context.Context, secrets Secrets, 
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
 	return req, nil
+}
+
+// newJSONRequest is like newRequest but attaches a JSON body and the
+// matching Content-Type header. Returns a request ready for c.client().Do.
+func (c *AsanaAccessConnector) newJSONRequest(ctx context.Context, secrets Secrets, method, path string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL()+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
+	return req, nil
+}
+
+// doRaw issues a request and returns the *http.Response unchanged so the
+// caller can dispatch on the status code (used for idempotent provision
+// / revoke flows). Unlike do(), doRaw does NOT raise an error for non-2xx
+// responses. Callers MUST close the returned body.
+func (c *AsanaAccessConnector) doRaw(req *http.Request) (*http.Response, error) {
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("asana: %s %s: %w", req.Method, req.URL.Path, err)
+	}
+	return resp, nil
 }
 
 func (c *AsanaAccessConnector) do(req *http.Request) ([]byte, error) {
@@ -251,14 +278,173 @@ func (c *AsanaAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *AsanaAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ---------- Phase 10 advanced capabilities ----------
+
+type asanaTeamMembership struct {
+	GID  string `json:"gid"`
+	Team struct {
+		GID  string `json:"gid"`
+		Name string `json:"name"`
+	} `json:"team"`
 }
-func (c *AsanaAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+type asanaTeamMembershipsResponse struct {
+	Data     []asanaTeamMembership `json:"data"`
+	NextPage struct {
+		Offset string `json:"offset,omitempty"`
+	} `json:"next_page"`
 }
-func (c *AsanaAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+// addRemoveBody is the Asana convention of wrapping the actual payload
+// under a top-level "data" object.
+type addRemoveBody struct {
+	Data struct {
+		User string `json:"user"`
+	} `json:"data"`
+}
+
+func buildAddRemovePayload(userExternalID string) ([]byte, error) {
+	var payload addRemoveBody
+	payload.Data.User = userExternalID
+	return json.Marshal(payload)
+}
+
+// ProvisionAccess adds a user to an Asana team via
+// POST /teams/{team_gid}/addUser. grant.ResourceExternalID = team GID.
+// Asana returns 200 + the team-membership row on success, 403 with a body
+// that mentions "already a member" when the user is already a member, and
+// 404 when either the team or the user is unknown. We treat 403
+// "already member" as idempotent success per PROPOSAL.md §2.1.
+func (c *AsanaAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("asana: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("asana: grant.ResourceExternalID is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	body, err := buildAddRemovePayload(grant.UserExternalID)
+	if err != nil {
+		return fmt.Errorf("asana: marshal addUser payload: %w", err)
+	}
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodPost, "/teams/"+url.PathEscape(grant.ResourceExternalID)+"/addUser", body)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusForbidden && bytes.Contains(bytes.ToLower(respBody), []byte("already")):
+		return nil
+	case resp.StatusCode == http.StatusConflict:
+		return nil
+	default:
+		return fmt.Errorf("asana: addUser status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// RevokeAccess removes a user from an Asana team via
+// POST /teams/{team_gid}/removeUser. 404 (team or user gone) is treated
+// as idempotent success.
+func (c *AsanaAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("asana: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("asana: grant.ResourceExternalID is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	body, err := buildAddRemovePayload(grant.UserExternalID)
+	if err != nil {
+		return fmt.Errorf("asana: marshal removeUser payload: %w", err)
+	}
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodPost, "/teams/"+url.PathEscape(grant.ResourceExternalID)+"/removeUser", body)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return nil
+	default:
+		return fmt.Errorf("asana: removeUser status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// ListEntitlements pages /users/{user_gid}/team_memberships and emits one
+// Entitlement per team membership. Asana exposes only the membership
+// relation here; finer-grained roles are not surfaced.
+func (c *AsanaAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	userExternalID = strings.TrimSpace(userExternalID)
+	if userExternalID == "" {
+		return nil, errors.New("asana: user external id is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	var out []access.Entitlement
+	offset := ""
+	for {
+		path := "/users/" + url.PathEscape(userExternalID) + "/team_memberships?limit=100&opt_fields=team.name"
+		if offset != "" {
+			path += "&offset=" + url.QueryEscape(offset)
+		}
+		req, err := c.newRequest(ctx, secrets, http.MethodGet, path)
+		if err != nil {
+			return nil, err
+		}
+		body, err := c.do(req)
+		if err != nil {
+			return nil, err
+		}
+		var resp asanaTeamMembershipsResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, fmt.Errorf("asana: decode team_memberships: %w", err)
+		}
+		for _, tm := range resp.Data {
+			out = append(out, access.Entitlement{
+				ResourceExternalID: tm.Team.GID,
+				Role:               "member",
+				Source:             "direct",
+			})
+		}
+		if resp.NextPage.Offset == "" {
+			return out, nil
+		}
+		offset = resp.NextPage.Offset
+	}
 }
 func (c *AsanaAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

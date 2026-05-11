@@ -3,12 +3,15 @@
 package clickup
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -112,6 +115,25 @@ func (c *ClickUpAccessConnector) newRequest(ctx context.Context, secrets Secrets
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", strings.TrimSpace(secrets.APIToken))
 	return req, nil
+}
+
+func (c *ClickUpAccessConnector) newJSONRequest(ctx context.Context, secrets Secrets, method, fullURL string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", strings.TrimSpace(secrets.APIToken))
+	return req, nil
+}
+
+func (c *ClickUpAccessConnector) doRaw(req *http.Request) (*http.Response, error) {
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("clickup: %s %s: %w", req.Method, req.URL.Path, err)
+	}
+	return resp, nil
 }
 
 func (c *ClickUpAccessConnector) do(req *http.Request) ([]byte, error) {
@@ -236,14 +258,155 @@ func (c *ClickUpAccessConnector) SyncIdentities(
 	return handler(identities, "")
 }
 
-func (c *ClickUpAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ---------- Phase 10 advanced capabilities ----------
+
+// ProvisionAccess adds a user to a ClickUp List via
+// POST /api/v2/list/{list_id}/member with body {"user_id": <id>}.
+// Already-member responses (409 or "already a member" text) are treated
+// as idempotent success.
+func (c *ClickUpAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("clickup: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("clickup: grant.ResourceExternalID (list_id) is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	userID, err := strconv.ParseInt(grant.UserExternalID, 10, 64)
+	if err != nil {
+		return fmt.Errorf("clickup: user external id must be numeric: %w", err)
+	}
+	body, err := json.Marshal(map[string]int64{"user_id": userID})
+	if err != nil {
+		return fmt.Errorf("clickup: marshal payload: %w", err)
+	}
+	fullURL := c.baseURL() + "/api/v2/list/" + url.PathEscape(grant.ResourceExternalID) + "/member"
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodPost, fullURL, body)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusConflict:
+		return nil
+	case resp.StatusCode == http.StatusBadRequest && bytes.Contains(bytes.ToLower(respBody), []byte("already")):
+		return nil
+	default:
+		return fmt.Errorf("clickup: list member POST status %d: %s", resp.StatusCode, string(respBody))
+	}
 }
-func (c *ClickUpAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+// RevokeAccess removes a user from a ClickUp List via
+// DELETE /api/v2/list/{list_id}/member/{user_id}. 404 is idempotent.
+func (c *ClickUpAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("clickup: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("clickup: grant.ResourceExternalID (list_id) is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	fullURL := c.baseURL() + "/api/v2/list/" + url.PathEscape(grant.ResourceExternalID) + "/member/" + url.PathEscape(grant.UserExternalID)
+	req, err := c.newRequest(ctx, secrets, http.MethodDelete, fullURL)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return nil
+	default:
+		return fmt.Errorf("clickup: list member DELETE status %d: %s", resp.StatusCode, string(respBody))
+	}
 }
-func (c *ClickUpAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+// ListEntitlements walks the workspace's spaces and emits one Entitlement
+// per space the user is a member of. ClickUp's per-user list endpoint
+// requires a personal token scope we may not have, so we read the team
+// membership and synthesize one space-level Entitlement when the user
+// belongs to the workspace.
+func (c *ClickUpAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	userExternalID = strings.TrimSpace(userExternalID)
+	if userExternalID == "" {
+		return nil, errors.New("clickup: user external id is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	fullURL := c.baseURL() + "/api/v2/team/" + url.PathEscape(cfg.TeamID) + "/member"
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, fullURL)
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+	var resp clickupResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("clickup: decode members: %w", err)
+	}
+	var out []access.Entitlement
+	for _, m := range resp.Members {
+		if fmt.Sprintf("%d", m.User.ID) != userExternalID && !strings.EqualFold(m.User.Email, userExternalID) {
+			continue
+		}
+		role := clickupRoleName(m.User.Role)
+		out = append(out, access.Entitlement{
+			ResourceExternalID: cfg.TeamID,
+			Role:               role,
+			Source:             "direct",
+		})
+	}
+	return out, nil
+}
+
+func clickupRoleName(role int) string {
+	switch role {
+	case 1:
+		return "owner"
+	case 2:
+		return "admin"
+	case 3:
+		return "member"
+	case 4:
+		return "guest"
+	default:
+		return "member"
+	}
 }
 func (c *ClickUpAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

@@ -3,12 +3,15 @@
 package helpscout
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -94,6 +97,25 @@ func (c *HelpScoutAccessConnector) newRequest(ctx context.Context, secrets Secre
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
 	return req, nil
+}
+
+func (c *HelpScoutAccessConnector) newJSONRequest(ctx context.Context, secrets Secrets, method, path string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL()+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
+	return req, nil
+}
+
+func (c *HelpScoutAccessConnector) doRaw(req *http.Request) (*http.Response, error) {
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("helpscout: %s %s: %w", req.Method, req.URL.Path, err)
+	}
+	return resp, nil
 }
 
 func (c *HelpScoutAccessConnector) do(req *http.Request) ([]byte, error) {
@@ -243,15 +265,213 @@ func (c *HelpScoutAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *HelpScoutAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ---------- Phase 10 advanced capabilities ----------
+
+type helpscoutTeamMember struct {
+	ID int64 `json:"id"`
 }
-func (c *HelpScoutAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+type helpscoutTeam struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
 }
-func (c *HelpScoutAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+type helpscoutTeamsResponse struct {
+	Embedded struct {
+		Teams []helpscoutTeam `json:"teams"`
+	} `json:"_embedded"`
+	Page struct {
+		Size          int `json:"size"`
+		TotalElements int `json:"totalElements"`
+		TotalPages    int `json:"totalPages"`
+		Number        int `json:"number"`
+	} `json:"page"`
 }
+
+type helpscoutTeamMembersResponse struct {
+	Embedded struct {
+		Users []helpscoutUser `json:"users"`
+	} `json:"_embedded"`
+	Page struct {
+		Size          int `json:"size"`
+		TotalElements int `json:"totalElements"`
+		TotalPages    int `json:"totalPages"`
+		Number        int `json:"number"`
+	} `json:"page"`
+}
+
+// ProvisionAccess assigns a user to a Help Scout Team via
+// PUT /teams/{teamId}/members/{userId}. 409 (already member) maps to
+// idempotent success.
+func (c *HelpScoutAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("helpscout: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("helpscout: grant.ResourceExternalID (teamId) is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	path := "/teams/" + url.PathEscape(grant.ResourceExternalID) + "/members/" + url.PathEscape(grant.UserExternalID)
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodPut, path, []byte(`{}`))
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusConflict:
+		return nil
+	case resp.StatusCode == http.StatusBadRequest && bytes.Contains(bytes.ToLower(respBody), []byte("already")):
+		return nil
+	default:
+		return fmt.Errorf("helpscout: team member PUT status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// RevokeAccess removes a user from a Team via
+// DELETE /teams/{teamId}/members/{userId}. 404 ⇒ idempotent success.
+func (c *HelpScoutAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("helpscout: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("helpscout: grant.ResourceExternalID (teamId) is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	path := "/teams/" + url.PathEscape(grant.ResourceExternalID) + "/members/" + url.PathEscape(grant.UserExternalID)
+	req, err := c.newRequest(ctx, secrets, http.MethodDelete, path)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return nil
+	default:
+		return fmt.Errorf("helpscout: team member DELETE status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// ListEntitlements pages /teams and inspects /teams/{teamId}/members
+// for the user. Each team containing the user produces one Entitlement.
+func (c *HelpScoutAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	userExternalID = strings.TrimSpace(userExternalID)
+	if userExternalID == "" {
+		return nil, errors.New("helpscout: user external id is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	var out []access.Entitlement
+	page := 1
+	for {
+		req, err := c.newRequest(ctx, secrets, http.MethodGet, fmt.Sprintf("/teams?page=%d&size=%d", page, pageSize))
+		if err != nil {
+			return nil, err
+		}
+		body, err := c.do(req)
+		if err != nil {
+			return nil, err
+		}
+		var resp helpscoutTeamsResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, fmt.Errorf("helpscout: decode teams: %w", err)
+		}
+		for _, tm := range resp.Embedded.Teams {
+			isMember, err := c.userInTeam(ctx, secrets, tm.ID, userExternalID)
+			if err != nil {
+				return nil, err
+			}
+			if isMember {
+				out = append(out, access.Entitlement{
+					ResourceExternalID: strconv.FormatInt(tm.ID, 10),
+					Role:               "member",
+					Source:             "direct",
+				})
+			}
+		}
+		if resp.Page.TotalPages == 0 || resp.Page.Number >= resp.Page.TotalPages {
+			return out, nil
+		}
+		page = resp.Page.Number + 1
+	}
+}
+
+func (c *HelpScoutAccessConnector) userInTeam(ctx context.Context, secrets Secrets, teamID int64, userExternalID string) (bool, error) {
+	page := 1
+	for {
+		path := fmt.Sprintf("/teams/%d/members?page=%d&size=%d", teamID, page, pageSize)
+		req, err := c.newRequest(ctx, secrets, http.MethodGet, path)
+		if err != nil {
+			return false, err
+		}
+		resp, err := c.doRaw(req)
+		if err != nil {
+			return false, err
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			resp.Body.Close()
+			return false, nil
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return false, fmt.Errorf("helpscout: team members GET status %d: %s", resp.StatusCode, string(body))
+		}
+		var members helpscoutTeamMembersResponse
+		if err := json.Unmarshal(body, &members); err != nil {
+			return false, fmt.Errorf("helpscout: decode team members: %w", err)
+		}
+		// Match strictly on the numeric Help Scout user ID. The same
+		// identifier is required by ProvisionAccess / RevokeAccess (used as
+		// a URL path segment) and is what SyncIdentities emits, so keeping
+		// the comparison narrow avoids surfacing entitlements that the
+		// caller cannot then revoke with the same UserExternalID.
+		for _, u := range members.Embedded.Users {
+			if strconv.FormatInt(u.ID, 10) == userExternalID {
+				return true, nil
+			}
+		}
+		if members.Page.TotalPages == 0 || members.Page.Number >= members.Page.TotalPages {
+			return false, nil
+		}
+		page = members.Page.Number + 1
+	}
+}
+
+var _ = helpscoutTeamMember{}
 func (c *HelpScoutAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil
 }

@@ -7,12 +7,14 @@
 package intercom
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -105,6 +107,25 @@ func (c *IntercomAccessConnector) newRequest(ctx context.Context, secrets Secret
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.Token))
 	return req, nil
+}
+
+func (c *IntercomAccessConnector) newJSONRequest(ctx context.Context, secrets Secrets, method, fullURL string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.Token))
+	return req, nil
+}
+
+func (c *IntercomAccessConnector) doRaw(req *http.Request) (*http.Response, error) {
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("intercom: %s %s: %w", req.Method, req.URL.Path, err)
+	}
+	return resp, nil
 }
 
 func (c *IntercomAccessConnector) do(req *http.Request) ([]byte, error) {
@@ -230,14 +251,188 @@ func (c *IntercomAccessConnector) SyncIdentities(
 	return handler(identities, "")
 }
 
-func (c *IntercomAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ---------- Phase 10 advanced capabilities ----------
+
+type intercomTeam struct {
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	AdminIDs []string `json:"admin_ids"`
 }
-func (c *IntercomAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+type intercomTeamsResponse struct {
+	Teams []intercomTeam `json:"teams"`
 }
-func (c *IntercomAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+func (c *IntercomAccessConnector) getTeam(ctx context.Context, secrets Secrets, teamID string) (*intercomTeam, error) {
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, c.baseURL()+"/teams/"+url.PathEscape(teamID))
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("intercom: team GET status %d: %s", resp.StatusCode, string(body))
+	}
+	var team intercomTeam
+	if err := json.Unmarshal(body, &team); err != nil {
+		return nil, fmt.Errorf("intercom: decode team: %w", err)
+	}
+	return &team, nil
+}
+
+func (c *IntercomAccessConnector) putTeamAdmins(ctx context.Context, secrets Secrets, teamID string, adminIDs []string) error {
+	payload := map[string]interface{}{"admin_ids": adminIDs}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("intercom: marshal team payload: %w", err)
+	}
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodPut, c.baseURL()+"/teams/"+url.PathEscape(teamID), body)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("intercom: team PUT status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
+// ProvisionAccess adds an admin to a Team via PUT /teams/{teamId}
+// with the union of current admin_ids and the new id. No-op if the admin
+// is already a member.
+func (c *IntercomAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("intercom: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("intercom: grant.ResourceExternalID (teamId) is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	team, err := c.getTeam(ctx, secrets, grant.ResourceExternalID)
+	if err != nil {
+		return err
+	}
+	if team == nil {
+		return fmt.Errorf("intercom: team %s not found", grant.ResourceExternalID)
+	}
+	for _, a := range team.AdminIDs {
+		if a == grant.UserExternalID {
+			return nil
+		}
+	}
+	// Build the admins slice by explicit copy rather than append to
+	// avoid mutating the underlying array of team.AdminIDs. The
+	// previous `append(team.AdminIDs, ...)` was safe today only
+	// because getTeam() returns a fresh slice per call; an explicit
+	// copy makes the contract independent of that detail.
+	admins := make([]string, len(team.AdminIDs), len(team.AdminIDs)+1)
+	copy(admins, team.AdminIDs)
+	admins = append(admins, grant.UserExternalID)
+	return c.putTeamAdmins(ctx, secrets, grant.ResourceExternalID, admins)
+}
+
+// RevokeAccess removes an admin from a Team via PUT /teams/{teamId}
+// with the admin filtered out. Missing team ⇒ idempotent success.
+func (c *IntercomAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("intercom: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("intercom: grant.ResourceExternalID is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	team, err := c.getTeam(ctx, secrets, grant.ResourceExternalID)
+	if err != nil {
+		return err
+	}
+	if team == nil {
+		return nil
+	}
+	found := false
+	admins := make([]string, 0, len(team.AdminIDs))
+	for _, a := range team.AdminIDs {
+		if a == grant.UserExternalID {
+			found = true
+			continue
+		}
+		admins = append(admins, a)
+	}
+	if !found {
+		return nil
+	}
+	return c.putTeamAdmins(ctx, secrets, grant.ResourceExternalID, admins)
+}
+
+// ListEntitlements walks /teams and emits one Entitlement per team that
+// has the user as an admin member.
+func (c *IntercomAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	userExternalID = strings.TrimSpace(userExternalID)
+	if userExternalID == "" {
+		return nil, errors.New("intercom: user external id is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, c.baseURL()+"/teams")
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+	var resp intercomTeamsResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("intercom: decode teams: %w", err)
+	}
+	var out []access.Entitlement
+	for _, tm := range resp.Teams {
+		for _, a := range tm.AdminIDs {
+			if a == userExternalID {
+				out = append(out, access.Entitlement{
+					ResourceExternalID: tm.ID,
+					Role:               "member",
+					Source:             "direct",
+				})
+				break
+			}
+		}
+	}
+	return out, nil
 }
 func (c *IntercomAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

@@ -115,3 +115,139 @@ func TestGetCredentialsMetadata_RedactsToken(t *testing.T) {
 		t.Errorf("token_short = %q", short)
 	}
 }
+
+// ---------- Phase 10 advanced capability tests ----------
+
+func newAdvancedTestConnector(srv *httptest.Server) *IntercomAccessConnector {
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	return c
+}
+
+func TestProvisionAccess_AddsAdmin(t *testing.T) {
+	var putBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"id":"5","admin_ids":["1","2"]}`))
+		case http.MethodPut:
+			b := make([]byte, 256)
+			n, _ := r.Body.Read(b)
+			putBody = string(b[:n])
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	if err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "3", ResourceExternalID: "5",
+	}); err != nil {
+		t.Fatalf("ProvisionAccess: %v", err)
+	}
+	if !strings.Contains(putBody, `"admin_ids":["1","2","3"]`) {
+		t.Errorf("put body = %q", putBody)
+	}
+}
+
+func TestProvisionAccess_AlreadyMemberIdempotent(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"id":"5","admin_ids":["1","2","3"]}`))
+		case http.MethodPut:
+			called = true
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	if err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "3", ResourceExternalID: "5",
+	}); err != nil {
+		t.Fatalf("idempotent provision: %v", err)
+	}
+	if called {
+		t.Error("PUT should not be called when admin already in team")
+	}
+}
+
+func TestProvisionAccess_FailureSurfaces(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "3", ResourceExternalID: "5",
+	})
+	if err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("expected 403; got %v", err)
+	}
+}
+
+func TestRevokeAccess_RemovesAdmin(t *testing.T) {
+	var putBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"id":"5","admin_ids":["1","2","3"]}`))
+		case http.MethodPut:
+			b := make([]byte, 256)
+			n, _ := r.Body.Read(b)
+			putBody = string(b[:n])
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "3", ResourceExternalID: "5",
+	}); err != nil {
+		t.Fatalf("RevokeAccess: %v", err)
+	}
+	if !strings.Contains(putBody, `"admin_ids":["1","2"]`) {
+		t.Errorf("put body = %q", putBody)
+	}
+}
+
+func TestRevokeAccess_TeamMissingIdempotent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "3", ResourceExternalID: "5",
+	}); err != nil {
+		t.Fatalf("missing team should be idempotent; got %v", err)
+	}
+}
+
+func TestListEntitlements_FiltersByAdmin(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"teams":[{"id":"5","admin_ids":["3"]},{"id":"6","admin_ids":["4"]}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "3")
+	if err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if len(got) != 1 || got[0].ResourceExternalID != "5" {
+		t.Fatalf("got = %+v", got)
+	}
+}
+
+func TestProvisionRevoke_RejectMissing(t *testing.T) {
+	c := New()
+	if err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{ResourceExternalID: "x"}); err == nil {
+		t.Error("provision should require user id")
+	}
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{UserExternalID: "u"}); err == nil {
+		t.Error("revoke should require resource id")
+	}
+}
+
+var _ = json.RawMessage(nil)

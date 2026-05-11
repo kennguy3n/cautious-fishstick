@@ -3,12 +3,14 @@
 package front
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -101,6 +103,25 @@ func (c *FrontAccessConnector) newRequest(ctx context.Context, secrets Secrets, 
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.Token))
 	return req, nil
+}
+
+func (c *FrontAccessConnector) newJSONRequest(ctx context.Context, secrets Secrets, method, fullURL string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.Token))
+	return req, nil
+}
+
+func (c *FrontAccessConnector) doRaw(req *http.Request) (*http.Response, error) {
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("front: %s %s: %w", req.Method, req.URL.Path, err)
+	}
+	return resp, nil
 }
 
 func (c *FrontAccessConnector) do(req *http.Request) ([]byte, error) {
@@ -245,14 +266,149 @@ func (c *FrontAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *FrontAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ---------- Phase 10 advanced capabilities ----------
+
+type frontTeam struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
-func (c *FrontAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+type frontTeamsResponse struct {
+	Results []frontTeam `json:"_results"`
+	Links   struct {
+		Next string `json:"next"`
+	} `json:"_pagination"`
 }
-func (c *FrontAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+// ProvisionAccess adds a teammate to a team via
+// POST /teams/{teamId}/teammates with {"teammate_ids":[id]}. 409 maps to
+// idempotent success.
+func (c *FrontAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("front: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("front: grant.ResourceExternalID (teamId) is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	payload := map[string]interface{}{"teammate_ids": []string{grant.UserExternalID}}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("front: marshal payload: %w", err)
+	}
+	fullURL := c.baseURL() + "/teams/" + url.PathEscape(grant.ResourceExternalID) + "/teammates"
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodPost, fullURL, body)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusConflict:
+		return nil
+	case resp.StatusCode == http.StatusBadRequest && bytes.Contains(bytes.ToLower(respBody), []byte("already")):
+		return nil
+	default:
+		return fmt.Errorf("front: teammate POST status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// RevokeAccess removes a teammate from a team via
+// DELETE /teams/{teamId}/teammates with {"teammate_ids":[id]}. 404 ⇒ idempotent.
+func (c *FrontAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("front: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("front: grant.ResourceExternalID is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	payload := map[string]interface{}{"teammate_ids": []string{grant.UserExternalID}}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("front: marshal payload: %w", err)
+	}
+	fullURL := c.baseURL() + "/teams/" + url.PathEscape(grant.ResourceExternalID) + "/teammates"
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodDelete, fullURL, body)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return nil
+	default:
+		return fmt.Errorf("front: teammate DELETE status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// ListEntitlements walks /teammates/{id}/teams and emits one Entitlement
+// per team.
+func (c *FrontAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	userExternalID = strings.TrimSpace(userExternalID)
+	if userExternalID == "" {
+		return nil, errors.New("front: user external id is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	next := c.baseURL() + "/teammates/" + url.PathEscape(userExternalID) + "/teams"
+	var out []access.Entitlement
+	for next != "" {
+		req, err := c.newRequest(ctx, secrets, http.MethodGet, next)
+		if err != nil {
+			return nil, err
+		}
+		body, err := c.do(req)
+		if err != nil {
+			return nil, err
+		}
+		var resp frontTeamsResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, fmt.Errorf("front: decode teams: %w", err)
+		}
+		for _, tm := range resp.Results {
+			out = append(out, access.Entitlement{
+				ResourceExternalID: tm.ID,
+				Role:               "teammate",
+				Source:             "direct",
+			})
+		}
+		next = resp.Links.Next
+	}
+	return out, nil
 }
 func (c *FrontAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

@@ -10,11 +10,29 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
+
+// parseMondayID parses a Monday.com numeric ID (board_id, user_id) and
+// returns its canonical decimal form. Monday IDs are 64-bit integers;
+// rejecting non-numeric input prevents GraphQL injection when the value
+// is interpolated into a mutation string (see ProvisionAccess /
+// RevokeAccess below).
+func parseMondayID(label, raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", fmt.Errorf("monday: %s is required", label)
+	}
+	n, err := strconv.ParseInt(trimmed, 10, 64)
+	if err != nil || n <= 0 {
+		return "", fmt.Errorf("monday: %s must be a positive numeric id", label)
+	}
+	return strconv.FormatInt(n, 10), nil
+}
 
 const (
 	ProviderName   = "monday"
@@ -118,6 +136,24 @@ type graphQLResponse struct {
 	Errors []graphQLError `json:"errors,omitempty"`
 }
 
+type mondayBoard struct {
+	ID          json.Number  `json:"id"`
+	Name        string       `json:"name"`
+	Subscribers []mondayUser `json:"subscribers"`
+}
+
+type graphQLBoardsResponse struct {
+	Data struct {
+		Boards []mondayBoard `json:"boards"`
+	} `json:"data"`
+	Errors []graphQLError `json:"errors,omitempty"`
+}
+
+type graphQLMutationResponse struct {
+	Data   map[string]interface{} `json:"data"`
+	Errors []graphQLError         `json:"errors,omitempty"`
+}
+
 type mondayUser struct {
 	ID      json.Number `json:"id"`
 	Name    string      `json:"name"`
@@ -126,6 +162,24 @@ type mondayUser struct {
 }
 
 func (c *MondayAccessConnector) post(ctx context.Context, secrets Secrets, query string) (*graphQLResponse, error) {
+	body, err := c.postRaw(ctx, secrets, query)
+	if err != nil {
+		return nil, err
+	}
+	var g graphQLResponse
+	if err := json.Unmarshal(body, &g); err != nil {
+		return nil, fmt.Errorf("monday: decode graphql: %w", err)
+	}
+	if len(g.Errors) > 0 {
+		return nil, fmt.Errorf("monday: graphql error: %s", g.Errors[0].Message)
+	}
+	return &g, nil
+}
+
+// postRaw issues a GraphQL request and returns the raw body. Unlike post,
+// it does NOT inspect the `errors` array — callers must do so themselves.
+// This is what the idempotent mutation paths use.
+func (c *MondayAccessConnector) postRaw(ctx context.Context, secrets Secrets, query string) ([]byte, error) {
 	payload, err := json.Marshal(graphQLRequest{Query: query})
 	if err != nil {
 		return nil, err
@@ -146,14 +200,26 @@ func (c *MondayAccessConnector) post(ctx context.Context, secrets Secrets, query
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("monday: graphql: status %d: %s", resp.StatusCode, string(body))
 	}
-	var g graphQLResponse
-	if err := json.Unmarshal(body, &g); err != nil {
-		return nil, fmt.Errorf("monday: decode graphql: %w", err)
+	return body, nil
+}
+
+// graphQLErrorIsIdempotent returns true if any of the supplied GraphQL
+// errors look like a "already a subscriber" / "not a subscriber" /
+// "not found" condition. Those are the natural idempotent cases for
+// add_users_to_board / delete_subscribers_from_board.
+func graphQLErrorIsIdempotent(errs []graphQLError, needles []string) bool {
+	if len(errs) == 0 {
+		return false
 	}
-	if len(g.Errors) > 0 {
-		return nil, fmt.Errorf("monday: graphql error: %s", g.Errors[0].Message)
+	for _, e := range errs {
+		lower := strings.ToLower(e.Message)
+		for _, n := range needles {
+			if strings.Contains(lower, n) {
+				return true
+			}
+		}
 	}
-	return &g, nil
+	return false
 }
 
 func (c *MondayAccessConnector) Connect(ctx context.Context, configRaw, secretsRaw map[string]interface{}) error {
@@ -242,14 +308,154 @@ func (c *MondayAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *MondayAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ---------- Phase 10 advanced capabilities ----------
+
+// ProvisionAccess subscribes a user to a Monday board via the
+// add_users_to_board GraphQL mutation. ResourceExternalID is the
+// board_id (numeric). "already subscribed" errors are mapped to
+// idempotent success per PROPOSAL.md §2.1.
+func (c *MondayAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	userID, err := parseMondayID("grant.UserExternalID", grant.UserExternalID)
+	if err != nil {
+		return err
+	}
+	boardID, err := parseMondayID("grant.ResourceExternalID (board_id)", grant.ResourceExternalID)
+	if err != nil {
+		return err
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	kind := "subscriber"
+	if strings.EqualFold(grant.Role, "owner") {
+		kind = "owner"
+	}
+	query := fmt.Sprintf("mutation { add_users_to_board(board_id: %s, user_ids: [%s], kind: %s) { id } }", boardID, userID, kind)
+	body, err := c.postRaw(ctx, secrets, query)
+	if err != nil {
+		return err
+	}
+	var resp graphQLMutationResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return fmt.Errorf("monday: decode mutation: %w", err)
+	}
+	if graphQLErrorIsIdempotent(resp.Errors, []string{"already subscribed", "already a subscriber", "already a member", "duplicate"}) {
+		return nil
+	}
+	if len(resp.Errors) > 0 {
+		return fmt.Errorf("monday: add_users_to_board: %s", resp.Errors[0].Message)
+	}
+	return nil
 }
-func (c *MondayAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+// RevokeAccess removes a user from a Monday board via the
+// delete_subscribers_from_board GraphQL mutation. "not subscribed" /
+// "not found" errors are mapped to idempotent success.
+func (c *MondayAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	userID, err := parseMondayID("grant.UserExternalID", grant.UserExternalID)
+	if err != nil {
+		return err
+	}
+	boardID, err := parseMondayID("grant.ResourceExternalID (board_id)", grant.ResourceExternalID)
+	if err != nil {
+		return err
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	query := fmt.Sprintf("mutation { delete_subscribers_from_board(board_id: %s, user_ids: [%s]) { id } }", boardID, userID)
+	body, err := c.postRaw(ctx, secrets, query)
+	if err != nil {
+		return err
+	}
+	var resp graphQLMutationResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return fmt.Errorf("monday: decode mutation: %w", err)
+	}
+	if graphQLErrorIsIdempotent(resp.Errors, []string{"not subscribed", "not a subscriber", "not found", "does not exist"}) {
+		return nil
+	}
+	if len(resp.Errors) > 0 {
+		return fmt.Errorf("monday: delete_subscribers_from_board: %s", resp.Errors[0].Message)
+	}
+	return nil
 }
-func (c *MondayAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+// maxBoardPages bounds the number of board pages ListEntitlements will
+// scan. Monday.com has no per-user "my boards" query and the boards
+// query is the only way to derive subscriptions for an arbitrary user,
+// so the call is inherently O(boards / pageSize). On workspaces with
+// hundreds of thousands of boards an unbounded scan would burn through
+// the API complexity quota; capping at maxBoardPages keeps a single
+// ListEntitlements call within a known request budget. Operators who
+// need a complete view on very large workspaces should use the bulk
+// SyncIdentities pipeline + a downstream join instead.
+const maxBoardPages = 100
+
+// ListEntitlements paginates boards via boards(limit:N,page:P) and emits
+// one Entitlement per board the user is currently subscribed to. Monday
+// does not expose a per-user "my boards" query for arbitrary users, so
+// we walk the workspace boards and filter subscribers in-process. The
+// scan honours ctx cancellation between pages and stops after
+// maxBoardPages pages have been visited; see the maxBoardPages comment
+// for the rationale.
+func (c *MondayAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	userExternalID = strings.TrimSpace(userExternalID)
+	if userExternalID == "" {
+		return nil, errors.New("monday: user external id is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	var out []access.Entitlement
+	for page := 1; page <= maxBoardPages; page++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		query := fmt.Sprintf("query { boards(limit: %d, page: %d) { id name subscribers { id } } }", pageSize, page)
+		body, err := c.postRaw(ctx, secrets, query)
+		if err != nil {
+			return nil, err
+		}
+		var resp graphQLBoardsResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, fmt.Errorf("monday: decode boards: %w", err)
+		}
+		if len(resp.Errors) > 0 {
+			return nil, fmt.Errorf("monday: boards: %s", resp.Errors[0].Message)
+		}
+		for _, b := range resp.Data.Boards {
+			for _, sub := range b.Subscribers {
+				if sub.ID.String() == userExternalID {
+					out = append(out, access.Entitlement{
+						ResourceExternalID: b.ID.String(),
+						Role:               "subscriber",
+						Source:             "direct",
+					})
+					break
+				}
+			}
+		}
+		if len(resp.Data.Boards) < pageSize {
+			return out, nil
+		}
+	}
+	return out, nil
 }
 func (c *MondayAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

@@ -3,6 +3,7 @@
 package docusign
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -128,6 +129,25 @@ func (c *DocuSignAccessConnector) newRequest(ctx context.Context, secrets Secret
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.Token))
 	return req, nil
+}
+
+func (c *DocuSignAccessConnector) newJSONRequest(ctx context.Context, secrets Secrets, method, fullURL string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.Token))
+	return req, nil
+}
+
+func (c *DocuSignAccessConnector) doRaw(req *http.Request) (*http.Response, error) {
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("docusign: %s %s: %w", req.Method, req.URL.Path, err)
+	}
+	return resp, nil
 }
 
 func (c *DocuSignAccessConnector) do(req *http.Request) ([]byte, error) {
@@ -278,14 +298,159 @@ func (c *DocuSignAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *DocuSignAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ---------- Phase 10 advanced capabilities ----------
+
+type docusignGroupRef struct {
+	GroupID   string `json:"groupId"`
+	GroupName string `json:"groupName,omitempty"`
+	GroupType string `json:"groupType,omitempty"`
 }
-func (c *DocuSignAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+type docusignGroupsResponse struct {
+	Groups       []docusignGroupRef `json:"groups"`
+	ResultSetSize string             `json:"resultSetSize,omitempty"`
+	StartPosition string             `json:"startPosition,omitempty"`
+	TotalSetSize  string             `json:"totalSetSize,omitempty"`
 }
-func (c *DocuSignAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+// ProvisionAccess adds a user to a group via
+// PUT /restapi/v2.1/users/{userId}/groups with groups array.
+// 409 / "already in group" maps to idempotent success.
+func (c *DocuSignAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("docusign: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("docusign: grant.ResourceExternalID (groupId) is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	payload := map[string]interface{}{
+		"groups": []map[string]interface{}{{"groupId": grant.ResourceExternalID}},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("docusign: marshal payload: %w", err)
+	}
+	fullURL := c.baseURL(cfg) + "/restapi/v2.1/users/" + url.PathEscape(grant.UserExternalID) + "/groups"
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodPut, fullURL, body)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusConflict:
+		return nil
+	case resp.StatusCode == http.StatusBadRequest && bytes.Contains(bytes.ToLower(respBody), []byte("already")):
+		return nil
+	default:
+		return fmt.Errorf("docusign: group PUT status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// RevokeAccess removes a user from a group via
+// DELETE /restapi/v2.1/users/{userId}/groups. 404 ⇒ idempotent success.
+func (c *DocuSignAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("docusign: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("docusign: grant.ResourceExternalID is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	payload := map[string]interface{}{
+		"groups": []map[string]interface{}{{"groupId": grant.ResourceExternalID}},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("docusign: marshal payload: %w", err)
+	}
+	fullURL := c.baseURL(cfg) + "/restapi/v2.1/users/" + url.PathEscape(grant.UserExternalID) + "/groups"
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodDelete, fullURL, body)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return nil
+	default:
+		return fmt.Errorf("docusign: group DELETE status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// ListEntitlements reads /restapi/v2.1/users/{userId}/groups and emits
+// one Entitlement per group membership.
+func (c *DocuSignAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	userExternalID = strings.TrimSpace(userExternalID)
+	if userExternalID == "" {
+		return nil, errors.New("docusign: user external id is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	fullURL := c.baseURL(cfg) + "/restapi/v2.1/users/" + url.PathEscape(userExternalID) + "/groups"
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, fullURL)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("docusign: groups GET status %d: %s", resp.StatusCode, string(body))
+	}
+	var data docusignGroupsResponse
+	if err := json.Unmarshal(body, &data); err != nil {
+		return nil, fmt.Errorf("docusign: decode groups: %w", err)
+	}
+	out := make([]access.Entitlement, 0, len(data.Groups))
+	for _, g := range data.Groups {
+		out = append(out, access.Entitlement{
+			ResourceExternalID: g.GroupID,
+			Role:               g.GroupName,
+			Source:             "direct",
+		})
+	}
+	return out, nil
 }
 func (c *DocuSignAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

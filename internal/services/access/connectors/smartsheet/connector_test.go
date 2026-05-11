@@ -119,3 +119,137 @@ func TestGetCredentialsMetadata_RedactsToken(t *testing.T) {
 		t.Errorf("token_short = %q", short)
 	}
 }
+
+// ---------- Phase 10 advanced capability tests ----------
+
+func newAdvancedTestConnector(srv *httptest.Server) *SmartsheetAccessConnector {
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	return c
+}
+
+func TestProvisionAccess_HappyPath(t *testing.T) {
+	var got struct{ method, path string }
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got.method = r.Method
+		got.path = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "alice@example.com", ResourceExternalID: "1234567890", Role: "EDITOR",
+	})
+	if err != nil {
+		t.Fatalf("ProvisionAccess: %v", err)
+	}
+	if !strings.HasSuffix(got.path, "/2.0/sheets/1234567890/shares") || got.method != http.MethodPost {
+		t.Errorf("call = %s %s", got.method, got.path)
+	}
+}
+
+func TestProvisionAccess_DuplicateIdempotent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"errorCode":1020,"message":"User already shared"}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	if err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "a@b.com", ResourceExternalID: "1234567890",
+	}); err != nil {
+		t.Fatalf("1020 should be idempotent; got %v", err)
+	}
+}
+
+func TestProvisionAccess_FailureSurfaces(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "a@b.com", ResourceExternalID: "1234567890",
+	})
+	if err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("expected 403; got %v", err)
+	}
+}
+
+func TestRevokeAccess_HappyPath(t *testing.T) {
+	var deletedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"data":[{"id":"SHARE-1","type":"USER","email":"a@b.com","accessLevel":"EDITOR"}],"pageNumber":1,"totalPages":1}`))
+		case r.Method == http.MethodDelete:
+			deletedPath = r.URL.Path
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "a@b.com", ResourceExternalID: "1234567890",
+	}); err != nil {
+		t.Fatalf("RevokeAccess: %v", err)
+	}
+	if !strings.HasSuffix(deletedPath, "/2.0/sheets/1234567890/shares/SHARE-1") {
+		t.Errorf("deleted path = %q", deletedPath)
+	}
+}
+
+func TestRevokeAccess_NotSharedIdempotent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"data":[],"pageNumber":1,"totalPages":1}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "a@b.com", ResourceExternalID: "1234567890",
+	}); err != nil {
+		t.Fatalf("missing share should be idempotent; got %v", err)
+	}
+}
+
+func TestListEntitlements_FiltersByUser(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/2.0/sheets"):
+			_, _ = w.Write([]byte(`{"data":[{"id":"1","name":"S1"},{"id":"2","name":"S2"}],"pageNumber":1,"totalPages":1}`))
+		case strings.HasSuffix(r.URL.Path, "/2.0/sheets/1/shares"):
+			_, _ = w.Write([]byte(`{"data":[{"id":"sh1","type":"USER","email":"a@b.com","accessLevel":"EDITOR"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/2.0/sheets/2/shares"):
+			_, _ = w.Write([]byte(`{"data":[{"id":"sh2","type":"USER","email":"x@y.com","accessLevel":"VIEWER"}]}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "a@b.com")
+	if err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if len(got) != 1 || got[0].ResourceExternalID != "1" || got[0].Role != "EDITOR" {
+		t.Fatalf("got = %+v", got)
+	}
+}
+
+func TestProvisionRevoke_RejectMissing(t *testing.T) {
+	c := New()
+	if err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{ResourceExternalID: "x"}); err == nil {
+		t.Error("provision should require email")
+	}
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{UserExternalID: "a@b.com"}); err == nil {
+		t.Error("revoke should require sheet id")
+	}
+}
+
+// keep unused imports used in case the file shrinks
+var _ = json.RawMessage(nil)
+var _ = fmt.Sprintf

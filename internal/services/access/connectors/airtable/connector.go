@@ -3,12 +3,14 @@
 package airtable
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -115,6 +117,25 @@ func (c *AirtableAccessConnector) newRequest(ctx context.Context, secrets Secret
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
 	return req, nil
+}
+
+func (c *AirtableAccessConnector) newJSONRequest(ctx context.Context, secrets Secrets, method, path string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL()+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
+	return req, nil
+}
+
+func (c *AirtableAccessConnector) doRaw(req *http.Request) (*http.Response, error) {
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("airtable: %s %s: %w", req.Method, req.URL.Path, err)
+	}
+	return resp, nil
 }
 
 func (c *AirtableAccessConnector) do(req *http.Request) ([]byte, error) {
@@ -252,14 +273,270 @@ func (c *AirtableAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *AirtableAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ---------- Phase 10 advanced capabilities ----------
+
+type airtableCollaborator struct {
+	UserID      string `json:"userId"`
+	Email       string `json:"email"`
+	Permission  string `json:"permissionLevel"`
+	GranularID  string `json:"granularId,omitempty"`
 }
-func (c *AirtableAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+type airtableBaseCollaboratorsResponse struct {
+	IndividualCollaborators []airtableCollaborator `json:"individualCollaborators"`
 }
-func (c *AirtableAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+func airtablePermission(grantRole string) string {
+	switch strings.ToLower(strings.TrimSpace(grantRole)) {
+	case "owner":
+		return "owner"
+	case "create", "creator":
+		return "create"
+	case "edit", "editor":
+		return "edit"
+	case "comment", "commenter":
+		return "comment"
+	case "read", "reader", "":
+		return "read"
+	default:
+		return strings.ToLower(strings.TrimSpace(grantRole))
+	}
+}
+
+// ProvisionAccess adds a collaborator to an Airtable base via
+// POST /meta/bases/{baseId}/collaborators. ResourceExternalID = baseId,
+// UserExternalID = user-id-or-email. Duplicate collaborator errors
+// (422 + "already collaborator") are treated as idempotent success.
+func (c *AirtableAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("airtable: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("airtable: grant.ResourceExternalID (baseId) is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	collaborator := map[string]string{"permissionLevel": airtablePermission(grant.Role)}
+	if strings.Contains(grant.UserExternalID, "@") {
+		collaborator["email"] = grant.UserExternalID
+	} else {
+		collaborator["userId"] = grant.UserExternalID
+	}
+	body, err := json.Marshal(map[string]interface{}{"collaborators": []map[string]string{collaborator}})
+	if err != nil {
+		return fmt.Errorf("airtable: marshal payload: %w", err)
+	}
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodPost, "/meta/bases/"+url.PathEscape(grant.ResourceExternalID)+"/collaborators", body)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusConflict:
+		return nil
+	case (resp.StatusCode == http.StatusUnprocessableEntity || resp.StatusCode == http.StatusBadRequest) && bytes.Contains(bytes.ToLower(respBody), []byte("already")):
+		return nil
+	default:
+		return fmt.Errorf("airtable: base collaborators POST status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// RevokeAccess removes a collaborator from an Airtable base via
+// DELETE /meta/bases/{baseId}/collaborators/{collaboratorId}. 404 is
+// idempotent success. When grant.UserExternalID is an email rather than a
+// user-id we resolve it via GET /meta/bases/{baseId}/collaborators.
+func (c *AirtableAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("airtable: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("airtable: grant.ResourceExternalID (baseId) is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	collabID := grant.UserExternalID
+	if strings.Contains(collabID, "@") {
+		resolved, err := c.findCollaboratorIDForEmail(ctx, secrets, grant.ResourceExternalID, collabID)
+		if err != nil {
+			return err
+		}
+		if resolved == "" {
+			// no collaborator with that email ⇒ idempotent success
+			return nil
+		}
+		collabID = resolved
+	}
+	req, err := c.newRequest(ctx, secrets, http.MethodDelete, "/meta/bases/"+url.PathEscape(grant.ResourceExternalID)+"/collaborators/"+url.PathEscape(collabID))
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return nil
+	default:
+		return fmt.Errorf("airtable: base collaborators DELETE status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+func (c *AirtableAccessConnector) findCollaboratorIDForEmail(ctx context.Context, secrets Secrets, baseID, email string) (string, error) {
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, "/meta/bases/"+url.PathEscape(baseID)+"/collaborators")
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return "", nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("airtable: list collaborators status %d: %s", resp.StatusCode, string(body))
+	}
+	var list airtableBaseCollaboratorsResponse
+	if err := json.Unmarshal(body, &list); err != nil {
+		return "", fmt.Errorf("airtable: decode collaborators: %w", err)
+	}
+	emailLower := strings.ToLower(strings.TrimSpace(email))
+	for _, cc := range list.IndividualCollaborators {
+		if strings.ToLower(strings.TrimSpace(cc.Email)) == emailLower {
+			return cc.UserID, nil
+		}
+	}
+	return "", nil
+}
+
+// ListEntitlements walks /meta/bases and emits one Entitlement per base
+// where the user appears as an individual collaborator. Airtable's
+// per-user "my bases" endpoint is restricted to the authed user, so we
+// enumerate bases and filter.
+//
+// Airtable's /meta/bases response often omits the inline
+// individualCollaborators array (it's only present when the caller has
+// the meta:read scope and an enterprise plan). When the inline list is
+// missing we fall back to a per-base GET /meta/bases/{baseId}/collaborators
+// call so the entitlement listing still works on standard plans. The
+// loop honours ctx cancellation between per-base calls.
+func (c *AirtableAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	userExternalID = strings.TrimSpace(userExternalID)
+	if userExternalID == "" {
+		return nil, errors.New("airtable: user external id is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, "/meta/bases")
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Bases []struct {
+			ID                      string                 `json:"id"`
+			Name                    string                 `json:"name"`
+			PermissionLevel         string                 `json:"permissionLevel,omitempty"`
+			IndividualCollaborators []airtableCollaborator `json:"individualCollaborators,omitempty"`
+		} `json:"bases"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("airtable: decode bases: %w", err)
+	}
+	needle := strings.ToLower(userExternalID)
+	var out []access.Entitlement
+	for _, b := range resp.Bases {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		collabs := b.IndividualCollaborators
+		if len(collabs) == 0 {
+			perBase, err := c.listBaseCollaborators(ctx, secrets, b.ID)
+			if err != nil {
+				return nil, err
+			}
+			collabs = perBase
+		}
+		for _, cc := range collabs {
+			if strings.EqualFold(cc.UserID, userExternalID) || strings.ToLower(cc.Email) == needle {
+				role := cc.Permission
+				if role == "" {
+					role = "read"
+				}
+				out = append(out, access.Entitlement{
+					ResourceExternalID: b.ID,
+					Role:               role,
+					Source:             "direct",
+				})
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+// listBaseCollaborators issues GET /meta/bases/{baseId}/collaborators
+// and returns the individual collaborators array. Used as a fallback
+// when /meta/bases omits the inline IndividualCollaborators field. A
+// 404 is treated as "no collaborators" rather than an error so the
+// outer ListEntitlements call can continue past inaccessible bases.
+func (c *AirtableAccessConnector) listBaseCollaborators(ctx context.Context, secrets Secrets, baseID string) ([]airtableCollaborator, error) {
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, "/meta/bases/"+url.PathEscape(baseID)+"/collaborators")
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden {
+		return nil, nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("airtable: base collaborators GET status %d: %s", resp.StatusCode, string(body))
+	}
+	var list airtableBaseCollaboratorsResponse
+	if err := json.Unmarshal(body, &list); err != nil {
+		return nil, fmt.Errorf("airtable: decode base collaborators: %w", err)
+	}
+	return list.IndividualCollaborators, nil
 }
 func (c *AirtableAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

@@ -3,12 +3,14 @@
 package box
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -104,6 +106,25 @@ func (c *BoxAccessConnector) newRequest(ctx context.Context, secrets Secrets, me
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
 	return req, nil
+}
+
+func (c *BoxAccessConnector) newJSONRequest(ctx context.Context, secrets Secrets, method, fullURL string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
+	return req, nil
+}
+
+func (c *BoxAccessConnector) doRaw(req *http.Request) (*http.Response, error) {
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("box: %s %s: %w", req.Method, req.URL.Path, err)
+	}
+	return resp, nil
 }
 
 func (c *BoxAccessConnector) do(req *http.Request) ([]byte, error) {
@@ -251,14 +272,224 @@ func (c *BoxAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *BoxAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ---------- Phase 10 advanced capabilities ----------
+
+type boxCollaboration struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
+	Role string `json:"role"`
+	Item struct {
+		ID   string `json:"id"`
+		Type string `json:"type"`
+		Name string `json:"name,omitempty"`
+	} `json:"item"`
+	AccessibleBy struct {
+		ID    string `json:"id"`
+		Login string `json:"login,omitempty"`
+		Type  string `json:"type"`
+	} `json:"accessible_by"`
 }
-func (c *BoxAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+type boxCollaborationsResponse struct {
+	Entries     []boxCollaboration `json:"entries"`
+	NextMarker  string             `json:"next_marker,omitempty"`
+	TotalCount  int                `json:"total_count"`
 }
-func (c *BoxAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+func boxRole(grantRole string) string {
+	switch strings.ToLower(strings.TrimSpace(grantRole)) {
+	case "owner", "co-owner":
+		return "co-owner"
+	case "editor":
+		return "editor"
+	case "viewer", "":
+		return "viewer"
+	case "previewer":
+		return "previewer"
+	case "uploader":
+		return "uploader"
+	default:
+		return strings.ToLower(strings.TrimSpace(grantRole))
+	}
+}
+
+// ProvisionAccess creates a Box collaboration via POST /2.0/collaborations.
+// ResourceExternalID is the folder ID, UserExternalID the Box user ID.
+// 409 (user_already_collaborator) returns nil for idempotency.
+func (c *BoxAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("box: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("box: grant.ResourceExternalID (folder id) is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	payload := map[string]interface{}{
+		"item":          map[string]string{"type": "folder", "id": grant.ResourceExternalID},
+		"accessible_by": map[string]string{"type": "user", "id": grant.UserExternalID},
+		"role":          boxRole(grant.Role),
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("box: marshal payload: %w", err)
+	}
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodPost, c.baseURL()+"/2.0/collaborations", body)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusConflict:
+		return nil
+	case resp.StatusCode == http.StatusBadRequest && bytes.Contains(bytes.ToLower(respBody), []byte("user_already_collaborator")):
+		return nil
+	default:
+		return fmt.Errorf("box: collaborations POST status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// RevokeAccess deletes a Box collaboration. We first look up the
+// collaboration that matches the (user, folder) pair, then DELETE it.
+// 404 means the collaboration is already gone ⇒ idempotent success.
+func (c *BoxAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("box: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("box: grant.ResourceExternalID (folder id) is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	collabID, err := c.findCollaborationID(ctx, secrets, grant.ResourceExternalID, grant.UserExternalID)
+	if err != nil {
+		return err
+	}
+	if collabID == "" {
+		return nil
+	}
+	req, err := c.newRequest(ctx, secrets, http.MethodDelete, c.baseURL()+"/2.0/collaborations/"+url.PathEscape(collabID))
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return nil
+	default:
+		return fmt.Errorf("box: collaborations DELETE status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+func (c *BoxAccessConnector) findCollaborationID(ctx context.Context, secrets Secrets, folderID, userID string) (string, error) {
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, c.baseURL()+"/2.0/folders/"+url.PathEscape(folderID)+"/collaborations")
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return "", nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("box: collaborations GET status %d: %s", resp.StatusCode, string(body))
+	}
+	var list boxCollaborationsResponse
+	if err := json.Unmarshal(body, &list); err != nil {
+		return "", fmt.Errorf("box: decode collaborations: %w", err)
+	}
+	for _, e := range list.Entries {
+		if e.AccessibleBy.ID == userID || strings.EqualFold(e.AccessibleBy.Login, userID) {
+			return e.ID, nil
+		}
+	}
+	return "", nil
+}
+
+// ListEntitlements pages /2.0/users/{userId}/memberships (for group
+// memberships) and emits an Entitlement per group. Box does not expose a
+// per-user collaborations listing without enterprise admin scope; group
+// membership is the closest universally available signal.
+func (c *BoxAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	userExternalID = strings.TrimSpace(userExternalID)
+	if userExternalID == "" {
+		return nil, errors.New("box: user external id is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, c.baseURL()+"/2.0/users/"+url.PathEscape(userExternalID)+"/memberships")
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Entries []struct {
+			ID    string `json:"id"`
+			Role  string `json:"role"`
+			Group struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"group"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("box: decode memberships: %w", err)
+	}
+	out := make([]access.Entitlement, 0, len(resp.Entries))
+	for _, e := range resp.Entries {
+		if e.Group.ID == "" {
+			continue
+		}
+		role := e.Role
+		if role == "" {
+			role = "member"
+		}
+		out = append(out, access.Entitlement{
+			ResourceExternalID: e.Group.ID,
+			Role:               role,
+			Source:             "direct",
+		})
+	}
+	return out, nil
 }
 func (c *BoxAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil
