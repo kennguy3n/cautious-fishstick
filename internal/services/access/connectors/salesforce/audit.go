@@ -118,7 +118,7 @@ func mapSalesforceEventLog(r *sfEventLogRecord) *access.AuditLogEntry {
 	if r == nil || r.ID == "" {
 		return nil
 	}
-	ts, _ := time.Parse(time.RFC3339, r.LogDate)
+	ts, _ := parseSalesforceTime(r.LogDate)
 	return &access.AuditLogEntry{
 		EventID:   r.ID,
 		EventType: r.EventType,
@@ -130,6 +130,40 @@ func mapSalesforceEventLog(r *sfEventLogRecord) *access.AuditLogEntry {
 			"log_file_url":    r.Attributes.URL,
 		},
 	}
+}
+
+// salesforceTimeLayouts is the ordered list of timestamp formats the
+// Salesforce REST API is known to emit for LogDate. The canonical
+// format is "2024-01-01T10:00:00.000+0000" — note the offset has no
+// colon and milliseconds appear in the middle, so time.RFC3339
+// ("...Z07:00") cannot parse it and silently returns zero time. Try
+// the Salesforce-native shapes first, then fall back to RFC3339 for
+// safety against future API changes.
+var salesforceTimeLayouts = []string{
+	"2006-01-02T15:04:05.000-0700",
+	"2006-01-02T15:04:05-0700",
+	time.RFC3339Nano,
+	time.RFC3339,
+}
+
+// parseSalesforceTime tries each known Salesforce timestamp layout in
+// order and returns the first successful parse. It exists so cursor
+// advancement in FetchAccessAuditLogs doesn't silently stall when the
+// API returns its non-RFC3339 LogDate format.
+func parseSalesforceTime(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, nil
+	}
+	var lastErr error
+	for _, layout := range salesforceTimeLayouts {
+		if ts, err := time.Parse(layout, s); err == nil {
+			return ts, nil
+		} else {
+			lastErr = err
+		}
+	}
+	return time.Time{}, fmt.Errorf("salesforce: unrecognized LogDate %q: %w", s, lastErr)
 }
 
 var _ access.AccessAuditor = (*SalesforceAccessConnector)(nil)
