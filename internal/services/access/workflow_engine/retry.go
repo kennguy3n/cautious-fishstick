@@ -195,19 +195,35 @@ func (e *WorkflowExecutor) startStepHistory(
 	stepIndex int,
 	stepType string,
 ) (string, error) {
+	return e.startStepHistoryAt(ctx, requestID, workflowID, stepIndex, stepType, nil)
+}
+
+// startStepHistoryAt is the branch-aware variant. branchIndex is nil
+// for linear (Phase 8) executions and DAG root nodes; set for any
+// step that belongs to a fan-out branch so the DLQ can be filtered
+// by branch. Empty requestID is tolerated and the function returns ""
+// — the executor uses this for replay/dry-run paths.
+func (e *WorkflowExecutor) startStepHistoryAt(
+	ctx context.Context,
+	requestID, workflowID string,
+	stepIndex int,
+	stepType string,
+	branchIndex *int,
+) (string, error) {
 	if requestID == "" {
 		return "", nil
 	}
 	row := &models.AccessWorkflowStepHistory{
-		ID:         newPerformerULID(),
-		RequestID:  requestID,
-		WorkflowID: workflowID,
-		StepIndex:  stepIndex,
-		StepType:   stepType,
-		Status:     models.WorkflowStepStatusPending,
-		StartedAt:  time.Now().UTC(),
-		Attempts:   1,
-		CreatedAt:  time.Now().UTC(),
+		ID:          newPerformerULID(),
+		RequestID:   requestID,
+		WorkflowID:  workflowID,
+		StepIndex:   stepIndex,
+		BranchIndex: branchIndex,
+		StepType:    stepType,
+		Status:      models.WorkflowStepStatusPending,
+		StartedAt:   time.Now().UTC(),
+		Attempts:    1,
+		CreatedAt:   time.Now().UTC(),
 	}
 	if err := e.db.WithContext(ctx).Create(row).Error; err != nil {
 		return "", fmt.Errorf("workflow_engine: insert step history: %w", err)

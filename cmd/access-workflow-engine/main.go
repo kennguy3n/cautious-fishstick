@@ -18,8 +18,11 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/smtp"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -243,7 +246,7 @@ func main() {
 	log.Printf("access-workflow-engine: %s", dbDescription)
 
 	requestSvc := access.NewAccessRequestService(db)
-	notifSvc := notification.NewNotificationService()
+	notifSvc := notification.NewNotificationService(buildNotifiers()...)
 	notifAdapter := access.NewNotificationServiceAdapter(notifSvc)
 	performer := workflow_engine.NewServiceStepPerformer(db, requestSvc, notifAdapter)
 	executor := workflow_engine.NewWorkflowExecutor(db, performer)
@@ -340,4 +343,60 @@ func runEscalationChecker(ctx context.Context, db *gorm.DB, escalator workflow_e
 			}
 		}
 	}
+}
+
+// buildNotifiers wires production notification.Notifier instances from
+// env vars at boot. Both channels are feature-flagged so a missing
+// SMTP host or Slack webhook URL simply skips that channel — the
+// engine still boots and produces in-memory escalation logs.
+//
+//   - NOTIFICATION_SMTP_HOST enables EmailNotifier. Port defaults to
+//     587 if NOTIFICATION_SMTP_PORT is unset. Username/Password are
+//     optional (omitted = no SMTP AUTH).
+//   - NOTIFICATION_SLACK_WEBHOOK_URL enables SlackNotifier with
+//     Slack's Incoming Webhook contract.
+//
+// The email recipient resolver in this binary is intentionally
+// minimal: when the target user id already looks like an email it
+// forwards it through; otherwise the EmailNotifier logs and skips
+// the send. Production deployments that need richer lookups can
+// wrap the binary or extend this helper.
+func buildNotifiers() []notification.Notifier {
+	var notifiers []notification.Notifier
+
+	if host := strings.TrimSpace(os.Getenv("NOTIFICATION_SMTP_HOST")); host != "" {
+		port := 587
+		if raw := strings.TrimSpace(os.Getenv("NOTIFICATION_SMTP_PORT")); raw != "" {
+			if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+				port = v
+			}
+		}
+		cfg := notification.EmailNotifierConfig{
+			Host:     host,
+			Port:     port,
+			From:     strings.TrimSpace(os.Getenv("NOTIFICATION_SMTP_FROM")),
+			Username: strings.TrimSpace(os.Getenv("NOTIFICATION_SMTP_USERNAME")),
+			Password: strings.TrimSpace(os.Getenv("NOTIFICATION_SMTP_PASSWORD")),
+		}
+		resolver := notification.EmailRecipientResolverFunc(func(_ context.Context, userID string) ([]string, error) {
+			userID = strings.TrimSpace(userID)
+			if userID == "" || !strings.Contains(userID, "@") {
+				return nil, nil
+			}
+			return []string{userID}, nil
+		})
+		sender := notification.SMTPSenderFunc(smtp.SendMail)
+		notifiers = append(notifiers, notification.NewEmailNotifier(cfg, resolver, sender))
+		log.Printf("access-workflow-engine: email notifier enabled (host=%s port=%d)", host, port)
+	}
+
+	if webhook := strings.TrimSpace(os.Getenv("NOTIFICATION_SLACK_WEBHOOK_URL")); webhook != "" {
+		notifiers = append(notifiers, notification.NewSlackNotifier(webhook, nil))
+		log.Printf("access-workflow-engine: slack notifier enabled")
+	}
+
+	if len(notifiers) == 0 {
+		log.Printf("access-workflow-engine: no external notifiers configured; using in-memory dispatch only")
+	}
+	return notifiers
 }

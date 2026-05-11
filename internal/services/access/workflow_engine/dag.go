@@ -167,6 +167,15 @@ func (e *WorkflowExecutor) executeDAG(
 		pendingPreds[i] = len(predecessors[i])
 	}
 
+	// branchIndex[i] is the index of the root from which step i
+	// descends. Root r gets branch index `sort.SearchInts(roots, r)`;
+	// non-root step i inherits the lowest branch index among its
+	// predecessors so fan-in (join) steps land in the leftmost
+	// branch. Linear (single-root) workflows produce branchIndex[i] =
+	// 0 for every step, which is recorded as 0 to make the DLQ view
+	// easy to filter on.
+	branchIndex := computeBranchIndex(n, predecessors, roots)
+
 	var (
 		mu       sync.Mutex
 		wg       sync.WaitGroup
@@ -184,7 +193,8 @@ func (e *WorkflowExecutor) executeDAG(
 		var historyID string
 		if historyAvailable {
 			var herr error
-			historyID, herr = e.startStepHistory(ctx, requestID, wfID, i, steps[i].Type)
+			bi := branchIndex[i]
+			historyID, herr = e.startStepHistoryAt(ctx, requestID, wfID, i, steps[i].Type, &bi)
 			if herr != nil {
 				mu.Lock()
 				outcomes = append(outcomes, dagBranchOutcome{
@@ -316,6 +326,80 @@ func (e *WorkflowExecutor) executeDAG(
 		StepIndex: last,
 		StepType:  steps[last].Type,
 	}, nil
+}
+
+// computeBranchIndex returns a slice mapping every step index to the
+// (0-based) index of the root branch it descends from. Roots receive
+// their own position in the `roots` slice; non-root steps inherit the
+// minimum branch index across their predecessors. This guarantees:
+//
+//   - A linear workflow (single root) records branch 0 for every step.
+//   - In a fan-out, each branch's body keeps the branch number of its
+//     root.
+//   - In a fan-in (join), the join step lands in the leftmost branch
+//     so operators looking at "branch 0" see the join — matching the
+//     visual order users expect in the DAG-builder UI.
+//
+// The algorithm processes steps in DAG order (topological) via Kahn's
+// algorithm so every step's predecessors are resolved before it.
+func computeBranchIndex(n int, predecessors [][]int, roots []int) []int {
+	out := make([]int, n)
+	for i := range out {
+		out[i] = -1
+	}
+	for idx, r := range roots {
+		out[r] = idx
+	}
+
+	// Topological sort to resolve predecessor labels first.
+	indeg := make([]int, n)
+	successors := make([][]int, n)
+	for i, preds := range predecessors {
+		indeg[i] = len(preds)
+		for _, p := range preds {
+			successors[p] = append(successors[p], i)
+		}
+	}
+	queue := make([]int, 0, n)
+	for i := 0; i < n; i++ {
+		if indeg[i] == 0 {
+			queue = append(queue, i)
+		}
+	}
+	for len(queue) > 0 {
+		i := queue[0]
+		queue = queue[1:]
+		if out[i] < 0 {
+			// Non-root: inherit min branch index from predecessors.
+			min := -1
+			for _, p := range predecessors[i] {
+				if out[p] < 0 {
+					continue
+				}
+				if min < 0 || out[p] < min {
+					min = out[p]
+				}
+			}
+			if min < 0 {
+				min = 0
+			}
+			out[i] = min
+		}
+		for _, j := range successors[i] {
+			indeg[j]--
+			if indeg[j] == 0 {
+				queue = append(queue, j)
+			}
+		}
+	}
+	// Safety: any step still unlabeled (cycle case — dagBuild
+	// would have already errored out) defaults to branch 0.
+	for i := range out {
+		if out[i] < 0 {
+			out[i] = 0
+		}
+	}
+	return out
 }
 
 func containsInt(xs []int, v int) bool {

@@ -7,8 +7,25 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"gorm.io/gorm"
+
 	"github.com/kennguy3n/cautious-fishstick/internal/models"
 )
+
+// pinSQLiteSingleConn caps the pool of the supplied gorm.DB to a
+// single underlying connection. Tests that use the DAG executor must
+// call this when they need step-history persistence — otherwise
+// goroutines created by the DAG fan-out may grab connections bound to
+// fresh `:memory:` databases that haven't had AutoMigrate applied.
+func pinSQLiteSingleConn(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	sql, err := db.DB()
+	if err != nil {
+		t.Fatalf("get sql.DB: %v", err)
+	}
+	sql.SetMaxOpenConns(1)
+	sql.SetMaxIdleConns(1)
+}
 
 // TestDAGExecutor_LinearPipelineBackwardsCompat verifies that workflows
 // with no `next` / `join` annotations continue to flow through the
@@ -197,3 +214,128 @@ func (j *joinObservingPerformer) MarkPending(_ context.Context, _ *models.Access
 }
 
 func (j *joinObservingPerformer) totalApproves() int64 { return j.approves.Load() }
+
+// TestDAGExecutor_BranchIndexRecorded verifies that step-history rows
+// emitted by the DAG executor carry a non-nil branch_index matching
+// the index of the root the step descends from. Linear runs and root
+// nodes themselves keep the value at their root position (0 for the
+// single-root case).
+func TestDAGExecutor_BranchIndexRecorded(t *testing.T) {
+	db := newTestDB(t)
+	// The DAG executor fans out across goroutines that all need to
+	// see the same in-memory sqlite database. Without pinning to a
+	// single connection, each goroutine's first INSERT may bind to a
+	// fresh `:memory:` DB that hasn't had AutoMigrate applied.
+	pinSQLiteSingleConn(t, db)
+	if err := db.AutoMigrate(&models.AccessWorkflowStepHistory{}); err != nil {
+		t.Fatalf("migrate step history: %v", err)
+	}
+	wf := insertWorkflow(t, db, "01HDAGBRIDX00000000000001", []models.WorkflowStepDefinition{
+		{Type: models.WorkflowStepAutoApprove, Next: []int{1, 2}}, // 0 root
+		{Type: models.WorkflowStepAutoApprove, Next: []int{3}},    // 1 branch_a
+		{Type: models.WorkflowStepAutoApprove, Next: []int{3}},    // 2 branch_b
+		{Type: models.WorkflowStepAutoApprove, Join: []int{1, 2}}, // 3 join
+	})
+	// Insert an AccessRequest so the executor has a request id to
+	// attach step history rows to.
+	wfID := wf.ID
+	areq := &models.AccessRequest{
+		ID:                 "01HDAGREQ000000000000001A",
+		WorkspaceID:        "01HWORKSPACE0000000000000A",
+		RequesterUserID:    "01HUSER00000000000000000R",
+		TargetUserID:       "01HUSER00000000000000000T",
+		ConnectorID:        "01HCONNECT00000000000000C",
+		ResourceExternalID: "res-1",
+		Role:               "viewer",
+		State:              "requested",
+		WorkflowID:         &wfID,
+	}
+	if err := db.Create(areq).Error; err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	exec := NewWorkflowExecutor(db, &recordingPerformer{})
+	if _, err := exec.Execute(context.Background(), &ExecuteRequest{WorkflowID: wf.ID, RequestID: areq.ID}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var rows []models.AccessWorkflowStepHistory
+	if err := db.Where("request_id = ?", areq.ID).Find(&rows).Error; err != nil {
+		t.Fatalf("query history: %v", err)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("history rows = %d; want 4", len(rows))
+	}
+	byStep := map[int]int{}
+	for _, r := range rows {
+		if r.BranchIndex == nil {
+			t.Fatalf("step %d has nil branch_index", r.StepIndex)
+		}
+		byStep[r.StepIndex] = *r.BranchIndex
+	}
+	// roots in dagBuild are returned in ascending order, so root 0
+	// is branch 0. branch_a (1) descends from root 0 → branch 0.
+	// branch_b (2) is NOT a root (predecessor is 0), it inherits
+	// from root 0 too. join (3) inherits min predecessor → 0.
+	if byStep[0] != 0 {
+		t.Errorf("root step 0 branch_index = %d; want 0", byStep[0])
+	}
+	if byStep[3] < 0 {
+		t.Errorf("join step 3 branch_index = %d; want >=0", byStep[3])
+	}
+	for k, v := range byStep {
+		if v < 0 {
+			t.Errorf("step %d branch_index = %d (must be >= 0)", k, v)
+		}
+	}
+}
+
+// TestDAGExecutor_BranchIndexLinearStaysZero confirms that single-root
+// linear pipelines still write branch_index = 0 (NOT nil) — operators
+// querying for "all step history for branch 0" should see linear
+// workflows too. This is the cross-cutting DLQ invariant in
+// docs/PHASES.md Phase 8.
+func TestDAGExecutor_BranchIndexLinearStaysZero(t *testing.T) {
+	db := newTestDB(t)
+	// Even single-branch workflows route through executeDAG (which
+	// uses goroutines), so we must pin the sqlite pool to one
+	// connection — see TestDAGExecutor_BranchIndexRecorded for the
+	// full explanation of the :memory: isolation failure mode.
+	pinSQLiteSingleConn(t, db)
+	if err := db.AutoMigrate(&models.AccessWorkflowStepHistory{}); err != nil {
+		t.Fatalf("migrate step history: %v", err)
+	}
+	wf := insertWorkflow(t, db, "01HDAGBRIDXLIN0000000001A", []models.WorkflowStepDefinition{
+		{Type: models.WorkflowStepAutoApprove, Next: []int{1}},
+		{Type: models.WorkflowStepAutoApprove},
+	})
+	wfID := wf.ID
+	areq := &models.AccessRequest{
+		ID:                 "01HDAGREQLIN000000000001A",
+		WorkspaceID:        "01HWORKSPACE0000000000000A",
+		RequesterUserID:    "01HUSER00000000000000000R",
+		TargetUserID:       "01HUSER00000000000000000T",
+		ConnectorID:        "01HCONNECT00000000000000C",
+		ResourceExternalID: "res-1",
+		Role:               "viewer",
+		State:              "requested",
+		WorkflowID:         &wfID,
+	}
+	if err := db.Create(areq).Error; err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	exec := NewWorkflowExecutor(db, &recordingPerformer{})
+	if _, err := exec.Execute(context.Background(), &ExecuteRequest{WorkflowID: wf.ID, RequestID: areq.ID}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var rows []models.AccessWorkflowStepHistory
+	if err := db.Where("request_id = ?", areq.ID).Order("step_index").Find(&rows).Error; err != nil {
+		t.Fatalf("query history: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("history rows = %d; want 2", len(rows))
+	}
+	for _, r := range rows {
+		if r.BranchIndex == nil || *r.BranchIndex != 0 {
+			t.Errorf("step %d branch_index = %v; want *0", r.StepIndex, r.BranchIndex)
+		}
+	}
+}

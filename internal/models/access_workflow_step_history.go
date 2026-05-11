@@ -63,6 +63,13 @@ type AccessWorkflowStepHistory struct {
 	RequestID   string     `gorm:"type:varchar(26);not null;index:idx_access_workflow_step_history_request,priority:1" json:"request_id"`
 	WorkflowID  string     `gorm:"type:varchar(26);index" json:"workflow_id,omitempty"`
 	StepIndex   int        `gorm:"not null;index:idx_access_workflow_step_history_request,priority:2" json:"step_index"`
+	// BranchIndex is set when the executor walks a DAG step. All DAG
+	// steps (including root nodes) receive a non-nil value equal to
+	// the 0-based position of the root they descend from. Linear
+	// (non-DAG, Phase 8) executions leave it nil. Operators query for
+	// failed steps within a single branch via (request_id,
+	// branch_index, status) per docs/PHASES.md Phase 8 DAG criteria.
+	BranchIndex *int       `gorm:"index" json:"branch_index,omitempty"`
 	StepType    string     `gorm:"type:varchar(50);not null" json:"step_type"`
 	Status      string     `gorm:"type:varchar(20);not null;index" json:"status"`
 	StartedAt   time.Time  `gorm:"not null" json:"started_at"`
