@@ -105,6 +105,37 @@ func TestZohoCRMFetchAccessAuditLogs_NotAvailable(t *testing.T) {
 	}
 }
 
+func TestZohoCRMFetchAccessAuditLogs_NoContent_IsNotAudit(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	handlerCalls := 0
+	err := c.FetchAccessAuditLogs(context.Background(), validConfig(), validSecrets(),
+		map[string]time.Time{access.DefaultAuditPartition: time.Now().Add(-time.Hour)},
+		func(_ []*access.AuditLogEntry, _ time.Time, _ string) error {
+			handlerCalls++
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("err = %v, want nil (204 is a successful empty batch)", err)
+	}
+	if errors.Is(err, access.ErrAuditNotAvailable) {
+		t.Fatalf("204 must not be treated as ErrAuditNotAvailable")
+	}
+	if calls != 1 {
+		t.Fatalf("expected 1 HTTP call before exit, got %d", calls)
+	}
+	if handlerCalls != 0 {
+		t.Fatalf("handler must not be invoked for an empty (204) response, got %d calls", handlerCalls)
+	}
+}
+
 func TestZohoCRMFetchAccessAuditLogs_ServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

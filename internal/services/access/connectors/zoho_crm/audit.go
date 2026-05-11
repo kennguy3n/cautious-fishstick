@@ -60,8 +60,10 @@ func (c *ZohoCRMAccessConnector) FetchAccessAuditLogs(
 			return readErr
 		}
 		switch resp.StatusCode {
-		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusNoContent:
+		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
 			return access.ErrAuditNotAvailable
+		case http.StatusNoContent:
+			return nil
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return fmt.Errorf("zoho_crm: audit log: status %d: %s", resp.StatusCode, string(body))
