@@ -295,6 +295,11 @@ func TestDAGExecutor_BranchIndexRecorded(t *testing.T) {
 // docs/PHASES.md Phase 8.
 func TestDAGExecutor_BranchIndexLinearStaysZero(t *testing.T) {
 	db := newTestDB(t)
+	// Even single-branch workflows route through executeDAG (which
+	// uses goroutines), so we must pin the sqlite pool to one
+	// connection — see TestDAGExecutor_BranchIndexRecorded for the
+	// full explanation of the :memory: isolation failure mode.
+	pinSQLiteSingleConn(t, db)
 	if err := db.AutoMigrate(&models.AccessWorkflowStepHistory{}); err != nil {
 		t.Fatalf("migrate step history: %v", err)
 	}
