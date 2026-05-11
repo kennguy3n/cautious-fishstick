@@ -28,6 +28,14 @@ type httpDoer interface {
 }
 
 type Config struct {
+	// SAMLMetadataURL points at the Keeper SSO Connect SAML 2.0
+	// metadata document for the customer (rendered in the Keeper
+	// Admin Console under SSO Connect settings). When set the
+	// connector advertises Keeper SAML metadata via GetSSOMetadata.
+	SAMLMetadataURL string `json:"saml_metadata_url,omitempty"`
+	// SAMLEntityID is the IdP entity ID configured for the customer.
+	// Optional — when empty the metadata URL is used as the entity ID.
+	SAMLEntityID string `json:"saml_entity_id,omitempty"`
 }
 
 type Secrets struct {
@@ -47,6 +55,12 @@ func DecodeConfig(raw map[string]interface{}) (Config, error) {
 		return Config{}, errors.New("keeper: config is nil")
 	}
 	var cfg Config
+	if v, ok := raw["saml_metadata_url"].(string); ok {
+		cfg.SAMLMetadataURL = v
+	}
+	if v, ok := raw["saml_entity_id"].(string); ok {
+		cfg.SAMLEntityID = v
+	}
 	return cfg, nil
 }
 
@@ -264,8 +278,29 @@ func (c *KeeperAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]
 func (c *KeeperAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
 	return nil, ErrNotImplemented
 }
-func (c *KeeperAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata advertises Keeper SSO Connect SAML metadata when the
+// connector is configured with a saml_metadata_url. Keeper Enterprise
+// renders the metadata document per-customer; the operator wires the
+// URL via config. Returns (nil, nil) when no metadata URL is set so
+// callers treat the connector as SSO-unsupported.
+func (c *KeeperAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	cfg, err := DecodeConfig(configRaw)
+	if err != nil {
+		return nil, err
+	}
+	metaURL := strings.TrimSpace(cfg.SAMLMetadataURL)
+	if metaURL == "" {
+		return nil, nil
+	}
+	entity := strings.TrimSpace(cfg.SAMLEntityID)
+	if entity == "" {
+		entity = metaURL
+	}
+	return &access.SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: metaURL,
+		EntityID:    entity,
+	}, nil
 }
 
 func (c *KeeperAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {

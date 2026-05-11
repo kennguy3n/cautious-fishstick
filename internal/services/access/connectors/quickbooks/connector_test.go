@@ -38,6 +38,64 @@ func TestValidate_RejectsMissing(t *testing.T) {
 	}
 }
 
+// TestValidate_RejectsRealmIDInjection guards against a misconfigured
+// or hostile `realm_id` smuggling extra path segments, query strings,
+// or fragments into the QuickBooks Online URL space. `cfg.RealmID` is
+// interpolated as a path segment in four call sites (sync query,
+// employee read, employee write, audit CDC) and a non-numeric value
+// would let an operator escape the `/v3/company/{realmID}/...` prefix
+// (e.g. `"123/../admin"`, `"123?x=y"`, `"123#frag"`, `"123 abc"`). The
+// validation boundary rejects anything that isn't 1-32 base-10 digits.
+func TestValidate_RejectsRealmIDInjection(t *testing.T) {
+	cases := []struct {
+		name  string
+		realm string
+	}{
+		{"path traversal", "123/../admin"},
+		{"slash", "123/456"},
+		{"query string", "123?x=y"},
+		{"fragment", "123#frag"},
+		{"space", "123 456"},
+		{"colon", "123:456"},
+		{"at sign", "123@host"},
+		{"backslash", "123\\456"},
+		{"newline", "123\n456"},
+		{"leading dash", "-123"},
+		{"alphabetic", "abcdef"},
+		{"too long", strings.Repeat("1", 33)},
+	}
+	c := New()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := c.Validate(context.Background(),
+				map[string]interface{}{"realm_id": tc.realm}, validSecrets())
+			if err == nil {
+				t.Fatalf("Validate(%q) returned nil; expected rejection", tc.realm)
+			}
+		})
+	}
+}
+
+// TestValidate_AcceptsNumericRealmID confirms typical Intuit realm IDs
+// (15- or 16-digit base-10 integers) survive validation. The set of
+// values mirrors what Intuit issues for QuickBooks Online company files.
+func TestValidate_AcceptsNumericRealmID(t *testing.T) {
+	cases := []string{
+		"1",
+		"1234567890",
+		"123456789012345",
+		"4620816365258913201",
+		strings.Repeat("9", 32),
+	}
+	c := New()
+	for _, realm := range cases {
+		if err := c.Validate(context.Background(),
+			map[string]interface{}{"realm_id": realm}, validSecrets()); err != nil {
+			t.Errorf("Validate(%q): %v", realm, err)
+		}
+	}
+}
+
 func TestValidate_PureLocal(t *testing.T) {
 	prev := http.DefaultTransport
 	http.DefaultTransport = noNetworkRoundTripper{}

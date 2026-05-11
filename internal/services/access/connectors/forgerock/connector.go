@@ -336,8 +336,25 @@ func (c *ForgeRockAccessConnector) RevokeAccess(_ context.Context, _, _ map[stri
 func (c *ForgeRockAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
 	return nil, ErrNotImplemented
 }
-func (c *ForgeRockAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata advertises ForgeRock AM OIDC discovery metadata.
+// ForgeRock exposes the standard OIDC `.well-known/openid-configuration`
+// document at the configured endpoint, which Keycloak imports as an
+// OIDC IdP broker. Returns (nil, nil) when no endpoint is configured.
+func (c *ForgeRockAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	cfg, err := DecodeConfig(configRaw)
+	if err != nil {
+		return nil, err
+	}
+	endpoint := strings.TrimRight(strings.TrimSpace(cfg.Endpoint), "/")
+	if endpoint == "" {
+		return nil, nil
+	}
+	return &access.SSOMetadata{
+		Protocol:    "oidc",
+		MetadataURL: endpoint + "/.well-known/openid-configuration",
+		EntityID:    endpoint,
+		SSOLoginURL: endpoint + "/oauth2/authorize",
+	}, nil
 }
 
 func (c *ForgeRockAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {

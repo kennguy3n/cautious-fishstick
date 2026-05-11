@@ -32,7 +32,16 @@ type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-type Config struct{}
+type Config struct {
+	// SAMLMetadataURL points at the OpenAI-issued SAML 2.0 metadata
+	// document for the organization (rendered in the OpenAI admin
+	// console under SSO settings). When set, the connector advertises
+	// OpenAI SAML metadata via GetSSOMetadata.
+	SAMLMetadataURL string `json:"saml_metadata_url,omitempty"`
+	// SAMLEntityID is the IdP entity ID configured for the organization.
+	// Optional — when empty the metadata URL is used as the entity ID.
+	SAMLEntityID string `json:"saml_entity_id,omitempty"`
+}
 
 type Secrets struct {
 	Token string `json:"token"`
@@ -50,7 +59,14 @@ func DecodeConfig(raw map[string]interface{}) (Config, error) {
 	if raw == nil {
 		return Config{}, errors.New("openai: config is nil")
 	}
-	return Config{}, nil
+	var cfg Config
+	if v, ok := raw["saml_metadata_url"].(string); ok {
+		cfg.SAMLMetadataURL = v
+	}
+	if v, ok := raw["saml_entity_id"].(string); ok {
+		cfg.SAMLEntityID = v
+	}
+	return cfg, nil
 }
 
 func DecodeSecrets(raw map[string]interface{}) (Secrets, error) {
@@ -260,8 +276,30 @@ func (c *OpenAIAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]
 func (c *OpenAIAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
 	return nil, ErrNotImplemented
 }
-func (c *OpenAIAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata advertises OpenAI organization SAML metadata when
+// the connector is configured with a saml_metadata_url. OpenAI
+// Enterprise renders the metadata document per-organization; the
+// operator wires the URL via config. Returns (nil, nil) when no
+// metadata URL is set so callers treat the connector as
+// SSO-unsupported.
+func (c *OpenAIAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	cfg, err := DecodeConfig(configRaw)
+	if err != nil {
+		return nil, err
+	}
+	metaURL := strings.TrimSpace(cfg.SAMLMetadataURL)
+	if metaURL == "" {
+		return nil, nil
+	}
+	entity := strings.TrimSpace(cfg.SAMLEntityID)
+	if entity == "" {
+		entity = metaURL
+	}
+	return &access.SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: metaURL,
+		EntityID:    entity,
+	}, nil
 }
 
 func (c *OpenAIAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {

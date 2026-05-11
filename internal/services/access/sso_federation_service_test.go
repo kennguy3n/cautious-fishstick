@@ -506,6 +506,104 @@ func TestSSOFederation_MSTeamsEntraSAML(t *testing.T) {
 	}
 }
 
+// --- Phase 10 wiring batch 4: SSO federation for 5 more connectors ---
+
+func TestSSOFederation_CloudflareAccessSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://acme.cloudflareaccess.com/cdn-cgi/access/saml-metadata",
+		EntityID:    "https://acme.cloudflareaccess.com",
+		SSOLoginURL: "https://acme.cloudflareaccess.com/cdn-cgi/access/sso",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "cloudflare-1", "Cloudflare Access", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q", got.ProviderID)
+	}
+	if got.Config["metadataDescriptorUrl"] != meta.MetadataURL {
+		t.Errorf("metadataDescriptorUrl = %q", got.Config["metadataDescriptorUrl"])
+	}
+}
+
+func TestSSOFederation_RipplingSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.rippling.com/api/platform/saml/idp_metadata/abc123",
+		EntityID:    "https://app.rippling.com/saml/abc123",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "rippling-1", "Rippling", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q", got.ProviderID)
+	}
+	if got.Config["entityId"] != meta.EntityID {
+		t.Errorf("entityId = %q", got.Config["entityId"])
+	}
+}
+
+func TestSSOFederation_ForgeRockOIDC(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "oidc",
+		MetadataURL: "https://idm.corp.example/.well-known/openid-configuration",
+		EntityID:    "https://idm.corp.example",
+		SSOLoginURL: "https://idm.corp.example/oauth2/authorize",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "forgerock-1", "ForgeRock", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "oidc" {
+		t.Errorf("ProviderID = %q", got.ProviderID)
+	}
+	if got.Config["metadataUrl"] != meta.MetadataURL {
+		t.Errorf("metadataUrl = %q", got.Config["metadataUrl"])
+	}
+}
+
+func TestSSOFederation_KeeperSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://keepersecurity.com/api/rest/sso/saml/metadata/abc123",
+		EntityID:    "https://keepersecurity.com/sso/abc123",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "keeper-1", "Keeper Enterprise", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_OpenAIEnterpriseSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://platform.openai.com/api/saml/metadata/org-abc",
+		EntityID:    "https://platform.openai.com/org-abc",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "openai-1", "OpenAI Enterprise", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q", got.ProviderID)
+	}
+}
+
 // Zoom intentionally has no native SSO metadata; verifies the
 // service returns ErrSSOFederationUnsupported for nil metadata so
 // callers can downgrade gracefully without recording a configuration

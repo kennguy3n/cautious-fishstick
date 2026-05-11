@@ -45,6 +45,10 @@ type httpDoer interface {
 type Config struct {
 	AccountID string `json:"account_id"`
 	Email     string `json:"email,omitempty"`
+	// TeamDomain is the Cloudflare Access team name (e.g. "acme" for
+	// https://acme.cloudflareaccess.com). When set, the connector
+	// advertises Cloudflare Access SAML metadata via GetSSOMetadata.
+	TeamDomain string `json:"team_domain,omitempty"`
 }
 
 // Secrets carries either an API token (preferred) or a legacy global API
@@ -79,6 +83,9 @@ func DecodeConfig(raw map[string]interface{}) (Config, error) {
 	if v, ok := raw["email"].(string); ok {
 		cfg.Email = v
 	}
+	if v, ok := raw["team_domain"].(string); ok {
+		cfg.TeamDomain = v
+	}
 	return cfg, nil
 }
 
@@ -101,7 +108,31 @@ func (c Config) validate() error {
 	if strings.TrimSpace(c.AccountID) == "" {
 		return errors.New("cloudflare: account_id is required")
 	}
+	if team := strings.TrimSpace(c.TeamDomain); team != "" && !isDNSLabel(team) {
+		return errors.New("cloudflare: team_domain must be a single DNS label (letters, digits, hyphen; no leading/trailing hyphen; \u226463 chars)")
+	}
 	return nil
+}
+
+// isDNSLabel reports whether s is a valid single DNS label (RFC 1035): 1–63
+// chars of [A-Za-z0-9-], with no leading or trailing hyphen. Used to guard
+// against injection into the team_domain URL interpolation in
+// GetSSOMetadata (e.g. an operator-supplied "evil.com/" must be rejected).
+func isDNSLabel(s string) bool {
+	if s == "" || len(s) > 63 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '-':
+		default:
+			return false
+		}
+	}
+	return s[0] != '-' && s[len(s)-1] != '-'
 }
 
 func (s Secrets) validate(cfg Config) error {
@@ -509,8 +540,34 @@ func (c *CloudflareAccessConnector) ListEntitlements(
 	return out, nil
 }
 
-func (c *CloudflareAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata advertises Cloudflare Access SAML metadata when the
+// connector is configured with a team_domain. Cloudflare publishes
+// SAML metadata at
+//
+//	https://{team_domain}.cloudflareaccess.com/cdn-cgi/access/saml-metadata
+//
+// Wires into Keycloak as a SAML IdP broker. Returns (nil, nil) when
+// team_domain is not set so callers treat the connector as
+// SSO-unsupported (ErrSSOFederationUnsupported).
+func (c *CloudflareAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	cfg, err := DecodeConfig(configRaw)
+	if err != nil {
+		return nil, err
+	}
+	team := strings.TrimSpace(cfg.TeamDomain)
+	if team == "" {
+		return nil, nil
+	}
+	if !isDNSLabel(team) {
+		return nil, fmt.Errorf("cloudflare: team_domain %q is not a valid DNS label", team)
+	}
+	base := "https://" + team + ".cloudflareaccess.com"
+	return &access.SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: base + "/cdn-cgi/access/saml-metadata",
+		EntityID:    base,
+		SSOLoginURL: base + "/cdn-cgi/access/sso",
+	}, nil
 }
 
 // GetCredentialsMetadata returns token verification metadata from
