@@ -282,6 +282,29 @@ func runCron(ctx context.Context, name string, interval time.Duration, run func(
 	}
 }
 
+// BuildAuditProducer constructs the audit producer for the worker
+// binary from the loaded config. When ACCESS_KAFKA_BROKERS is unset,
+// the function returns a NoOpAuditProducer so the binary still boots
+// on dev / on-prem deployments without Kafka.
+//
+// Production deployments are expected to inject a real KafkaWriter
+// implementation here (e.g. segmentio/kafka-go); the audit handler
+// (internal/workers/handlers/access_audit.go) is agnostic to which
+// AuditProducer is plugged in.
+func BuildAuditProducer(cfg config.Access) access.AuditProducer {
+	if cfg.KafkaBrokers == "" {
+		log.Printf("access-connector-worker: ACCESS_KAFKA_BROKERS unset; audit pipeline using NoOpAuditProducer")
+		return &access.NoOpAuditProducer{}
+	}
+	// Phase 10 scaffold: the Kafka writer is supplied by the deployment
+	// wrapper that imports segmentio/kafka-go to avoid pulling the
+	// dependency into the access platform module itself. For now, log
+	// and degrade to NoOp so the binary boots even when brokers are
+	// configured but the writer adapter is not wired.
+	log.Printf("access-connector-worker: ACCESS_KAFKA_BROKERS=%q but Kafka writer adapter is not wired; using NoOpAuditProducer", cfg.KafkaBrokers)
+	return &access.NoOpAuditProducer{}
+}
+
 func main() {
 	log.Printf("access-connector-worker: starting; registered access connectors: %v", access.ListRegisteredProviders())
 
@@ -291,7 +314,11 @@ func main() {
 	// runCron. The current scaffold compiles WireCronJobs into the
 	// binary so the set is exercised by `go build ./...` without
 	// requiring a live DB.
-	jobs := WireCronJobs(nil, nil, nil, config.Access{})
+	cfg := config.Load()
+	jobs := WireCronJobs(nil, nil, nil, *cfg)
+	auditProducer := BuildAuditProducer(*cfg)
+	log.Printf("access-connector-worker: audit pipeline topic=%q producer=%T", cfg.AuditLogTopic, auditProducer)
 	_ = jobs
 	_ = runCron
+	_ = auditProducer
 }

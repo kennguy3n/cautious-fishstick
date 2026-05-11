@@ -1,6 +1,6 @@
 # Connector Capability Index
 
-> **Last updated:** 2026-05-11
+> **Last updated:** 2026-05-11 (PR #25 — Phase 10 close-out)
 > **Source of truth:** [`docs/PROGRESS.md`](./PROGRESS.md) §1
 > **How to keep in sync:** When you flip a capability column in `docs/PROGRESS.md`, mirror the change here. The audit script in §6 of `docs/PROGRESS.md` lints the two tables for drift.
 
@@ -25,19 +25,19 @@
 
 | # | Provider | Tier | Category | Path | `sync_identity` | `provision_access` | `list_entitlements` | `get_access_log` | `sso_federation` |
 |---|----------|------|----------|------|:---------------:|:------------------:|:-------------------:|:----------------:|:----------------:|
-| 1 | Microsoft Entra ID | T1 | IAM/SSO | `microsoft/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
-| 2 | Google Workspace | T1 | IAM/SSO | `google_workspace/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
-| 3 | Okta | T1 | IAM/SSO | `okta/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
-| 4 | Auth0 | T1 | IAM/SSO | `auth0/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
+| 1 | Microsoft Entra ID | T1 | IAM/SSO | `microsoft/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
+| 2 | Google Workspace | T1 | IAM/SSO | `google_workspace/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
+| 3 | Okta | T1 | IAM/SSO | `okta/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
+| 4 | Auth0 | T1 | IAM/SSO | `auth0/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
 | 5 | Generic SAML | T1 | IAM/SSO | `generic_saml/` | n/a | n/a | n/a | n/a | 🟡 |
 | 6 | Generic OIDC | T1 | IAM/SSO | `generic_oidc/` | n/a | n/a | n/a | n/a | 🟡 |
 | 7 | Duo Security | T1 | IAM/MFA | `duo/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
 | 8 | 1Password | T1 | Secrets/Vault | `onepassword/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
 | 9 | LastPass | T1 | Secrets/Vault | `lastpass/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
-| 10 | Ping Identity | T1 | IAM/SSO | `ping_identity/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
-| 11 | AWS IAM | T2 | Cloud Infra | `aws/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
-| 12 | Azure RBAC | T2 | Cloud Infra | `azure/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
-| 13 | GCP IAM | T2 | Cloud Infra | `gcp/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
+| 10 | Ping Identity | T1 | IAM/SSO | `ping_identity/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
+| 11 | AWS IAM | T2 | Cloud Infra | `aws/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
+| 12 | Azure RBAC | T2 | Cloud Infra | `azure/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
+| 13 | GCP IAM | T2 | Cloud Infra | `gcp/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
 | 14 | Cloudflare | T2 | Cloud Infra | `cloudflare/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
 | 15 | Tailscale | T2 | Network | `tailscale/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 16 | DigitalOcean | T2 | Cloud Infra | `digitalocean/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
@@ -50,7 +50,7 @@
 | 23 | Alibaba Cloud | T2 | Cloud Infra | `alibaba/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 24 | CloudSigma | T2 | Cloud Infra | `cloudsigma/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 25 | Wasabi | T2 | Storage | `wasabi/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 26 | Slack | T3 | Collab | `slack/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
+| 26 | Slack | T3 | Collab | `slack/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 27 | MS Teams | T3 | Collab | `ms_teams/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
 | 28 | Zoom | T3 | Collab | `zoom/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
 | 29 | Notion | T3 | Productivity | `notion/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
@@ -62,14 +62,14 @@
 | 35 | Airtable | T3 | Productivity | `airtable/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
 | 36 | Smartsheet | T3 | Productivity | `smartsheet/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
 | 37 | ClickUp | T3 | Productivity | `clickup/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
-| 38 | Salesforce | T3 | CRM | `salesforce/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
+| 38 | Salesforce | T3 | CRM | `salesforce/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 39 | HubSpot | T3 | CRM | `hubspot/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
 | 40 | Zoho CRM | T3 | CRM | `zoho_crm/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
 | 41 | Pipedrive | T3 | CRM | `pipedrive/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 42 | Dropbox Business | T3 | Storage | `dropbox/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
 | 43 | Box | T3 | Storage | `box/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
 | 44 | Egnyte | T3 | Storage | `egnyte/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
-| 45 | GitHub | T3 | DevOps | `github/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
+| 45 | GitHub | T3 | DevOps | `github/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 46 | GitLab | T3 | DevOps | `gitlab/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
 | 47 | Atlassian Jira | T3 | DevOps | `jira/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
 | 48 | PagerDuty | T3 | DevOps | `pagerduty/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
@@ -173,7 +173,7 @@
 | 146 | BitSight | T5 | Security | `bitsight/` | n/a | n/a | n/a | ⏳ | n/a |
 | 147 | Tenable.io | T5 | Security | `tenable/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
 | 148 | Qualys VMDR | T5 | Security | `qualys/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 149 | Rapid7 | T5 | Security | `rapid7/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
+| 149 | Rapid7 | T5 | Security | `rapid7/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
 | 150 | VirusTotal | T5 | Security | `virustotal/` | n/a | n/a | n/a | ⏳ | n/a |
 | 151 | Malwarebytes | T5 | Security | `malwarebytes/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 152 | ForgeRock | T5 | IAM | `forgerock/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
@@ -230,9 +230,9 @@
 
 - Total connectors registered: **200**
 - `sync_identity` shipped: **194/200**
-- `provision_access` shipped: **49/200** (49 real provider integrations across four Phase 10 batches)
-- `list_entitlements` shipped: **49/200**
-- `get_access_log` shipped: **0/200** (Phase 10 backlog)
+- `provision_access` shipped: **50/200** ✅ (50 real provider integrations across five Phase 10 batches — top-50 by usage complete)
+- `list_entitlements` shipped: **50/200** ✅
+- `get_access_log` shipped: **10/200** (Microsoft Entra ID, Google Workspace, Okta, Auth0, AWS IAM, Azure RBAC, GCP IAM, Slack, GitHub, Salesforce — via the new `AccessAuditor` optional interface)
 - `sso_federation` shipped: **12/200**
 
 ## How to update this file

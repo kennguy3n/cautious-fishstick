@@ -59,15 +59,48 @@ type GroupSyncer interface {
 	) error
 }
 
+// DefaultAuditPartition is the partition key single-endpoint connectors
+// (and the legacy single-cursor contract) emit when they call the
+// AccessAuditor handler.
+const DefaultAuditPartition = ""
+
 // AccessAuditor is implemented by connectors that can stream sign-in / access
 // audit events back into the audit pipeline.
+//
+// Semantics:
+//
+//   - `sincePartitions` maps a partition key to its persisted cursor.
+//     A connector MUST look up its own partition keys and treat a
+//     missing entry as a zero-time "full backfill" (provider default
+//     window). Single-endpoint connectors look up
+//     `sincePartitions[DefaultAuditPartition]`. Multi-endpoint
+//     connectors (e.g. Microsoft Graph `signIns` and `directoryAudits`)
+//     look up their per-endpoint keys.
+//   - The handler is invoked once per provider page. Implementations MUST
+//     paginate the provider's audit log API and call the handler per page
+//     in chronological order so callers can persist `nextSince` as a
+//     monotonic cursor.
+//   - `nextSince` is the per-partition cursor the caller should persist
+//     for `partitionKey` so the next invocation resumes where this one
+//     left off. Implementations MUST set nextSince to the timestamp of
+//     the newest entry in the batch (or beyond).
+//   - `partitionKey` identifies the audit stream the batch came from.
+//     Single-endpoint connectors MUST use DefaultAuditPartition.
+//     Multi-endpoint connectors MUST use a stable, distinct key per
+//     endpoint so the worker can advance each partition's cursor
+//     independently. This prevents a fast-moving partition's max
+//     timestamp from shadowing a slower partition's progress and causing
+//     `$filter ge {inflated}` to skip events on retry after a partial
+//     failure.
+//   - Implementations MUST honour ctx cancellation between pages.
+//   - The handler returning a non-nil error aborts the sync.
 type AccessAuditor interface {
 	FetchAccessAuditLogs(
 		ctx context.Context,
 		config map[string]interface{},
 		secrets map[string]interface{},
-		since time.Time,
-		handler func(batch []AuditEvent) error,
+		sincePartitions map[string]time.Time,
+		handler func(batch []*AuditLogEntry, nextSince time.Time, partitionKey string) error,
 	) error
 }
 

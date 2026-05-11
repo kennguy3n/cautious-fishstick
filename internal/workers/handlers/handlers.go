@@ -56,14 +56,19 @@ type ConnectorResolver func(provider string) (access.AccessConnector, error)
 // (config, secrets) without touching the DB.
 type ConnectorAccessor func(ctx context.Context, db *gorm.DB, connectorID string) (provider string, config, secrets map[string]interface{}, err error)
 
-// JobContext bundles the dependencies a handler needs. Every field
-// is required; nil fields surface as ErrMissingDependency from
-// runJob.
+// JobContext bundles the dependencies a handler needs. The first
+// four fields (DB, Resolve, LoadConn, Now) are required for every
+// handler; nil values surface as ErrMissingDependency from runJob.
+//
+// AuditProducer is only required by the AccessAudit handler (Task
+// 17); other handlers ignore it. Leaving it nil for non-audit
+// callers is safe.
 type JobContext struct {
-	DB        *gorm.DB
-	Resolve   ConnectorResolver
-	LoadConn  ConnectorAccessor
-	Now       func() time.Time
+	DB            *gorm.DB
+	Resolve       ConnectorResolver
+	LoadConn      ConnectorAccessor
+	Now           func() time.Time
+	AuditProducer access.AuditProducer
 }
 
 // ErrMissingDependency surfaces when a handler runs with a partial
