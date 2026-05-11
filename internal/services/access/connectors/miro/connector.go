@@ -3,12 +3,14 @@
 package miro
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -115,6 +117,25 @@ func (c *MiroAccessConnector) newRequest(ctx context.Context, secrets Secrets, m
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
 	return req, nil
+}
+
+func (c *MiroAccessConnector) newJSONRequest(ctx context.Context, secrets Secrets, method, path string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL()+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
+	return req, nil
+}
+
+func (c *MiroAccessConnector) doRaw(req *http.Request) (*http.Response, error) {
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("miro: %s %s: %w", req.Method, req.URL.Path, err)
+	}
+	return resp, nil
 }
 
 func (c *MiroAccessConnector) do(req *http.Request) ([]byte, error) {
@@ -249,14 +270,160 @@ func (c *MiroAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *MiroAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ---------- Phase 10 advanced capabilities ----------
+
+type miroTeamsListResponse struct {
+	Data   []miroTeam `json:"data"`
+	Cursor string     `json:"cursor,omitempty"`
 }
-func (c *MiroAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+type miroTeam struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+	Role string `json:"role,omitempty"`
 }
-func (c *MiroAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+// ProvisionAccess adds a user to a Miro team via
+// POST /v2/orgs/{org_id}/teams/{team_id}/members. The team_id comes from
+// grant.ResourceExternalID and the user from grant.UserExternalID.
+func (c *MiroAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("miro: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("miro: grant.ResourceExternalID (team_id) is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	role := "member"
+	if strings.EqualFold(grant.Role, "admin") {
+		role = "admin"
+	}
+	payload := map[string]interface{}{
+		"members": []map[string]string{{"email": grant.UserExternalID, "role": role}},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("miro: marshal payload: %w", err)
+	}
+	path := "/v2/orgs/" + url.PathEscape(cfg.OrgID) + "/teams/" + url.PathEscape(grant.ResourceExternalID) + "/members"
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodPost, path, body)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusConflict:
+		return nil
+	case resp.StatusCode == http.StatusBadRequest && bytes.Contains(bytes.ToLower(respBody), []byte("already")):
+		return nil
+	default:
+		return fmt.Errorf("miro: team add member status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// RevokeAccess removes a user from a Miro team via
+// DELETE /v2/orgs/{org_id}/teams/{team_id}/members/{user_id}. 404 is idempotent.
+func (c *MiroAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("miro: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("miro: grant.ResourceExternalID (team_id) is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	path := "/v2/orgs/" + url.PathEscape(cfg.OrgID) + "/teams/" + url.PathEscape(grant.ResourceExternalID) + "/members/" + url.PathEscape(grant.UserExternalID)
+	req, err := c.newRequest(ctx, secrets, http.MethodDelete, path)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return nil
+	default:
+		return fmt.Errorf("miro: team remove member status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// ListEntitlements paginates GET /v2/orgs/{org_id}/members/{user_id}/teams
+// and emits one Entitlement per team membership. Role defaults to "member"
+// when unspecified by the API.
+func (c *MiroAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	userExternalID = strings.TrimSpace(userExternalID)
+	if userExternalID == "" {
+		return nil, errors.New("miro: user external id is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	var out []access.Entitlement
+	cursor := ""
+	for {
+		path := "/v2/orgs/" + url.PathEscape(cfg.OrgID) + "/members/" + url.PathEscape(userExternalID) + "/teams?limit=100"
+		if cursor != "" {
+			path += "&cursor=" + url.QueryEscape(cursor)
+		}
+		req, err := c.newRequest(ctx, secrets, http.MethodGet, path)
+		if err != nil {
+			return nil, err
+		}
+		body, err := c.do(req)
+		if err != nil {
+			return nil, err
+		}
+		var resp miroTeamsListResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, fmt.Errorf("miro: decode teams: %w", err)
+		}
+		for _, t := range resp.Data {
+			role := strings.ToLower(t.Role)
+			if role == "" {
+				role = "member"
+			}
+			out = append(out, access.Entitlement{
+				ResourceExternalID: t.ID,
+				Role:               role,
+				Source:             "direct",
+			})
+		}
+		if resp.Cursor == "" {
+			return out, nil
+		}
+		cursor = resp.Cursor
+	}
 }
 func (c *MiroAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

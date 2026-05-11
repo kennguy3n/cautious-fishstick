@@ -114,3 +114,117 @@ func TestGetCredentialsMetadata_RedactsToken(t *testing.T) {
 		t.Errorf("token_short = %q", short)
 	}
 }
+
+// ---------- Phase 10 advanced capability tests ----------
+
+func newAdvancedTestConnector(srv *httptest.Server) *FrontAccessConnector {
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	return c
+}
+
+func TestProvisionAccess_HappyPath(t *testing.T) {
+	var got struct{ method, path string }
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got.method = r.Method
+		got.path = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	if err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "tmm_1", ResourceExternalID: "tim_2",
+	}); err != nil {
+		t.Fatalf("ProvisionAccess: %v", err)
+	}
+	if got.method != http.MethodPost || !strings.HasSuffix(got.path, "/teams/tim_2/teammates") {
+		t.Errorf("call = %s %s", got.method, got.path)
+	}
+}
+
+func TestProvisionAccess_409Idempotent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	if err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "tmm_1", ResourceExternalID: "tim_2",
+	}); err != nil {
+		t.Fatalf("409 should be idempotent; got %v", err)
+	}
+}
+
+func TestProvisionAccess_FailureSurfaces(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "tmm_1", ResourceExternalID: "tim_2",
+	})
+	if err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("expected 403; got %v", err)
+	}
+}
+
+func TestRevokeAccess_HappyPath(t *testing.T) {
+	var got struct{ method, path string }
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got.method = r.Method
+		got.path = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "tmm_1", ResourceExternalID: "tim_2",
+	}); err != nil {
+		t.Fatalf("RevokeAccess: %v", err)
+	}
+	if got.method != http.MethodDelete || !strings.HasSuffix(got.path, "/teams/tim_2/teammates") {
+		t.Errorf("call = %s %s", got.method, got.path)
+	}
+}
+
+func TestRevokeAccess_404Idempotent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "tmm_1", ResourceExternalID: "tim_2",
+	}); err != nil {
+		t.Fatalf("404 should be idempotent; got %v", err)
+	}
+}
+
+func TestListEntitlements_EnumeratesTeams(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"_results":[{"id":"t1","name":"A"},{"id":"t2","name":"B"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "tmm_1")
+	if err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if len(got) != 2 || got[0].ResourceExternalID != "t1" {
+		t.Fatalf("got = %+v", got)
+	}
+}
+
+func TestProvisionRevoke_RejectMissing(t *testing.T) {
+	c := New()
+	if err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{ResourceExternalID: "x"}); err == nil {
+		t.Error("provision should require user id")
+	}
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{UserExternalID: "u"}); err == nil {
+		t.Error("revoke should require resource id")
+	}
+}
+
+var _ = json.RawMessage(nil)

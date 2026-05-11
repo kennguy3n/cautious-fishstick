@@ -9,6 +9,7 @@
 package tenable
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -120,6 +121,27 @@ func (c *TenableAccessConnector) newRequest(ctx context.Context, secrets Secrets
 		"accessKey="+strings.TrimSpace(secrets.AccessKey)+";"+
 			"secretKey="+strings.TrimSpace(secrets.SecretKey))
 	return req, nil
+}
+
+func (c *TenableAccessConnector) newJSONRequest(ctx context.Context, secrets Secrets, method, fullURL string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-ApiKeys",
+		"accessKey="+strings.TrimSpace(secrets.AccessKey)+";"+
+			"secretKey="+strings.TrimSpace(secrets.SecretKey))
+	return req, nil
+}
+
+func (c *TenableAccessConnector) doRaw(req *http.Request) (*http.Response, error) {
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("tenable: %s %s: %w", req.Method, req.URL.Path, err)
+	}
+	return resp, nil
 }
 
 func (c *TenableAccessConnector) do(req *http.Request) ([]byte, error) {
@@ -276,14 +298,152 @@ func (c *TenableAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *TenableAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ---------- Phase 10 advanced capabilities ----------
+
+type tenableGroupRef struct {
+	ID   int    `json:"id"`
+	Name string `json:"name,omitempty"`
 }
-func (c *TenableAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+type tenableUserDetail struct {
+	ID     int               `json:"id"`
+	UUID   string            `json:"uuid,omitempty"`
+	Groups []tenableGroupRef `json:"groups"`
 }
-func (c *TenableAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+func tenableGroupID(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", errors.New("tenable: ResourceExternalID is required")
+	}
+	return s, nil
+}
+
+// ProvisionAccess adds a user to a group via
+// POST /groups/{groupId}/users/{userId}. 409 ⇒ idempotent success.
+func (c *TenableAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("tenable: grant.UserExternalID is required")
+	}
+	groupID, err := tenableGroupID(grant.ResourceExternalID)
+	if err != nil {
+		return err
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	fullURL := c.baseURL() + "/groups/" + url.PathEscape(groupID) + "/users/" + url.PathEscape(grant.UserExternalID)
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodPost, fullURL, []byte(`{}`))
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusConflict:
+		return nil
+	case resp.StatusCode == http.StatusBadRequest && bytes.Contains(bytes.ToLower(respBody), []byte("already")):
+		return nil
+	default:
+		return fmt.Errorf("tenable: group POST status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// RevokeAccess removes a user from a group via
+// DELETE /groups/{groupId}/users/{userId}. 404 ⇒ idempotent success.
+func (c *TenableAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("tenable: grant.UserExternalID is required")
+	}
+	groupID, err := tenableGroupID(grant.ResourceExternalID)
+	if err != nil {
+		return err
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	fullURL := c.baseURL() + "/groups/" + url.PathEscape(groupID) + "/users/" + url.PathEscape(grant.UserExternalID)
+	req, err := c.newRequest(ctx, secrets, http.MethodDelete, fullURL)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return nil
+	default:
+		return fmt.Errorf("tenable: group DELETE status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// ListEntitlements reads /users/{userId} and emits one Entitlement
+// per group membership.
+func (c *TenableAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	userExternalID = strings.TrimSpace(userExternalID)
+	if userExternalID == "" {
+		return nil, errors.New("tenable: user external id is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	fullURL := c.baseURL() + "/users/" + url.PathEscape(userExternalID)
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, fullURL)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("tenable: user GET status %d: %s", resp.StatusCode, string(body))
+	}
+	var detail tenableUserDetail
+	if err := json.Unmarshal(body, &detail); err != nil {
+		return nil, fmt.Errorf("tenable: decode user: %w", err)
+	}
+	out := make([]access.Entitlement, 0, len(detail.Groups))
+	for _, g := range detail.Groups {
+		out = append(out, access.Entitlement{
+			ResourceExternalID: fmt.Sprintf("%d", g.ID),
+			Role:               g.Name,
+			Source:             "direct",
+		})
+	}
+	return out, nil
 }
 func (c *TenableAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

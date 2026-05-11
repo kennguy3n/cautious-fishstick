@@ -9,12 +9,14 @@
 package egnyte
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -142,6 +144,25 @@ func (c *EgnyteAccessConnector) newRequest(ctx context.Context, secrets Secrets,
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
 	return req, nil
+}
+
+func (c *EgnyteAccessConnector) newJSONRequest(ctx context.Context, secrets Secrets, method, fullURL string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
+	return req, nil
+}
+
+func (c *EgnyteAccessConnector) doRaw(req *http.Request) (*http.Response, error) {
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("egnyte: %s %s: %w", req.Method, req.URL.Path, err)
+	}
+	return resp, nil
 }
 
 func (c *EgnyteAccessConnector) do(req *http.Request) ([]byte, error) {
@@ -306,14 +327,179 @@ func (c *EgnyteAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *EgnyteAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ---------- Phase 10 advanced capabilities ----------
+
+type egnyteGroupMember struct {
+	Value   string `json:"value"`
+	Display string `json:"display,omitempty"`
 }
-func (c *EgnyteAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+type egnyteGroup struct {
+	ID          json.Number         `json:"id"`
+	DisplayName string              `json:"displayName"`
+	Members     []egnyteGroupMember `json:"members,omitempty"`
 }
-func (c *EgnyteAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+type egnyteGroupListResponse struct {
+	StartIndex   int           `json:"startIndex"`
+	ItemsPerPage int           `json:"itemsPerPage"`
+	TotalResults int           `json:"totalResults"`
+	Resources    []egnyteGroup `json:"resources"`
+}
+
+// ProvisionAccess adds a user to an Egnyte user group via SCIM-style
+// PATCH on /pubapi/v2/groups/{groupId} with the standard add op. 409 or
+// 200+"already exists" map to idempotent success.
+func (c *EgnyteAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("egnyte: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("egnyte: grant.ResourceExternalID (groupId) is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	payload := map[string]interface{}{
+		"schemas": []string{"urn:ietf:params:scim:api:messages:2.0:PatchOp"},
+		"Operations": []map[string]interface{}{{
+			"op":    "add",
+			"path":  "members",
+			"value": []map[string]string{{"value": grant.UserExternalID}},
+		}},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("egnyte: marshal payload: %w", err)
+	}
+	fullURL := c.baseURL(cfg) + "/pubapi/v2/groups/" + url.PathEscape(grant.ResourceExternalID)
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodPatch, fullURL, body)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusConflict:
+		return nil
+	case resp.StatusCode == http.StatusBadRequest && bytes.Contains(bytes.ToLower(respBody), []byte("already")):
+		return nil
+	default:
+		return fmt.Errorf("egnyte: group PATCH status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// RevokeAccess removes a user from a group via SCIM PATCH remove.
+// 404 means the group is gone ⇒ idempotent success.
+func (c *EgnyteAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("egnyte: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("egnyte: grant.ResourceExternalID (groupId) is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	payload := map[string]interface{}{
+		"schemas": []string{"urn:ietf:params:scim:api:messages:2.0:PatchOp"},
+		"Operations": []map[string]interface{}{{
+			"op":   "remove",
+			"path": fmt.Sprintf("members[value eq %q]", grant.UserExternalID),
+		}},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("egnyte: marshal payload: %w", err)
+	}
+	fullURL := c.baseURL(cfg) + "/pubapi/v2/groups/" + url.PathEscape(grant.ResourceExternalID)
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodPatch, fullURL, body)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return nil
+	case resp.StatusCode == http.StatusBadRequest && bytes.Contains(bytes.ToLower(respBody), []byte("no such member")):
+		return nil
+	default:
+		return fmt.Errorf("egnyte: group PATCH status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// ListEntitlements pages /pubapi/v2/groups and filters group memberships
+// for the given user. Each group with the user as a member produces an
+// Entitlement.
+func (c *EgnyteAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	userExternalID = strings.TrimSpace(userExternalID)
+	if userExternalID == "" {
+		return nil, errors.New("egnyte: user external id is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	var out []access.Entitlement
+	start := 1
+	for {
+		fullURL := fmt.Sprintf("%s/pubapi/v2/groups?startIndex=%d&count=%d", c.baseURL(cfg), start, pageSize)
+		req, err := c.newRequest(ctx, secrets, http.MethodGet, fullURL)
+		if err != nil {
+			return nil, err
+		}
+		body, err := c.do(req)
+		if err != nil {
+			return nil, err
+		}
+		var resp egnyteGroupListResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, fmt.Errorf("egnyte: decode groups: %w", err)
+		}
+		for _, g := range resp.Resources {
+			for _, m := range g.Members {
+				if m.Value == userExternalID {
+					out = append(out, access.Entitlement{
+						ResourceExternalID: g.ID.String(),
+						Role:               "member",
+						Source:             "direct",
+					})
+					break
+				}
+			}
+		}
+		if resp.StartIndex+resp.ItemsPerPage > resp.TotalResults || resp.ItemsPerPage == 0 {
+			return out, nil
+		}
+		start = resp.StartIndex + resp.ItemsPerPage
+	}
 }
 func (c *EgnyteAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

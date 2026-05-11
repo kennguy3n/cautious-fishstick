@@ -107,3 +107,150 @@ func TestGetCredentialsMetadata_RedactsToken(t *testing.T) {
 		t.Errorf("token_short = %q", short)
 	}
 }
+
+// ---------- Phase 10 advanced capability tests ----------
+
+func newAdvancedTestConnector(srv *httptest.Server) *AirtableAccessConnector {
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	return c
+}
+
+func TestProvisionAccess_HappyPath(t *testing.T) {
+	var got struct{ method, path, body string }
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got.method = r.Method
+		got.path = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "alice@example.com", ResourceExternalID: "appBase1", Role: "edit",
+	})
+	if err != nil {
+		t.Fatalf("ProvisionAccess: %v", err)
+	}
+	if got.method != http.MethodPost {
+		t.Errorf("method = %q", got.method)
+	}
+	if !strings.HasSuffix(got.path, "/meta/bases/appBase1/collaborators") {
+		t.Errorf("path = %q", got.path)
+	}
+}
+
+func TestProvisionAccess_DuplicateIdempotent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"error":{"message":"already a collaborator"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	if err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "alice@example.com", ResourceExternalID: "appBase1",
+	}); err != nil {
+		t.Fatalf("422 already should be idempotent; got %v", err)
+	}
+}
+
+func TestProvisionAccess_FailureSurfaces(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "u@x.com", ResourceExternalID: "appBase1",
+	})
+	if err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("expected 403; got %v", err)
+	}
+}
+
+func TestRevokeAccess_HappyPath(t *testing.T) {
+	var got struct{ method, path string }
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got.method = r.Method
+		got.path = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "usrABC", ResourceExternalID: "appBase1",
+	}); err != nil {
+		t.Fatalf("RevokeAccess: %v", err)
+	}
+	if got.method != http.MethodDelete {
+		t.Errorf("method = %q", got.method)
+	}
+	if !strings.HasSuffix(got.path, "/meta/bases/appBase1/collaborators/usrABC") {
+		t.Errorf("path = %q", got.path)
+	}
+}
+
+func TestRevokeAccess_404Idempotent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "usrABC", ResourceExternalID: "appBase1",
+	}); err != nil {
+		t.Fatalf("404 should be idempotent; got %v", err)
+	}
+}
+
+func TestRevokeAccess_ResolvesEmailToUserID(t *testing.T) {
+	var deletedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/meta/bases/appBase1/collaborators"):
+			_, _ = w.Write([]byte(`{"individualCollaborators":[{"userId":"usrXYZ","email":"alice@example.com","permissionLevel":"edit"}]}`))
+		case r.Method == http.MethodDelete:
+			deletedPath = r.URL.Path
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{
+		UserExternalID: "alice@example.com", ResourceExternalID: "appBase1",
+	}); err != nil {
+		t.Fatalf("RevokeAccess: %v", err)
+	}
+	if !strings.HasSuffix(deletedPath, "/meta/bases/appBase1/collaborators/usrXYZ") {
+		t.Errorf("expected resolved userId in DELETE path; got %q", deletedPath)
+	}
+}
+
+func TestListEntitlements_FiltersByUser(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"bases":[
+			{"id":"app1","name":"B1","individualCollaborators":[{"userId":"usrA","email":"a@x.com","permissionLevel":"edit"}]},
+			{"id":"app2","name":"B2","individualCollaborators":[{"userId":"usrB","email":"b@x.com","permissionLevel":"read"}]}
+		]}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := newAdvancedTestConnector(srv)
+	got, err := c.ListEntitlements(context.Background(), validConfig(), validSecrets(), "usrA")
+	if err != nil {
+		t.Fatalf("ListEntitlements: %v", err)
+	}
+	if len(got) != 1 || got[0].ResourceExternalID != "app1" || got[0].Role != "edit" {
+		t.Fatalf("got = %+v", got)
+	}
+}
+
+func TestProvisionRevoke_RejectMissing(t *testing.T) {
+	c := New()
+	if err := c.ProvisionAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{ResourceExternalID: "x"}); err == nil {
+		t.Error("provision should require user id")
+	}
+	if err := c.RevokeAccess(context.Background(), validConfig(), validSecrets(), access.AccessGrant{UserExternalID: "u"}); err == nil {
+		t.Error("revoke should require resource id")
+	}
+}

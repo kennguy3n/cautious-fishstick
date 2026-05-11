@@ -1,6 +1,6 @@
 # Connector Capability Index
 
-> **Last updated:** 2026-05-10
+> **Last updated:** 2026-05-11
 > **Source of truth:** [`docs/PROGRESS.md`](./PROGRESS.md) §1
 > **How to keep in sync:** When you flip a capability column in `docs/PROGRESS.md`, mirror the change here. The audit script in §6 of `docs/PROGRESS.md` lints the two tables for drift.
 
@@ -54,21 +54,21 @@
 | 27 | MS Teams | T3 | Collab | `ms_teams/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
 | 28 | Zoom | T3 | Collab | `zoom/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
 | 29 | Notion | T3 | Productivity | `notion/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
-| 30 | Asana | T3 | Productivity | `asana/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
-| 31 | Monday.com | T3 | Productivity | `monday/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
-| 32 | Figma | T3 | Design | `figma/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
-| 33 | Miro | T3 | Whiteboard | `miro/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
-| 34 | Trello | T3 | Productivity | `trello/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 35 | Airtable | T3 | Productivity | `airtable/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
-| 36 | Smartsheet | T3 | Productivity | `smartsheet/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
-| 37 | ClickUp | T3 | Productivity | `clickup/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
+| 30 | Asana | T3 | Productivity | `asana/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
+| 31 | Monday.com | T3 | Productivity | `monday/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
+| 32 | Figma | T3 | Design | `figma/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
+| 33 | Miro | T3 | Whiteboard | `miro/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
+| 34 | Trello | T3 | Productivity | `trello/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
+| 35 | Airtable | T3 | Productivity | `airtable/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
+| 36 | Smartsheet | T3 | Productivity | `smartsheet/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
+| 37 | ClickUp | T3 | Productivity | `clickup/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
 | 38 | Salesforce | T3 | CRM | `salesforce/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
 | 39 | HubSpot | T3 | CRM | `hubspot/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
 | 40 | Zoho CRM | T3 | CRM | `zoho_crm/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
 | 41 | Pipedrive | T3 | CRM | `pipedrive/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 42 | Dropbox Business | T3 | Storage | `dropbox/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
-| 43 | Box | T3 | Storage | `box/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
-| 44 | Egnyte | T3 | Storage | `egnyte/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
+| 43 | Box | T3 | Storage | `box/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
+| 44 | Egnyte | T3 | Storage | `egnyte/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
 | 45 | GitHub | T3 | DevOps | `github/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
 | 46 | GitLab | T3 | DevOps | `gitlab/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
 | 47 | Atlassian Jira | T3 | DevOps | `jira/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
@@ -88,10 +88,10 @@
 | 61 | Mezmo | T3 | Observability | `mezmo/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 62 | Sumo Logic | T3 | Observability | `sumo_logic/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
 | 63 | Zendesk | T3 | Support | `zendesk/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
-| 64 | Freshdesk | T3 | Support | `freshdesk/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
-| 65 | Help Scout | T3 | Support | `helpscout/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 66 | Front | T3 | Support | `front/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
-| 67 | Intercom | T3 | Support | `intercom/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
+| 64 | Freshdesk | T3 | Support | `freshdesk/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
+| 65 | Help Scout | T3 | Support | `helpscout/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
+| 66 | Front | T3 | Support | `front/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
+| 67 | Intercom | T3 | Support | `intercom/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
 | 68 | Drift | T3 | Marketing | `drift/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 69 | Crisp | T3 | Support | `crisp/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 70 | LiveChat | T3 | Support | `livechat/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
@@ -110,12 +110,12 @@
 | 83 | Rippling | T4 | HR | `rippling/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
 | 84 | Personio | T4 | HR | `personio/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 85 | Hibob | T4 | HR | `hibob/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 86 | Workday | T4 | HR | `workday/` | 🟡 | ⏳ | ⏳ | ⏳ | 🟡 |
+| 86 | Workday | T4 | HR | `workday/` | 🟡 | 🟡 | 🟡 | ⏳ | 🟡 |
 | 87 | Paychex | T4 | HR | `paychex/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 88 | Deel | T4 | HR | `deel/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 89 | Zenefits | T4 | HR | `zenefits/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 90 | Namely | T4 | HR | `namely/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 91 | QuickBooks Online | T4 | Finance | `quickbooks/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
+| 91 | QuickBooks Online | T4 | Finance | `quickbooks/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
 | 92 | Xero | T4 | Finance | `xero/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 93 | Stripe | T4 | Finance | `stripe/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 94 | PayPal | T4 | Finance | `paypal/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
@@ -129,7 +129,7 @@
 | 102 | Ramp | T4 | Finance | `ramp/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 103 | Clio | T4 | Legal | `clio/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 104 | Ironclad | T4 | Legal | `ironclad/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 105 | DocuSign | T4 | Legal | `docusign/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
+| 105 | DocuSign | T4 | Legal | `docusign/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
 | 106 | DocuSign CLM | T4 | Legal | `docusign_clm/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
 | 107 | MyCase | T4 | Legal | `mycase/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 108 | PandaDoc | T4 | Legal | `pandadoc/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
@@ -166,12 +166,12 @@
 | 139 | Sophos Central | T5 | Security | `sophos_central/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 140 | Sophos XG | T5 | Security | `sophos_xg/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 141 | CrowdStrike | T5 | Security | `crowdstrike/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
-| 142 | SentinelOne | T5 | Security | `sentinelone/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
+| 142 | SentinelOne | T5 | Security | `sentinelone/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
 | 143 | Snyk | T5 | Security | `snyk/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
 | 144 | HackerOne | T5 | Security | `hackerone/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 145 | HIBP | T5 | Security | `hibp/` | n/a | n/a | n/a | ⏳ | n/a |
 | 146 | BitSight | T5 | Security | `bitsight/` | n/a | n/a | n/a | ⏳ | n/a |
-| 147 | Tenable.io | T5 | Security | `tenable/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
+| 147 | Tenable.io | T5 | Security | `tenable/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
 | 148 | Qualys VMDR | T5 | Security | `qualys/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 149 | Rapid7 | T5 | Security | `rapid7/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 150 | VirusTotal | T5 | Security | `virustotal/` | n/a | n/a | n/a | ⏳ | n/a |
@@ -194,7 +194,7 @@
 | 167 | Yardi | T5 | Real Estate | `yardi/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 168 | Buildium | T5 | Real Estate | `buildium/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 169 | AppFolio | T5 | Real Estate | `appfolio/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 170 | NetSuite | T5 | ERP | `netsuite/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
+| 170 | NetSuite | T5 | ERP | `netsuite/` | 🟡 | 🟡 | 🟡 | ⏳ | ⏳ |
 | 171 | Coursera | T5 | Education | `coursera/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 172 | LinkedIn Learning | T5 | Training | `linkedin_learning/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
 | 173 | Udemy Business | T5 | Training | `udemy_business/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
@@ -230,8 +230,8 @@
 
 - Total connectors registered: **200**
 - `sync_identity` shipped: **194/200**
-- `provision_access` shipped: **29/200** (29 real provider integrations across three Phase 10 batches)
-- `list_entitlements` shipped: **29/200**
+- `provision_access` shipped: **49/200** (49 real provider integrations across four Phase 10 batches)
+- `list_entitlements` shipped: **49/200**
 - `get_access_log` shipped: **0/200** (Phase 10 backlog)
 - `sso_federation` shipped: **12/200**
 

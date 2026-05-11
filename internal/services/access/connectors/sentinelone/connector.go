@@ -3,6 +3,7 @@
 package sentinelone
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -120,6 +121,25 @@ func (c *SentinelOneAccessConnector) newRequest(ctx context.Context, secrets Sec
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "ApiToken "+strings.TrimSpace(secrets.APIToken))
 	return req, nil
+}
+
+func (c *SentinelOneAccessConnector) newJSONRequest(ctx context.Context, secrets Secrets, method, fullURL string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "ApiToken "+strings.TrimSpace(secrets.APIToken))
+	return req, nil
+}
+
+func (c *SentinelOneAccessConnector) doRaw(req *http.Request) (*http.Response, error) {
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("sentinelone: %s %s: %w", req.Method, req.URL.Path, err)
+	}
+	return resp, nil
 }
 
 func (c *SentinelOneAccessConnector) do(req *http.Request) ([]byte, error) {
@@ -268,14 +288,184 @@ func (c *SentinelOneAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *SentinelOneAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ---------- Phase 10 advanced capabilities ----------
+
+type sentineloneUserScope struct {
+	Scope   string `json:"scope"`
+	ScopeID string `json:"scopeId,omitempty"`
+	Role    string `json:"role"`
 }
-func (c *SentinelOneAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+type sentineloneUserDetailEnvelope struct {
+	Data sentineloneUserDetail `json:"data"`
 }
-func (c *SentinelOneAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+type sentineloneUserDetail struct {
+	ID     string                 `json:"id"`
+	Email  string                 `json:"email"`
+	Role   string                 `json:"role,omitempty"`
+	Scopes []sentineloneUserScope `json:"scopes,omitempty"`
+}
+
+func sentineloneRoleName(role string) string {
+	role = strings.TrimSpace(role)
+	if role == "" {
+		return "Viewer"
+	}
+	return role
+}
+
+// ProvisionAccess assigns a role for the user via
+// PUT /web/api/v2.1/users/{userId}. ResourceExternalID encodes the scope
+// id (site/account). If the user already holds the same role for the
+// same scope it is a no-op (idempotent success).
+func (c *SentinelOneAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("sentinelone: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("sentinelone: grant.ResourceExternalID is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	role := sentineloneRoleName(grant.Role)
+	payload := map[string]interface{}{
+		"data": map[string]interface{}{
+			"scopes": []map[string]interface{}{{
+				"scope":   "site",
+				"scopeId": grant.ResourceExternalID,
+				"role":    role,
+			}},
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("sentinelone: marshal payload: %w", err)
+	}
+	fullURL := c.baseURL(cfg) + "/web/api/v2.1/users/" + url.PathEscape(grant.UserExternalID)
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodPut, fullURL, body)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusConflict:
+		return nil
+	case resp.StatusCode == http.StatusBadRequest && bytes.Contains(bytes.ToLower(respBody), []byte("already")):
+		return nil
+	default:
+		return fmt.Errorf("sentinelone: user PUT status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// RevokeAccess removes a role for the user via
+// PUT /web/api/v2.1/users/{userId} with the scope filtered out.
+// Missing user (404) maps to idempotent success.
+func (c *SentinelOneAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("sentinelone: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("sentinelone: grant.ResourceExternalID is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	payload := map[string]interface{}{
+		"data": map[string]interface{}{
+			"removeScopes": []map[string]interface{}{{
+				"scopeId": grant.ResourceExternalID,
+			}},
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("sentinelone: marshal payload: %w", err)
+	}
+	fullURL := c.baseURL(cfg) + "/web/api/v2.1/users/" + url.PathEscape(grant.UserExternalID)
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodPut, fullURL, body)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return nil
+	default:
+		return fmt.Errorf("sentinelone: user PUT status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+// ListEntitlements reads /web/api/v2.1/users/{userId} and emits one
+// Entitlement per scope assignment.
+func (c *SentinelOneAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	userExternalID = strings.TrimSpace(userExternalID)
+	if userExternalID == "" {
+		return nil, errors.New("sentinelone: user external id is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	fullURL := c.baseURL(cfg) + "/web/api/v2.1/users/" + url.PathEscape(userExternalID)
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, fullURL)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("sentinelone: user GET status %d: %s", resp.StatusCode, string(body))
+	}
+	var envelope sentineloneUserDetailEnvelope
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, fmt.Errorf("sentinelone: decode user: %w", err)
+	}
+	out := make([]access.Entitlement, 0, len(envelope.Data.Scopes))
+	for _, sc := range envelope.Data.Scopes {
+		out = append(out, access.Entitlement{
+			ResourceExternalID: sc.ScopeID,
+			Role:               sc.Role,
+			Source:             "direct",
+		})
+	}
+	return out, nil
 }
 func (c *SentinelOneAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

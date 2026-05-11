@@ -3,12 +3,15 @@
 package smartsheet
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -104,6 +107,25 @@ func (c *SmartsheetAccessConnector) newRequest(ctx context.Context, secrets Secr
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
 	return req, nil
+}
+
+func (c *SmartsheetAccessConnector) newJSONRequest(ctx context.Context, secrets Secrets, method, fullURL string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
+	return req, nil
+}
+
+func (c *SmartsheetAccessConnector) doRaw(req *http.Request) (*http.Response, error) {
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("smartsheet: %s %s: %w", req.Method, req.URL.Path, err)
+	}
+	return resp, nil
 }
 
 func (c *SmartsheetAccessConnector) do(req *http.Request) ([]byte, error) {
@@ -257,14 +279,268 @@ func (c *SmartsheetAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *SmartsheetAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ---------- Phase 10 advanced capabilities ----------
+
+type smartsheetShare struct {
+	ID        string `json:"id"`
+	Type      string `json:"type"`
+	Email     string `json:"email,omitempty"`
+	UserID    int64  `json:"userId,omitempty"`
+	AccessLvl string `json:"accessLevel"`
 }
-func (c *SmartsheetAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+type smartsheetSharesResponse struct {
+	Data       []smartsheetShare `json:"data"`
+	PageNumber int               `json:"pageNumber"`
+	TotalPages int               `json:"totalPages"`
 }
-func (c *SmartsheetAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+type smartsheetErrorBody struct {
+	ErrorCode int    `json:"errorCode"`
+	Message   string `json:"message"`
+}
+
+type smartsheetSheetSummary struct {
+	ID        json.Number `json:"id"`
+	Name      string      `json:"name"`
+	AccessLvl string      `json:"accessLevel"`
+}
+
+func smartsheetAccessLevel(grantRole string) string {
+	switch strings.ToUpper(strings.TrimSpace(grantRole)) {
+	case "OWNER":
+		return "OWNER"
+	case "ADMIN":
+		return "ADMIN"
+	case "EDITOR_SHARE", "EDITOR":
+		return "EDITOR"
+	case "COMMENTER":
+		return "COMMENTER"
+	case "VIEWER", "":
+		return "VIEWER"
+	default:
+		return strings.ToUpper(strings.TrimSpace(grantRole))
+	}
+}
+
+// ProvisionAccess shares a Smartsheet sheet with a user via
+// POST /2.0/sheets/{sheetId}/shares. ResourceExternalID = sheetId.
+// UserExternalID = email. Smartsheet error code 1020 (duplicate share)
+// and 4093 (already-shared variant) map to idempotent success.
+func (c *SmartsheetAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("smartsheet: grant.UserExternalID (email) is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("smartsheet: grant.ResourceExternalID (sheetId) is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	payload := []map[string]string{{
+		"email":       grant.UserExternalID,
+		"accessLevel": smartsheetAccessLevel(grant.Role),
+	}}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("smartsheet: marshal payload: %w", err)
+	}
+	fullURL := c.baseURL() + "/2.0/sheets/" + url.PathEscape(grant.ResourceExternalID) + "/shares"
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodPost, fullURL, body)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	var errBody smartsheetErrorBody
+	_ = json.Unmarshal(respBody, &errBody)
+	if errBody.ErrorCode == 1020 || errBody.ErrorCode == 4093 || bytes.Contains(bytes.ToLower(respBody), []byte("already shared")) {
+		return nil
+	}
+	return fmt.Errorf("smartsheet: shares POST status %d: %s", resp.StatusCode, string(respBody))
+}
+
+// RevokeAccess removes a share from a sheet via
+// DELETE /2.0/sheets/{sheetId}/shares/{shareId}. shareId is resolved by
+// looking up the share whose email matches grant.UserExternalID.
+func (c *SmartsheetAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("smartsheet: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("smartsheet: grant.ResourceExternalID (sheetId) is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	shareID, err := c.findShareIDForUser(ctx, secrets, grant.ResourceExternalID, grant.UserExternalID)
+	if err != nil {
+		return err
+	}
+	if shareID == "" {
+		return nil
+	}
+	fullURL := c.baseURL() + "/2.0/sheets/" + url.PathEscape(grant.ResourceExternalID) + "/shares/" + url.PathEscape(shareID)
+	req, err := c.newRequest(ctx, secrets, http.MethodDelete, fullURL)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return nil
+	default:
+		return fmt.Errorf("smartsheet: shares DELETE status %d: %s", resp.StatusCode, string(respBody))
+	}
+}
+
+func (c *SmartsheetAccessConnector) findShareIDForUser(ctx context.Context, secrets Secrets, sheetID, email string) (string, error) {
+	page := 1
+	emailLower := strings.ToLower(strings.TrimSpace(email))
+	for {
+		fullURL := c.baseURL() + "/2.0/sheets/" + url.PathEscape(sheetID) + "/shares?pageSize=" + strconv.Itoa(pageSize) + "&page=" + strconv.Itoa(page)
+		req, err := c.newRequest(ctx, secrets, http.MethodGet, fullURL)
+		if err != nil {
+			return "", err
+		}
+		resp, err := c.doRaw(req)
+		if err != nil {
+			return "", err
+		}
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusNotFound {
+			return "", nil
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return "", fmt.Errorf("smartsheet: shares GET status %d: %s", resp.StatusCode, string(respBody))
+		}
+		var list smartsheetSharesResponse
+		if err := json.Unmarshal(respBody, &list); err != nil {
+			return "", fmt.Errorf("smartsheet: decode shares: %w", err)
+		}
+		for _, s := range list.Data {
+			if strings.EqualFold(s.Email, emailLower) {
+				return s.ID, nil
+			}
+		}
+		if list.TotalPages <= list.PageNumber || list.PageNumber == 0 {
+			return "", nil
+		}
+		page = list.PageNumber + 1
+	}
+}
+
+// ListEntitlements paginates GET /2.0/sheets, then for each sheet checks
+// /2.0/sheets/{sheetId}/shares for an entry matching the user. Returns
+// one Entitlement per matched sheet with the per-share accessLevel.
+func (c *SmartsheetAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	userExternalID = strings.TrimSpace(userExternalID)
+	if userExternalID == "" {
+		return nil, errors.New("smartsheet: user external id is required")
+	}
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	emailLower := strings.ToLower(userExternalID)
+	var out []access.Entitlement
+	page := 1
+	for {
+		fullURL := c.baseURL() + "/2.0/sheets?pageSize=" + strconv.Itoa(pageSize) + "&page=" + strconv.Itoa(page)
+		req, err := c.newRequest(ctx, secrets, http.MethodGet, fullURL)
+		if err != nil {
+			return nil, err
+		}
+		body, err := c.do(req)
+		if err != nil {
+			return nil, err
+		}
+		var resp struct {
+			Data       []smartsheetSheetSummary `json:"data"`
+			PageNumber int                      `json:"pageNumber"`
+			TotalPages int                      `json:"totalPages"`
+		}
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, fmt.Errorf("smartsheet: decode sheets: %w", err)
+		}
+		for _, sheet := range resp.Data {
+			role, err := c.lookupAccessLevelForUser(ctx, secrets, sheet.ID.String(), emailLower)
+			if err != nil {
+				return nil, err
+			}
+			if role == "" {
+				continue
+			}
+			out = append(out, access.Entitlement{
+				ResourceExternalID: sheet.ID.String(),
+				Role:               role,
+				Source:             "direct",
+			})
+		}
+		if resp.TotalPages <= resp.PageNumber || resp.PageNumber == 0 {
+			return out, nil
+		}
+		page = resp.PageNumber + 1
+	}
+}
+
+func (c *SmartsheetAccessConnector) lookupAccessLevelForUser(ctx context.Context, secrets Secrets, sheetID, emailLower string) (string, error) {
+	fullURL := c.baseURL() + "/2.0/sheets/" + url.PathEscape(sheetID) + "/shares?pageSize=" + strconv.Itoa(pageSize)
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, fullURL)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return "", nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("smartsheet: shares GET status %d: %s", resp.StatusCode, string(body))
+	}
+	var list smartsheetSharesResponse
+	if err := json.Unmarshal(body, &list); err != nil {
+		return "", fmt.Errorf("smartsheet: decode shares: %w", err)
+	}
+	for _, s := range list.Data {
+		if strings.EqualFold(s.Email, emailLower) {
+			return s.AccessLvl, nil
+		}
+	}
+	return "", nil
 }
 func (c *SmartsheetAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

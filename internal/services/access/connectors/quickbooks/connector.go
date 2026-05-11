@@ -3,6 +3,7 @@
 package quickbooks
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -185,13 +186,19 @@ func (c *QuickBooksAccessConnector) VerifyPermissions(ctx context.Context, confi
 
 type qbEmployee struct {
 	ID           string `json:"Id"`
+	SyncToken    string `json:"SyncToken,omitempty"`
 	GivenName    string `json:"GivenName"`
 	FamilyName   string `json:"FamilyName"`
 	DisplayName  string `json:"DisplayName"`
+	Title        string `json:"Title,omitempty"`
 	Active       bool   `json:"Active"`
 	PrimaryEmail struct {
 		Address string `json:"Address"`
 	} `json:"PrimaryEmailAddr"`
+}
+
+type qbEmployeeEnvelope struct {
+	Employee qbEmployee `json:"Employee"`
 }
 
 type qbQueryResponse struct {
@@ -275,14 +282,173 @@ func (c *QuickBooksAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *QuickBooksAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// ---------- Phase 10 advanced capabilities ----------
+
+func (c *QuickBooksAccessConnector) newJSONRequest(ctx context.Context, secrets Secrets, method, fullURL string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
+	return req, nil
 }
-func (c *QuickBooksAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+func (c *QuickBooksAccessConnector) doRaw(req *http.Request) (*http.Response, error) {
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("quickbooks: %s %s: %w", req.Method, req.URL.Path, err)
+	}
+	return resp, nil
 }
-func (c *QuickBooksAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+func (c *QuickBooksAccessConnector) getEmployee(ctx context.Context, cfg Config, secrets Secrets, employeeID string) (*qbEmployee, error) {
+	fullURL := fmt.Sprintf("%s/v3/company/%s/employee/%s?minorversion=65", c.baseURL(), cfg.RealmID, url.PathEscape(employeeID))
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, fullURL)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("quickbooks: employee GET status %d: %s", resp.StatusCode, string(body))
+	}
+	var envelope qbEmployeeEnvelope
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, fmt.Errorf("quickbooks: decode employee: %w", err)
+	}
+	return &envelope.Employee, nil
+}
+
+func (c *QuickBooksAccessConnector) sparseUpdateEmployee(ctx context.Context, cfg Config, secrets Secrets, emp qbEmployee) error {
+	payload := map[string]interface{}{
+		"Id":        emp.ID,
+		"SyncToken": emp.SyncToken,
+		"Title":     emp.Title,
+		"sparse":    true,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("quickbooks: marshal payload: %w", err)
+	}
+	fullURL := fmt.Sprintf("%s/v3/company/%s/employee?minorversion=65", c.baseURL(), cfg.RealmID)
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodPost, fullURL, body)
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRaw(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("quickbooks: employee POST status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
+// ProvisionAccess assigns a role to the employee via a sparse Employee
+// update (Title field). If the employee already holds the role, no POST
+// is issued (idempotent success).
+func (c *QuickBooksAccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("quickbooks: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("quickbooks: grant.ResourceExternalID (role) is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	emp, err := c.getEmployee(ctx, cfg, secrets, grant.UserExternalID)
+	if err != nil {
+		return err
+	}
+	if emp == nil {
+		return fmt.Errorf("quickbooks: employee %s not found", grant.UserExternalID)
+	}
+	if emp.Title == grant.ResourceExternalID {
+		return nil
+	}
+	emp.Title = grant.ResourceExternalID
+	return c.sparseUpdateEmployee(ctx, cfg, secrets, *emp)
+}
+
+// RevokeAccess clears the employee's role via a sparse Employee update.
+// Missing employee ⇒ idempotent success.
+func (c *QuickBooksAccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("quickbooks: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("quickbooks: grant.ResourceExternalID is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	emp, err := c.getEmployee(ctx, cfg, secrets, grant.UserExternalID)
+	if err != nil {
+		return err
+	}
+	if emp == nil {
+		return nil
+	}
+	if emp.Title != grant.ResourceExternalID {
+		return nil
+	}
+	emp.Title = ""
+	return c.sparseUpdateEmployee(ctx, cfg, secrets, *emp)
+}
+
+// ListEntitlements reads /v3/company/{realm}/employee/{id} and emits
+// one Entitlement when the employee has a Title set.
+func (c *QuickBooksAccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	userExternalID = strings.TrimSpace(userExternalID)
+	if userExternalID == "" {
+		return nil, errors.New("quickbooks: user external id is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	emp, err := c.getEmployee(ctx, cfg, secrets, userExternalID)
+	if err != nil {
+		return nil, err
+	}
+	if emp == nil || emp.Title == "" {
+		return nil, nil
+	}
+	return []access.Entitlement{{
+		ResourceExternalID: emp.Title,
+		Role:               emp.Title,
+		Source:             "direct",
+	}}, nil
 }
 func (c *QuickBooksAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil
