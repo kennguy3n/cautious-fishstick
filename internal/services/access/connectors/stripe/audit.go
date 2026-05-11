@@ -14,6 +14,13 @@ import (
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
+// stripeAuditMaxPages bounds a single sweep to ~20k events. Stripe
+// paginates `/v1/events` reverse-chronologically (newest first) via
+// `starting_after`, so this only kicks in on the very first sync of a
+// long-dormant account; the `created[gte]={since}` filter narrows the
+// window on every subsequent run.
+const stripeAuditMaxPages = 200
+
 // FetchAccessAuditLogs streams Stripe `/v1/events` records into the
 // access audit pipeline. Implements access.AccessAuditor.
 //
@@ -22,12 +29,25 @@ import (
 //	GET /v1/events?limit=100&created[gte]={epoch}&starting_after={id}
 //
 // Stripe's event log is the closest public surface to an audit feed —
-// every API and dashboard mutation emits an event. Pagination uses the
-// canonical `starting_after` cursor with the last record's id; `has_more`
-// terminates the loop. The handler is invoked once per page in
-// chronological order so callers can persist `nextSince` as a monotonic
-// cursor. Restricted keys without `rak_read_only` on Events surface as
-// 401/403 → access.ErrAuditNotAvailable.
+// every API and dashboard mutation emits an event. Pagination is
+// reverse-chronological: the first page contains the newest events and
+// `starting_after` walks backwards in time; `has_more` terminates the
+// loop.
+//
+// The AccessAuditor contract requires that any `nextSince` passed to
+// the handler cover only events already yielded — the worker persists
+// this cursor even on partial failure (see
+// internal/workers/handlers/access_audit.go). To honour the contract
+// under reverse-chronological pagination we collect the full sweep
+// first, then reverse the entire collection into chronological
+// (oldest-first) order and call the handler exactly once with the
+// maximum timestamp as `nextSince`. If any page fails mid-sweep (or
+// the handler call itself fails) the cursor is never advanced past
+// un-yielded events, so a retry replays the same window rather than
+// silently skipping older entries below the persisted cursor.
+//
+// Restricted keys without `rak_read_only` on Events surface as 401/403
+// → access.ErrAuditNotAvailable.
 func (c *StripeAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},
@@ -39,10 +59,11 @@ func (c *StripeAccessConnector) FetchAccessAuditLogs(
 		return err
 	}
 	since := sincePartitions[access.DefaultAuditPartition]
-	cursor := since
-	startingAfter := ""
 	base := c.baseURL()
-	for {
+
+	var collected []stripeEvent
+	startingAfter := ""
+	for page := 0; page < stripeAuditMaxPages; page++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -72,33 +93,43 @@ func (c *StripeAccessConnector) FetchAccessAuditLogs(
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return fmt.Errorf("stripe: audit events: status %d: %s", resp.StatusCode, string(body))
 		}
-		var page stripeEventPage
-		if err := json.Unmarshal(body, &page); err != nil {
+		var pageData stripeEventPage
+		if err := json.Unmarshal(body, &pageData); err != nil {
 			return fmt.Errorf("stripe: decode events: %w", err)
 		}
-		batch := make([]*access.AuditLogEntry, 0, len(page.Data))
-		batchMax := cursor
-		lastID := ""
-		for i := range page.Data {
-			entry := mapStripeEvent(&page.Data[i])
-			if entry == nil {
-				continue
-			}
-			if entry.Timestamp.After(batchMax) {
-				batchMax = entry.Timestamp
-			}
-			batch = append(batch, entry)
-			lastID = page.Data[i].ID
+		if len(pageData.Data) == 0 {
+			break
 		}
-		if err := handler(batch, batchMax, access.DefaultAuditPartition); err != nil {
-			return err
+		collected = append(collected, pageData.Data...)
+		if !pageData.HasMore {
+			break
 		}
-		cursor = batchMax
-		if !page.HasMore || lastID == "" {
-			return nil
-		}
-		startingAfter = lastID
+		startingAfter = pageData.Data[len(pageData.Data)-1].ID
 	}
+
+	if len(collected) == 0 {
+		return nil
+	}
+
+	// Walk the collected events oldest-first so the handler sees a
+	// chronologically ascending batch and `nextSince` covers every
+	// event we just yielded.
+	batch := make([]*access.AuditLogEntry, 0, len(collected))
+	batchMax := since
+	for i := len(collected) - 1; i >= 0; i-- {
+		entry := mapStripeEvent(&collected[i])
+		if entry == nil {
+			continue
+		}
+		if entry.Timestamp.After(batchMax) {
+			batchMax = entry.Timestamp
+		}
+		batch = append(batch, entry)
+	}
+	if len(batch) == 0 {
+		return nil
+	}
+	return handler(batch, batchMax, access.DefaultAuditPartition)
 }
 
 type stripeEventPage struct {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,6 +19,9 @@ func validStripeSecrets() map[string]interface{} {
 }
 
 func TestStripeFetchAccessAuditLogs_PaginatesAndMaps(t *testing.T) {
+	// Stripe `/v1/events` paginates reverse-chronologically: page 1 is
+	// the newest event, `starting_after` walks backwards in time so
+	// page 2 contains older events.
 	call := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/events" {
@@ -34,17 +38,16 @@ func TestStripeFetchAccessAuditLogs_PaginatesAndMaps(t *testing.T) {
 				"has_more": true,
 				"data": []map[string]interface{}{
 					{
-						"id":      "evt_1",
-						"type":    "customer.created",
-						"created": time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC).Unix(),
+						"id":      "evt_2",
+						"type":    "account.updated",
+						"created": time.Date(2024, 1, 1, 11, 0, 0, 0, time.UTC).Unix(),
 						"account": "acct_1",
-						"request": map[string]interface{}{"id": "req_1"},
 					},
 				},
 			})
 		case 1:
 			call++
-			if r.URL.Query().Get("starting_after") != "evt_1" {
+			if r.URL.Query().Get("starting_after") != "evt_2" {
 				t.Errorf("starting_after = %s", r.URL.Query().Get("starting_after"))
 			}
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -52,10 +55,11 @@ func TestStripeFetchAccessAuditLogs_PaginatesAndMaps(t *testing.T) {
 				"has_more": false,
 				"data": []map[string]interface{}{
 					{
-						"id":      "evt_2",
-						"type":    "account.updated",
-						"created": time.Date(2024, 1, 1, 11, 0, 0, 0, time.UTC).Unix(),
+						"id":      "evt_1",
+						"type":    "customer.created",
+						"created": time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC).Unix(),
 						"account": "acct_1",
+						"request": map[string]interface{}{"id": "req_1"},
 					},
 				},
 			})
@@ -125,5 +129,66 @@ func TestStripeFetchAccessAuditLogs_ServerError(t *testing.T) {
 		func(_ []*access.AuditLogEntry, _ time.Time, _ string) error { return nil })
 	if err == nil || errors.Is(err, access.ErrAuditNotAvailable) {
 		t.Fatalf("err = %v, want non-nil non-ErrAuditNotAvailable", err)
+	}
+}
+
+// TestStripeFetchAccessAuditLogs_PaginationFailureDoesNotAdvanceCursor
+// guards against the data-loss bug where a per-page handler call would
+// persist `nextSince` at the newest timestamp on page 1, stranding the
+// older un-yielded entries below the persisted cursor if page 2 failed.
+// With the buffer-then-emit-once pattern the handler is never called
+// during pagination, so a failure on any page surfaces as an error
+// without advancing the cursor.
+func TestStripeFetchAccessAuditLogs_PaginationFailureDoesNotAdvanceCursor(t *testing.T) {
+	baseTS := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	page := make([]map[string]interface{}, 0, pageSize)
+	for i := 0; i < pageSize; i++ {
+		page = append(page, map[string]interface{}{
+			"id":      fmt.Sprintf("evt_%d", i),
+			"type":    "customer.created",
+			"created": baseTS.Add(-time.Duration(i) * time.Minute).Unix(),
+			"account": "acct_1",
+		})
+	}
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls == 1 {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"object":   "list",
+				"has_more": true,
+				"data":     page,
+			})
+			return
+		}
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+
+	handlerCalls := 0
+	err := c.FetchAccessAuditLogs(context.Background(), map[string]interface{}{}, validStripeSecrets(),
+		map[string]time.Time{access.DefaultAuditPartition: time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)},
+		func(_ []*access.AuditLogEntry, _ time.Time, _ string) error {
+			handlerCalls++
+			return nil
+		})
+	if err == nil {
+		t.Fatalf("err = nil; want non-nil (page 2 returned 500)")
+	}
+	if errors.Is(err, access.ErrAuditNotAvailable) {
+		t.Fatalf("err = %v; 500 must not collapse to ErrAuditNotAvailable", err)
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Fatalf("err = %v; want a 500 status error", err)
+	}
+	if handlerCalls != 0 {
+		t.Fatalf("handler must not be invoked when pagination fails; got %d call(s)", handlerCalls)
+	}
+	if calls != 2 {
+		t.Fatalf("expected 2 HTTP calls (page 1 OK, page 2 500), got %d", calls)
 	}
 }
