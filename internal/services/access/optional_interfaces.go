@@ -61,13 +61,30 @@ type GroupSyncer interface {
 
 // AccessAuditor is implemented by connectors that can stream sign-in / access
 // audit events back into the audit pipeline.
+//
+// Semantics:
+//
+//   - `since` is the lower bound on event timestamps the caller wants. An
+//     empty (zero) `since` means "return the provider's default window"
+//     (typically the last 24h or whatever the provider exposes).
+//   - The handler is invoked once per provider page. Implementations MUST
+//     paginate the provider's audit log API and call the handler per page
+//     in chronological order so callers can persist `nextSince` as a
+//     monotonic cursor.
+//   - `nextSince` is the cursor the caller should persist in
+//     access_sync_state (kind="audit") so the next invocation resumes
+//     where this one left off. Implementations MUST set nextSince to the
+//     timestamp of the newest entry in the batch (or beyond) — the next
+//     call uses `nextSince` as the new `since`.
+//   - Implementations MUST honour ctx cancellation between pages.
+//   - The handler returning a non-nil error aborts the sync.
 type AccessAuditor interface {
 	FetchAccessAuditLogs(
 		ctx context.Context,
 		config map[string]interface{},
 		secrets map[string]interface{},
 		since time.Time,
-		handler func(batch []AuditEvent) error,
+		handler func(batch []*AuditLogEntry, nextSince time.Time) error,
 	) error
 }
 

@@ -1,10 +1,22 @@
 // Package rapid7 implements the access.AccessConnector contract for the
-// Rapid7 InsightVM /api/3/users endpoint.
+// Rapid7 InsightVM /api/3/ endpoints.
 //
 // InsightVM is a customer-installed Security Console reachable on an
 // operator-controlled HTTPS host (typically `https://<console>:3780`).
 // Authentication is HTTP Basic. Pagination uses query-string
 // `page`/`size` and the JSON envelope contains `page.totalPages`.
+//
+// Phase 10 maps the advanced-capability methods as follows:
+//
+//   - ProvisionAccess  -> PUT    /api/3/sites/{siteId}/users/{userId}
+//   - RevokeAccess     -> DELETE /api/3/sites/{siteId}/users/{userId}
+//   - ListEntitlements -> GET    /api/3/users/{userId}/sites
+//
+// AccessGrant maps:
+//   - grant.UserExternalID     -> userId (URL path)
+//   - grant.ResourceExternalID -> siteId (URL path)
+//   - grant.Role               -> recorded on the Entitlement, no role
+//     assignment endpoint is exposed by /api/3/sites/{siteId}/users.
 package rapid7
 
 import (
@@ -200,6 +212,20 @@ func (c *Rapid7AccessConnector) do(req *http.Request) ([]byte, error) {
 	return body, nil
 }
 
+// doRaw issues req and returns (status, body, err) without raising
+// non-2xx as an error. ProvisionAccess / RevokeAccess use this so
+// they can branch on the idempotency helpers from
+// internal/services/access/idempotency.go.
+func (c *Rapid7AccessConnector) doRaw(req *http.Request) (int, []byte, error) {
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return 0, nil, fmt.Errorf("rapid7: %s %s: %w", req.Method, req.URL.Path, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return resp.StatusCode, body, nil
+}
+
 func (c *Rapid7AccessConnector) decodeBoth(configRaw, secretsRaw map[string]interface{}) (Config, Secrets, error) {
 	cfg, err := DecodeConfig(configRaw)
 	if err != nil {
@@ -343,14 +369,156 @@ func (c *Rapid7AccessConnector) SyncIdentities(
 	}
 }
 
-func (c *Rapid7AccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+// validateGrantPair returns an error when grant is missing the
+// (userId, siteId) pair Rapid7 requires.
+func validateGrantPair(grant access.AccessGrant) error {
+	if strings.TrimSpace(grant.UserExternalID) == "" {
+		return errors.New("rapid7: grant.UserExternalID is required")
+	}
+	if strings.TrimSpace(grant.ResourceExternalID) == "" {
+		return errors.New("rapid7: grant.ResourceExternalID is required")
+	}
+	return nil
 }
-func (c *Rapid7AccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
+
+// ProvisionAccess associates the user with the supplied site via PUT
+// /api/3/sites/{siteId}/users/{userId}. The endpoint is idempotent on
+// the (siteId, userId) pair: re-running it after the user is already
+// associated returns 200/204; some InsightVM versions return 409 with
+// an "already exists" envelope, which IsIdempotentProvisionStatus
+// recognises as success per PROPOSAL §2.1.
+func (c *Rapid7AccessConnector) ProvisionAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if err := validateGrantPair(grant); err != nil {
+		return err
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/api/3/sites/%s/users/%s",
+		url.PathEscape(strings.TrimSpace(grant.ResourceExternalID)),
+		url.PathEscape(strings.TrimSpace(grant.UserExternalID)))
+	req, err := c.newRequest(ctx, secrets, http.MethodPut, c.baseURL(cfg)+path)
+	if err != nil {
+		return err
+	}
+	status, body, err := c.doRaw(req)
+	if err != nil {
+		return fmt.Errorf("rapid7: provision request: %w", err)
+	}
+	switch {
+	case status >= 200 && status < 300:
+		return nil
+	case access.IsIdempotentProvisionStatus(status, body):
+		return nil
+	case access.IsTransientStatus(status):
+		return fmt.Errorf("rapid7: provision transient status %d: %s", status, string(body))
+	default:
+		return fmt.Errorf("rapid7: provision status %d: %s", status, string(body))
+	}
 }
-func (c *Rapid7AccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
+
+// RevokeAccess disassociates the user from the supplied site via
+// DELETE /api/3/sites/{siteId}/users/{userId}. 404 / "not found"
+// responses are treated as idempotent success per PROPOSAL §2.1.
+func (c *Rapid7AccessConnector) RevokeAccess(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	grant access.AccessGrant,
+) error {
+	if err := validateGrantPair(grant); err != nil {
+		return err
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/api/3/sites/%s/users/%s",
+		url.PathEscape(strings.TrimSpace(grant.ResourceExternalID)),
+		url.PathEscape(strings.TrimSpace(grant.UserExternalID)))
+	req, err := c.newRequest(ctx, secrets, http.MethodDelete, c.baseURL(cfg)+path)
+	if err != nil {
+		return err
+	}
+	status, body, err := c.doRaw(req)
+	if err != nil {
+		return fmt.Errorf("rapid7: revoke request: %w", err)
+	}
+	switch {
+	case status >= 200 && status < 300:
+		return nil
+	case access.IsIdempotentRevokeStatus(status, body):
+		return nil
+	case access.IsTransientStatus(status):
+		return fmt.Errorf("rapid7: revoke transient status %d: %s", status, string(body))
+	default:
+		return fmt.Errorf("rapid7: revoke status %d: %s", status, string(body))
+	}
+}
+
+// ListEntitlements pages through GET /api/3/users/{userId}/sites and
+// surfaces each site as an Entitlement{ResourceExternalID: siteID,
+// Role: siteName, Source: "direct"}.
+func (c *Rapid7AccessConnector) ListEntitlements(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	userExternalID string,
+) ([]access.Entitlement, error) {
+	user := strings.TrimSpace(userExternalID)
+	if user == "" {
+		return nil, errors.New("rapid7: user external id is required")
+	}
+	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return nil, err
+	}
+	base := c.baseURL(cfg)
+	page := 0
+	var out []access.Entitlement
+	for {
+		q := url.Values{
+			"page": []string{fmt.Sprintf("%d", page)},
+			"size": []string{fmt.Sprintf("%d", pageSize)},
+		}
+		fullURL := fmt.Sprintf("%s/api/3/users/%s/sites?%s", base, url.PathEscape(user), q.Encode())
+		req, err := c.newRequest(ctx, secrets, http.MethodGet, fullURL)
+		if err != nil {
+			return nil, err
+		}
+		body, err := c.do(req)
+		if err != nil {
+			return nil, err
+		}
+		var resp rapid7SitesResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, fmt.Errorf("rapid7: decode user sites: %w", err)
+		}
+		for _, s := range resp.Resources {
+			out = append(out, access.Entitlement{
+				ResourceExternalID: s.ID.String(),
+				Role:               s.Name,
+				Source:             "direct",
+			})
+		}
+		if resp.Page.TotalPages == 0 || page+1 >= resp.Page.TotalPages {
+			return out, nil
+		}
+		page++
+	}
+}
+
+type rapid7Site struct {
+	ID   json.Number `json:"id"`
+	Name string      `json:"name"`
+}
+
+type rapid7SitesResponse struct {
+	Resources []rapid7Site `json:"resources"`
+	Page      rapid7Page   `json:"page"`
 }
 func (c *Rapid7AccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil

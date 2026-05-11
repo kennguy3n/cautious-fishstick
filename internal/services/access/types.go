@@ -205,21 +205,40 @@ type SSOMetadata struct {
 	SigningCertificates []string `json:"signing_certificates,omitempty"`
 }
 
-// AuditEvent is one normalized access-related audit event yielded by the
+// AuditLogEntry is one normalised access-related audit event yielded by the
 // optional AccessAuditor capability. Event-shape stabilises across providers
 // so the audit pipeline does not need provider-specific code paths.
-type AuditEvent struct {
-	EventID     string                 `json:"event_id"`
-	EventType   string                 `json:"event_type"`
-	OccurredAt  time.Time              `json:"occurred_at"`
-	ActorID     string                 `json:"actor_id,omitempty"`
-	ActorEmail  string                 `json:"actor_email,omitempty"`
-	TargetID    string                 `json:"target_id,omitempty"`
-	TargetType  string                 `json:"target_type,omitempty"`
-	IPAddress   string                 `json:"ip_address,omitempty"`
-	UserAgent   string                 `json:"user_agent,omitempty"`
-	Outcome     string                 `json:"outcome,omitempty"`
-	RawData     map[string]interface{} `json:"raw_data,omitempty"`
+//
+// Canonical fields (per docs/PROPOSAL.md §2.1):
+//
+//   - EventType: provider event-type slug (e.g. "signIn", "role.assigned").
+//   - ActorExternalID: identifier of the user / service-account who performed
+//     the action, as known to the provider.
+//   - TargetExternalID: identifier of the resource / user the action was
+//     performed against, when applicable.
+//   - Action: short verb describing the operation (e.g. "login", "grant",
+//     "revoke"). Helps the audit pipeline classify events without parsing
+//     EventType strings.
+//   - Timestamp: when the event occurred at the provider.
+//   - RawData: provider-specific extras for downstream investigations.
+//
+// Optional contextual fields (ActorEmail, IPAddress, UserAgent, Outcome,
+// TargetType) are populated when the provider supplies them and dropped
+// when not. They feed the audit-pipeline enrichment stages but are not
+// required for correct downstream behaviour.
+type AuditLogEntry struct {
+	EventID          string                 `json:"event_id"`
+	EventType        string                 `json:"event_type"`
+	Action           string                 `json:"action,omitempty"`
+	Timestamp        time.Time              `json:"timestamp"`
+	ActorExternalID  string                 `json:"actor_external_id,omitempty"`
+	ActorEmail       string                 `json:"actor_email,omitempty"`
+	TargetExternalID string                 `json:"target_external_id,omitempty"`
+	TargetType       string                 `json:"target_type,omitempty"`
+	IPAddress        string                 `json:"ip_address,omitempty"`
+	UserAgent        string                 `json:"user_agent,omitempty"`
+	Outcome          string                 `json:"outcome,omitempty"`
+	RawData          map[string]interface{} `json:"raw_data,omitempty"`
 }
 
 // SCIMUser is the minimal SCIM v2.0 user shape the SCIMProvisioner capability
