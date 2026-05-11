@@ -113,8 +113,12 @@ func buildAuditStartURL(path, tsField string, since time.Time) (string, error) {
 	q.Set("$top", "100")
 	if !since.IsZero() {
 		q.Set("$filter", fmt.Sprintf("%s ge %s", tsField, since.UTC().Format(time.RFC3339)))
-		q.Set("$orderby", tsField+" asc")
 	}
+	// $orderby must always be set so pages stream oldest-first; otherwise Graph
+	// defaults to descending and a mid-backfill failure persists a cursor at the
+	// newest event already seen, causing older un-fetched events to be skipped
+	// on retry.
+	q.Set("$orderby", tsField+" asc")
 	u.RawQuery = q.Encode()
 	return u.String(), nil
 }

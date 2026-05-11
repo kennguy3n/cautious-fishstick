@@ -123,6 +123,38 @@ func TestNormalizeDirectoryAuditOutcome(t *testing.T) {
 	}
 }
 
+func TestBuildAuditStartURL_AlwaysSetsOrderBy(t *testing.T) {
+	// First-backfill case (since.IsZero()): $orderby must still be set so
+	// pages stream oldest-first; otherwise Graph defaults to descending and
+	// a mid-backfill failure persists a cursor at the newest event already
+	// seen, causing older un-fetched events to be skipped on retry.
+	urlStr, err := buildAuditStartURL("/auditLogs/signIns", "createdDateTime", time.Time{})
+	if err != nil {
+		t.Fatalf("buildAuditStartURL zero since: %v", err)
+	}
+	if !strings.Contains(urlStr, "%24orderby=createdDateTime+asc") &&
+		!strings.Contains(urlStr, "$orderby=createdDateTime+asc") {
+		t.Errorf("zero since URL missing $orderby asc: %s", urlStr)
+	}
+	if strings.Contains(urlStr, "%24filter") || strings.Contains(urlStr, "$filter") {
+		t.Errorf("zero since URL should not include $filter: %s", urlStr)
+	}
+
+	// Resume case (since non-zero): both $filter and $orderby asc.
+	urlStr, err = buildAuditStartURL("/auditLogs/directoryAudits", "activityDateTime",
+		time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("buildAuditStartURL non-zero since: %v", err)
+	}
+	if !strings.Contains(urlStr, "%24orderby=activityDateTime+asc") &&
+		!strings.Contains(urlStr, "$orderby=activityDateTime+asc") {
+		t.Errorf("non-zero since URL missing $orderby asc: %s", urlStr)
+	}
+	if !strings.Contains(urlStr, "%24filter") && !strings.Contains(urlStr, "$filter") {
+		t.Errorf("non-zero since URL missing $filter: %s", urlStr)
+	}
+}
+
 func TestFetchAccessAuditLogs_Failure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)

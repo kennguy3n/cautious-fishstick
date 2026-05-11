@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -142,7 +143,8 @@ func (c *HTTPKeycloakClient) newRequest(ctx context.Context, method, path string
 // GetIdentityProvider returns the registered IdP or ErrKeycloakIdPNotFound.
 func (c *HTTPKeycloakClient) GetIdentityProvider(ctx context.Context, realm, alias string) (*KeycloakIdentityProvider, error) {
 	req, err := c.newRequest(ctx, http.MethodGet,
-		fmt.Sprintf("/admin/realms/%s/identity-providers/instances/%s", realm, alias), nil)
+		fmt.Sprintf("/admin/realms/%s/identity-providers/instances/%s",
+			url.PathEscape(realm), url.PathEscape(alias)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +174,8 @@ func (c *HTTPKeycloakClient) CreateIdentityProvider(ctx context.Context, realm s
 		return err
 	}
 	req, err := c.newRequest(ctx, http.MethodPost,
-		fmt.Sprintf("/admin/realms/%s/identity-providers/instances", realm), bytes.NewReader(body))
+		fmt.Sprintf("/admin/realms/%s/identity-providers/instances",
+			url.PathEscape(realm)), bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -186,7 +189,8 @@ func (c *HTTPKeycloakClient) UpdateIdentityProvider(ctx context.Context, realm, 
 		return err
 	}
 	req, err := c.newRequest(ctx, http.MethodPut,
-		fmt.Sprintf("/admin/realms/%s/identity-providers/instances/%s", realm, alias), bytes.NewReader(body))
+		fmt.Sprintf("/admin/realms/%s/identity-providers/instances/%s",
+			url.PathEscape(realm), url.PathEscape(alias)), bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -196,7 +200,8 @@ func (c *HTTPKeycloakClient) UpdateIdentityProvider(ctx context.Context, realm, 
 // DeleteIdentityProvider removes an IdP instance.
 func (c *HTTPKeycloakClient) DeleteIdentityProvider(ctx context.Context, realm, alias string) error {
 	req, err := c.newRequest(ctx, http.MethodDelete,
-		fmt.Sprintf("/admin/realms/%s/identity-providers/instances/%s", realm, alias), nil)
+		fmt.Sprintf("/admin/realms/%s/identity-providers/instances/%s",
+			url.PathEscape(realm), url.PathEscape(alias)), nil)
 	if err != nil {
 		return err
 	}

@@ -3,7 +3,10 @@ package access
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"sync"
 	"testing"
 )
 
@@ -282,6 +285,89 @@ func TestSSOFederation_PingIdentityOIDC(t *testing.T) {
 	}
 	if got.Config["metadataUrl"] != meta.MetadataURL {
 		t.Errorf("metadataUrl = %q", got.Config["metadataUrl"])
+	}
+}
+
+// TestHTTPKeycloakClient_EscapesURLPathSegments asserts that
+// realm/alias values containing reserved characters are percent-encoded
+// before being interpolated into the Admin REST path so they cannot
+// alter the targeted endpoint. Without escaping a value like
+// "tenant-a/../tenant-b" would silently address a different realm's
+// resources.
+func TestHTTPKeycloakClient_EscapesURLPathSegments(t *testing.T) {
+	var (
+		mu    sync.Mutex
+		paths []string
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.EscapedPath())
+		mu.Unlock()
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"alias":"x","providerId":"oidc","enabled":true}`))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewHTTPKeycloakClient(server.URL, func(_ context.Context) (string, error) {
+		return "test-token", nil
+	})
+
+	const (
+		nastyRealm = "tenant a/../tenant-b"
+		nastyAlias = "okta?x=1#frag"
+	)
+	idp := KeycloakIdentityProvider{Alias: nastyAlias, ProviderID: "oidc", Enabled: true}
+
+	if _, err := client.GetIdentityProvider(context.Background(), nastyRealm, nastyAlias); err != nil {
+		t.Fatalf("GetIdentityProvider: %v", err)
+	}
+	if err := client.CreateIdentityProvider(context.Background(), nastyRealm, idp); err != nil {
+		t.Fatalf("CreateIdentityProvider: %v", err)
+	}
+	if err := client.UpdateIdentityProvider(context.Background(), nastyRealm, nastyAlias, idp); err != nil {
+		t.Fatalf("UpdateIdentityProvider: %v", err)
+	}
+	if err := client.DeleteIdentityProvider(context.Background(), nastyRealm, nastyAlias); err != nil {
+		t.Fatalf("DeleteIdentityProvider: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(paths) != 4 {
+		t.Fatalf("expected 4 requests; got %d (%v)", len(paths), paths)
+	}
+
+	const (
+		// url.PathEscape encodes "/" as %2F, " " as %20, "?" as %3F,
+		// "#" as %23, ".." as ".." (dots are allowed but the surrounding
+		// "/" is escaped, defusing path traversal).
+		wantEscapedRealm = "tenant%20a%2F..%2Ftenant-b"
+		wantEscapedAlias = "okta%3Fx=1%23frag"
+	)
+	wantInstancesBase := "/admin/realms/" + wantEscapedRealm + "/identity-providers/instances"
+	wantAliasPath := wantInstancesBase + "/" + wantEscapedAlias
+
+	if paths[0] != wantAliasPath {
+		t.Errorf("GET path = %q; want %q", paths[0], wantAliasPath)
+	}
+	if paths[1] != wantInstancesBase {
+		t.Errorf("POST path = %q; want %q", paths[1], wantInstancesBase)
+	}
+	if paths[2] != wantAliasPath {
+		t.Errorf("PUT path = %q; want %q", paths[2], wantAliasPath)
+	}
+	if paths[3] != wantAliasPath {
+		t.Errorf("DELETE path = %q; want %q", paths[3], wantAliasPath)
+	}
+	// Defense-in-depth: ensure no raw "/" leaked into the realm slot.
+	for i, p := range paths {
+		if contains(p[len("/admin/realms/"):], "/tenant-b") {
+			t.Errorf("path[%d] = %q contains un-escaped traversal", i, p)
+		}
 	}
 }
 
