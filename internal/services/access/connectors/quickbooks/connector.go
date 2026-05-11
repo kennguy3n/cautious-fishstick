@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -30,6 +31,18 @@ const (
 )
 
 var ErrNotImplemented = errors.New("quickbooks: capability not implemented in Phase 7")
+
+// realmIDPattern matches the numeric customer identifier QuickBooks
+// Online stamps on every company file. Per Intuit's developer docs the
+// realmID is a base-10 integer (typically 15-16 digits, no slashes,
+// dots, or punctuation). Operators paste this value into the connector
+// config, and `cfg.RealmID` is interpolated as a path segment in every
+// `/v3/company/{realmID}/...` URL — including the new
+// FetchAccessAuditLogs endpoint. We enforce the numeric shape at the
+// validation boundary so a misconfigured or hostile RealmID can never
+// inject extra path segments, query strings, or fragments (e.g.
+// `"123/../admin"`, `"123?x=y"`, `"123#frag"`) into the URL.
+var realmIDPattern = regexp.MustCompile(`^[0-9]{1,32}$`)
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -74,8 +87,12 @@ func DecodeSecrets(raw map[string]interface{}) (Secrets, error) {
 }
 
 func (c Config) validate() error {
-	if strings.TrimSpace(c.RealmID) == "" {
+	realm := strings.TrimSpace(c.RealmID)
+	if realm == "" {
 		return errors.New("quickbooks: realm_id is required")
+	}
+	if !realmIDPattern.MatchString(realm) {
+		return errors.New("quickbooks: realm_id must be a numeric Intuit company identifier (1-32 digits, no path separators)")
 	}
 	return nil
 }
