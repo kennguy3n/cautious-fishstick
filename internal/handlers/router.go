@@ -48,6 +48,12 @@ type Dependencies struct {
 	// translates inbound SCIM payloads into the JML service's
 	// JoinerInput / MoverInput / leaver tuples.
 	SCIMResolver SCIMUserResolver
+
+	// ConnectorHealthReader backs GET /access/connectors/:id/health
+	// (Phase 7 connector health dashboard). May be nil — the route
+	// is only registered when wired so dev binaries without a DB
+	// stay healthy.
+	ConnectorHealthReader ConnectorHealthReader
 }
 
 // Router builds the *gin.Engine that serves the access platform's
@@ -94,6 +100,11 @@ func Router(deps Dependencies) *gin.Engine {
 	if deps.JMLService != nil && deps.SCIMResolver != nil {
 		sh := NewSCIMHandler(deps.JMLService, deps.SCIMResolver)
 		sh.Register(r)
+	}
+
+	if deps.ConnectorHealthReader != nil {
+		hh := NewConnectorHealthHandler(deps.ConnectorHealthReader)
+		hh.Register(r)
 	}
 
 	return r
