@@ -14,6 +14,14 @@ import (
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
+const (
+	discordAuditPageSize = 100
+	// discordAuditMaxPages bounds a single sweep to ~20k events. The
+	// `since` cursor narrows the window between runs so this only
+	// kicks in on the very first sync of a long-dormant guild.
+	discordAuditMaxPages = 200
+)
+
 // FetchAccessAuditLogs streams Discord guild audit-log entries into the
 // access audit pipeline. Implements access.AccessAuditor.
 //
@@ -21,12 +29,25 @@ import (
 //
 //	GET /api/v10/guilds/{guild_id}/audit-logs?limit=100&before={entry_id}
 //
-// Discord paginates audit logs by entry id (snowflakes are
-// monotonically increasing timestamps so `before=` walks history). The
-// timestamp is extracted from the snowflake high bits — Discord's
-// epoch is 2015-01-01T00:00:00Z + 22-bit shift. Permissions outside
-// the `VIEW_AUDIT_LOG` bot scope surface as 401/403 → soft skip via
-// access.ErrAuditNotAvailable.
+// Discord paginates audit logs reverse-chronologically by snowflake id
+// (snowflakes are monotonically increasing timestamps so `before=`
+// walks history). The timestamp is extracted from the snowflake high
+// bits — Discord's epoch is 2015-01-01T00:00:00Z + 22-bit shift.
+//
+// The AccessAuditor contract requires that any `nextSince` passed to
+// the handler cover only events already yielded to the handler — the
+// worker persists this cursor even on partial failure (see
+// internal/workers/handlers/access_audit.go). To honour the contract
+// under reverse-chronological pagination we collect the full sweep
+// first, then reverse the entire collection into chronological
+// (oldest-first) order, then call the handler exactly once with the
+// maximum timestamp as `nextSince`. If any page fails mid-sweep (or
+// the handler call itself fails) the cursor is never advanced past
+// un-yielded events, so a retry replays the same window rather than
+// silently skipping older entries below the persisted cursor.
+//
+// Permissions outside the `VIEW_AUDIT_LOG` bot scope surface as
+// 401/403 → soft skip via access.ErrAuditNotAvailable.
 func (c *DiscordAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},
@@ -38,16 +59,18 @@ func (c *DiscordAccessConnector) FetchAccessAuditLogs(
 		return err
 	}
 	since := sincePartitions[access.DefaultAuditPartition]
-	cursor := since
-	before := ""
 	base := fmt.Sprintf("%s/api/v10/guilds/%s/audit-logs",
 		c.baseURL(), url.PathEscape(strings.TrimSpace(cfg.GuildID)))
-	for {
+
+	var collected []discordAuditEntry
+	before := ""
+	stopBackfill := false
+	for page := 0; page < discordAuditMaxPages && !stopBackfill; page++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		q := url.Values{}
-		q.Set("limit", "100")
+		q.Set("limit", strconv.Itoa(discordAuditPageSize))
 		if before != "" {
 			q.Set("before", before)
 		}
@@ -69,38 +92,55 @@ func (c *DiscordAccessConnector) FetchAccessAuditLogs(
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return fmt.Errorf("discord: audit log: status %d: %s", resp.StatusCode, string(body))
 		}
-		var page discordAuditLogPage
-		if err := json.Unmarshal(body, &page); err != nil {
+		var pageData discordAuditLogPage
+		if err := json.Unmarshal(body, &pageData); err != nil {
 			return fmt.Errorf("discord: decode audit log: %w", err)
 		}
-		batch := make([]*access.AuditLogEntry, 0, len(page.AuditLogEntries))
-		batchMax := cursor
-		lastID := ""
-		stopBackfill := false
-		for i := range page.AuditLogEntries {
-			entry := mapDiscordAuditEntry(&page.AuditLogEntries[i])
-			if entry == nil {
-				continue
-			}
-			if !since.IsZero() && !entry.Timestamp.After(since) {
+		if len(pageData.AuditLogEntries) == 0 {
+			break
+		}
+		oldestOnPage := ""
+		for i := range pageData.AuditLogEntries {
+			id := pageData.AuditLogEntries[i].ID
+			ts := discordSnowflakeTime(id)
+			if !since.IsZero() && !ts.After(since) {
+				// Walked past the persisted cursor; drop this and
+				// every older entry on subsequent pages.
 				stopBackfill = true
 				continue
 			}
-			if entry.Timestamp.After(batchMax) {
-				batchMax = entry.Timestamp
-			}
-			batch = append(batch, entry)
-			lastID = page.AuditLogEntries[i].ID
+			collected = append(collected, pageData.AuditLogEntries[i])
+			oldestOnPage = id
 		}
-		if err := handler(batch, batchMax, access.DefaultAuditPartition); err != nil {
-			return err
+		if oldestOnPage == "" || len(pageData.AuditLogEntries) < discordAuditPageSize {
+			break
 		}
-		cursor = batchMax
-		if stopBackfill || lastID == "" || len(page.AuditLogEntries) < 100 {
-			return nil
-		}
-		before = lastID
+		before = oldestOnPage
 	}
+
+	if len(collected) == 0 {
+		return nil
+	}
+
+	// Walk the collected entries oldest-first so the handler sees a
+	// chronologically ascending batch and `nextSince` covers every
+	// event we just yielded.
+	batch := make([]*access.AuditLogEntry, 0, len(collected))
+	batchMax := since
+	for i := len(collected) - 1; i >= 0; i-- {
+		entry := mapDiscordAuditEntry(&collected[i])
+		if entry == nil {
+			continue
+		}
+		if entry.Timestamp.After(batchMax) {
+			batchMax = entry.Timestamp
+		}
+		batch = append(batch, entry)
+	}
+	if len(batch) == 0 {
+		return nil
+	}
+	return handler(batch, batchMax, access.DefaultAuditPartition)
 }
 
 type discordAuditLogPage struct {
