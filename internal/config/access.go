@@ -51,6 +51,10 @@ const (
 	// expire credentials. Once daily is plenty for a 14-day warning
 	// horizon.
 	DefaultCredentialCheckerInterval = 24 * time.Hour
+
+	// DefaultAuditLogTopic is the Kafka topic the access-audit
+	// producer publishes ShieldnetLogEvent v1 envelopes to.
+	DefaultAuditLogTopic = "access_audit_logs"
 )
 
 // Access is the typed snapshot of the access-platform environment
@@ -119,6 +123,18 @@ type Access struct {
 	// intentionally unconfigured" — the notifier short-circuits to a
 	// log line so dev binaries stay healthy without a webhook.
 	NotificationSlackWebhookURL string
+
+	// KafkaBrokers is the comma-separated list of Kafka bootstrap
+	// brokers used by the access-audit producer (PROPOSAL §10.1).
+	// Empty means "Kafka is intentionally unconfigured" — the
+	// AuditProducer factory falls back to NoOpAuditProducer so dev
+	// binaries can run without a broker.
+	KafkaBrokers string
+
+	// AuditLogTopic is the Kafka topic the access-audit producer
+	// writes ShieldnetLogEvent v1 envelopes to. Defaults to
+	// "access_audit_logs" per PROPOSAL §10.1.
+	AuditLogTopic string
 }
 
 // Load reads the Access* environment variables and returns a
@@ -147,7 +163,18 @@ func Load() *Access {
 		NotificationSMTPUsername:    getEnv("NOTIFICATION_SMTP_USERNAME"),
 		NotificationSMTPPassword:    getEnv("NOTIFICATION_SMTP_PASSWORD"),
 		NotificationSlackWebhookURL: getEnv("NOTIFICATION_SLACK_WEBHOOK_URL"),
+		KafkaBrokers:                getEnv("ACCESS_KAFKA_BROKERS"),
+		AuditLogTopic:               getEnvDefault("ACCESS_AUDIT_LOG_TOPIC", DefaultAuditLogTopic),
 	}
+}
+
+// getEnvDefault returns the environment variable named key, or def if
+// the variable is unset or empty.
+func getEnvDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }
 
 // AIConfigured reports whether the AI agent is wired up. Convenience

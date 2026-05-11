@@ -1,0 +1,221 @@
+package microsoft
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
+)
+
+// FetchAccessAuditLogs streams sign-in + directoryAudit events from Microsoft
+// Graph back into the access audit pipeline. Implements
+// access.AccessAuditor.
+//
+// Endpoints (PROPOSAL §2.1, Task 2):
+//
+//   - GET /auditLogs/signIns?$filter=createdDateTime ge {since}
+//   - GET /auditLogs/directoryAudits?$filter=activityDateTime ge {since}
+//
+// Pagination uses `@odata.nextLink`. The handler is called once per page in
+// chronological order; `nextSince` is the timestamp of the newest entry in
+// the batch so the access-audit worker can persist a monotonic cursor.
+func (c *M365AccessConnector) FetchAccessAuditLogs(
+	ctx context.Context,
+	configRaw, secretsRaw map[string]interface{},
+	since time.Time,
+	handler func(batch []*access.AuditLogEntry, nextSince time.Time) error,
+) error {
+	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
+	if err != nil {
+		return err
+	}
+	client := c.graphClient(ctx, cfg, secrets)
+
+	cursor := since
+	for _, ep := range []struct {
+		path      string
+		tsField   string
+		mapFunc   func(raw json.RawMessage) (*access.AuditLogEntry, error)
+		eventKind string
+	}{
+		{
+			path:      "/auditLogs/signIns",
+			tsField:   "createdDateTime",
+			mapFunc:   mapGraphSignIn,
+			eventKind: "signIn",
+		},
+		{
+			path:      "/auditLogs/directoryAudits",
+			tsField:   "activityDateTime",
+			mapFunc:   mapGraphDirectoryAudit,
+			eventKind: "directoryAudit",
+		},
+	} {
+		next, err := buildAuditStartURL(ep.path, ep.tsField, since)
+		if err != nil {
+			return err
+		}
+		for next != "" {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, next, nil)
+			if err != nil {
+				return err
+			}
+			body, err := doJSON(client, req)
+			if err != nil {
+				return fmt.Errorf("microsoft: %s: %w", ep.path, err)
+			}
+			var page struct {
+				Value    []json.RawMessage `json:"value"`
+				NextLink string            `json:"@odata.nextLink"`
+			}
+			if err := json.Unmarshal(body, &page); err != nil {
+				return fmt.Errorf("microsoft: decode %s page: %w", ep.path, err)
+			}
+			batch := make([]*access.AuditLogEntry, 0, len(page.Value))
+			batchMax := cursor
+			for _, raw := range page.Value {
+				entry, err := ep.mapFunc(raw)
+				if err != nil {
+					continue
+				}
+				if entry == nil {
+					continue
+				}
+				if entry.Timestamp.After(batchMax) {
+					batchMax = entry.Timestamp
+				}
+				batch = append(batch, entry)
+			}
+			if err := handler(batch, batchMax); err != nil {
+				return err
+			}
+			cursor = batchMax
+			next = page.NextLink
+		}
+	}
+	return nil
+}
+
+func buildAuditStartURL(path, tsField string, since time.Time) (string, error) {
+	u, err := url.Parse(graphBaseURL + path)
+	if err != nil {
+		return "", err
+	}
+	q := u.Query()
+	q.Set("$top", "100")
+	if !since.IsZero() {
+		q.Set("$filter", fmt.Sprintf("%s ge %s", tsField, since.UTC().Format(time.RFC3339)))
+		q.Set("$orderby", tsField+" asc")
+	}
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
+type graphSignInRecord struct {
+	ID                string `json:"id"`
+	CreatedDateTime   string `json:"createdDateTime"`
+	UserID            string `json:"userId"`
+	UserPrincipalName string `json:"userPrincipalName"`
+	UserDisplayName   string `json:"userDisplayName"`
+	AppDisplayName    string `json:"appDisplayName"`
+	IPAddress         string `json:"ipAddress"`
+	ClientAppUsed     string `json:"clientAppUsed"`
+	Status            struct {
+		ErrorCode         int    `json:"errorCode"`
+		FailureReason     string `json:"failureReason"`
+		AdditionalDetails string `json:"additionalDetails"`
+	} `json:"status"`
+}
+
+func mapGraphSignIn(raw json.RawMessage) (*access.AuditLogEntry, error) {
+	var r graphSignInRecord
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return nil, err
+	}
+	if r.ID == "" {
+		return nil, nil
+	}
+	ts, _ := time.Parse(time.RFC3339, r.CreatedDateTime)
+	outcome := "success"
+	if r.Status.ErrorCode != 0 || strings.TrimSpace(r.Status.FailureReason) != "" {
+		outcome = "failure"
+	}
+	rawMap := map[string]interface{}{}
+	_ = json.Unmarshal(raw, &rawMap)
+	return &access.AuditLogEntry{
+		EventID:         r.ID,
+		EventType:       "signIn",
+		Action:          "login",
+		Timestamp:       ts,
+		ActorExternalID: r.UserID,
+		ActorEmail:      r.UserPrincipalName,
+		IPAddress:       r.IPAddress,
+		UserAgent:       r.ClientAppUsed,
+		Outcome:         outcome,
+		RawData:         rawMap,
+	}, nil
+}
+
+type graphDirectoryAuditRecord struct {
+	ID                  string `json:"id"`
+	ActivityDateTime    string `json:"activityDateTime"`
+	ActivityDisplayName string `json:"activityDisplayName"`
+	Category            string `json:"category"`
+	OperationType       string `json:"operationType"`
+	Result              string `json:"result"`
+	InitiatedBy         struct {
+		User struct {
+			ID                string `json:"id"`
+			UserPrincipalName string `json:"userPrincipalName"`
+		} `json:"user"`
+	} `json:"initiatedBy"`
+	TargetResources []struct {
+		ID          string `json:"id"`
+		Type        string `json:"type"`
+		DisplayName string `json:"displayName"`
+	} `json:"targetResources"`
+}
+
+func mapGraphDirectoryAudit(raw json.RawMessage) (*access.AuditLogEntry, error) {
+	var r graphDirectoryAuditRecord
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return nil, err
+	}
+	if r.ID == "" {
+		return nil, nil
+	}
+	ts, _ := time.Parse(time.RFC3339, r.ActivityDateTime)
+	var targetID, targetType string
+	if len(r.TargetResources) > 0 {
+		targetID = r.TargetResources[0].ID
+		targetType = r.TargetResources[0].Type
+	}
+	action := strings.ToLower(strings.TrimSpace(r.OperationType))
+	if action == "" {
+		action = strings.ToLower(strings.TrimSpace(r.ActivityDisplayName))
+	}
+	rawMap := map[string]interface{}{}
+	_ = json.Unmarshal(raw, &rawMap)
+	return &access.AuditLogEntry{
+		EventID:          r.ID,
+		EventType:        r.Category,
+		Action:           action,
+		Timestamp:        ts,
+		ActorExternalID:  r.InitiatedBy.User.ID,
+		ActorEmail:       r.InitiatedBy.User.UserPrincipalName,
+		TargetExternalID: targetID,
+		TargetType:       targetType,
+		Outcome:          r.Result,
+		RawData:          rawMap,
+	}, nil
+}
+
+var _ access.AccessAuditor = (*M365AccessConnector)(nil)

@@ -40,6 +40,12 @@ var (
 	// hits this when a connector package was not blank-imported by the
 	// running binary.
 	ErrConnectorNotFound = errors.New("access: connector not registered for provider")
+
+	// ErrAuditNotAvailable is returned by AccessAuditor implementations
+	// when the connected tenant/plan does not expose an audit log API
+	// (e.g. Slack Audit Logs requires Enterprise Grid). Callers treat
+	// this as a soft-skip rather than a hard error.
+	ErrAuditNotAvailable = errors.New("access: audit logs not available for this tenant")
 )
 
 // AccessConnector is the mandatory contract every access provider implements.

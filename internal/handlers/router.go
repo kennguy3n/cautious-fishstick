@@ -64,6 +64,9 @@ func Router(deps Dependencies) *gin.Engine {
 	r.Use(gin.Recovery())
 
 	r.GET("/health", HealthHandler)
+	r.GET("/swagger", SwaggerHandler)
+	r.GET("/swagger.json", SwaggerHandler)
+	r.GET("/swagger.yaml", SwaggerYAMLHandler)
 
 	if deps.PolicyService != nil {
 		ph := NewPolicyHandler(deps.PolicyService)
