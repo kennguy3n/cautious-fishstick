@@ -371,7 +371,14 @@ func (c *NetSuiteAccessConnector) ProvisionAccess(
 			return nil
 		}
 	}
-	roles := append(emp.Roles.Items, netsuiteRoleRef{ID: grant.ResourceExternalID})
+	// Build the roles slice by explicit copy rather than append to
+	// avoid mutating the underlying array of emp.Roles.Items. Today
+	// getEmployee returns a freshly-decoded slice with no spare
+	// capacity, but an explicit copy makes the contract independent
+	// of that detail (e.g. a future refactor that reuses a buffer).
+	roles := make([]netsuiteRoleRef, len(emp.Roles.Items), len(emp.Roles.Items)+1)
+	copy(roles, emp.Roles.Items)
+	roles = append(roles, netsuiteRoleRef{ID: grant.ResourceExternalID})
 	return c.patchEmployeeRoles(ctx, secrets, grant.UserExternalID, roles)
 }
 

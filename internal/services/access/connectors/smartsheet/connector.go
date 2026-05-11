@@ -527,34 +527,48 @@ func (c *SmartsheetAccessConnector) ListEntitlements(
 	}
 }
 
+// lookupAccessLevelForUser paginates through /2.0/sheets/{sheetId}/shares
+// and returns the accessLevel for the share whose email matches
+// emailLower (case-insensitive). Mirrors the pagination loop in
+// findShareIDForUser so sheets with more than pageSize collaborators are
+// not silently dropped. ctx cancellation is honoured between pages.
 func (c *SmartsheetAccessConnector) lookupAccessLevelForUser(ctx context.Context, secrets Secrets, sheetID, emailLower string) (string, error) {
-	fullURL := c.baseURL() + "/2.0/sheets/" + url.PathEscape(sheetID) + "/shares?pageSize=" + strconv.Itoa(pageSize)
-	req, err := c.newRequest(ctx, secrets, http.MethodGet, fullURL)
-	if err != nil {
-		return "", err
-	}
-	resp, err := c.doRaw(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		return "", nil
-	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("smartsheet: shares GET status %d: %s", resp.StatusCode, string(body))
-	}
-	var list smartsheetSharesResponse
-	if err := json.Unmarshal(body, &list); err != nil {
-		return "", fmt.Errorf("smartsheet: decode shares: %w", err)
-	}
-	for _, s := range list.Data {
-		if strings.EqualFold(s.Email, emailLower) {
-			return s.AccessLvl, nil
+	page := 1
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
 		}
+		fullURL := c.baseURL() + "/2.0/sheets/" + url.PathEscape(sheetID) + "/shares?pageSize=" + strconv.Itoa(pageSize) + "&page=" + strconv.Itoa(page)
+		req, err := c.newRequest(ctx, secrets, http.MethodGet, fullURL)
+		if err != nil {
+			return "", err
+		}
+		resp, err := c.doRaw(req)
+		if err != nil {
+			return "", err
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusNotFound {
+			return "", nil
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return "", fmt.Errorf("smartsheet: shares GET status %d: %s", resp.StatusCode, string(body))
+		}
+		var list smartsheetSharesResponse
+		if err := json.Unmarshal(body, &list); err != nil {
+			return "", fmt.Errorf("smartsheet: decode shares: %w", err)
+		}
+		for _, s := range list.Data {
+			if strings.EqualFold(s.Email, emailLower) {
+				return s.AccessLvl, nil
+			}
+		}
+		if list.TotalPages <= list.PageNumber || list.PageNumber == 0 {
+			return "", nil
+		}
+		page = list.PageNumber + 1
 	}
-	return "", nil
 }
 func (c *SmartsheetAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil
