@@ -18,6 +18,7 @@ package handlers
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/oklog/ulid/v2"
 	"gorm.io/gorm"
 
 	"github.com/kennguy3n/cautious-fishstick/internal/models"
@@ -239,7 +241,7 @@ func saveAuditCursors(ctx context.Context, db *gorm.DB, connectorID string, curs
 		Where("connector_id = ? AND kind = ?", connectorID, models.SyncStateKindAudit).
 		First(&existing).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		row.ID = newAuditCursorID(connectorID, current)
+		row.ID = newAuditCursorID()
 		if cerr := db.WithContext(ctx).Create(&row).Error; cerr != nil {
 			return fmt.Errorf("handlers: persist audit cursor: %w", cerr)
 		}
@@ -260,9 +262,14 @@ func saveAuditCursors(ctx context.Context, db *gorm.DB, connectorID string, curs
 	return nil
 }
 
-// newAuditCursorID produces a deterministic ID for new
-// access_sync_state rows so the worker doesn't need to import a
-// ULID generator into the handlers package.
-func newAuditCursorID(connectorID string, now time.Time) string {
-	return fmt.Sprintf("aud-%s-%d", connectorID, now.UnixNano())
+// newAuditCursorID generates a 26-character ULID for new
+// access_sync_state rows. AccessSyncState.ID is varchar(26); any
+// longer ID format (e.g. fmt.Sprintf("aud-%s-%d", connectorID,
+// unixNano)) would exceed the column on PostgreSQL and reject the
+// INSERT. SQLite silently accepts over-long strings, so unit tests
+// alone do not catch this — keep this function aligned with the
+// codebase-wide newULID convention in
+// internal/services/access/request_service.go.
+func newAuditCursorID() string {
+	return ulid.MustNew(ulid.Now(), rand.Reader).String()
 }

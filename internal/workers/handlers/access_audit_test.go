@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oklog/ulid/v2"
+
 	"github.com/kennguy3n/cautious-fishstick/internal/models"
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
@@ -286,5 +288,72 @@ func TestAccessAudit_SoftSkipsErrAuditNotAvailable(t *testing.T) {
 	job := readJob(t, db, "job-aud-5")
 	if job.Status != models.AccessJobStatusCompleted {
 		t.Errorf("status = %s", job.Status)
+	}
+}
+
+// TestAccessAudit_NewCursorIDFitsVarchar26 is the regression test for
+// the original aud-{connectorID}-{unixNano} format which produced
+// 30-50+ character IDs and silently passed on SQLite while breaking
+// on PostgreSQL (where AccessSyncState.ID is varchar(26)). Each new
+// row must be a valid 26-character ULID.
+func TestAccessAudit_NewCursorIDFitsVarchar26(t *testing.T) {
+	// Run the function under test many times so a regression that
+	// occasionally fits inside 26 chars can't sneak through.
+	for i := 0; i < 256; i++ {
+		id := newAuditCursorID()
+		if len(id) != 26 {
+			t.Fatalf("newAuditCursorID() len = %d, want 26 (id=%q); AccessSyncState.ID is varchar(26)", len(id), id)
+		}
+		if _, err := ulid.ParseStrict(id); err != nil {
+			t.Fatalf("newAuditCursorID() not a valid ULID: %v (id=%q)", err, id)
+		}
+	}
+}
+
+// TestAccessAudit_PersistedCursorRowIDIsULID drives the full worker
+// path end-to-end and asserts that the access_sync_state row created
+// for a brand-new connector carries a 26-char ULID. This catches the
+// case where a fmt.Sprintf-based ID generator is reintroduced — even
+// SQLite (which silently accepts over-long varchar values) would
+// then surface the regression via this length check.
+func TestAccessAudit_PersistedCursorRowIDIsULID(t *testing.T) {
+	db := newHandlerDB(t)
+	if err := db.AutoMigrate(&models.AccessSyncState{}); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+	// A long-ish connector ID is what makes the legacy format
+	// blow past 26 chars; use the canonical 26-char-ULID style id
+	// the rest of the codebase emits.
+	connectorID := "01HMRX7Q4P0VAW6V2N3M8K9Z01"
+	seedTestConnector(t, db, connectorID, "okta")
+	seedJob(t, db, "job-aud-id-1", connectorID, "access_audit_log", nil)
+
+	t0 := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
+	mock := &auditMockConnector{
+		fetch: func(_ context.Context, _, _ map[string]interface{}, _ map[string]time.Time, handler func(batch []*access.AuditLogEntry, nextSince time.Time, partitionKey string) error) error {
+			return handler([]*access.AuditLogEntry{{EventID: "e1", Timestamp: t0}}, t0, access.DefaultAuditPartition)
+		},
+	}
+	jc := JobContext{
+		DB:            db,
+		Resolve:       stubResolve(mock),
+		LoadConn:      DefaultLoadConnector,
+		Now:           time.Now,
+		AuditProducer: &access.NoOpAuditProducer{},
+	}
+	if err := AccessAudit(context.Background(), jc, "job-aud-id-1"); err != nil {
+		t.Fatalf("AccessAudit: %v", err)
+	}
+
+	var state models.AccessSyncState
+	if err := db.Where("connector_id = ? AND kind = ?", connectorID, models.SyncStateKindAudit).First(&state).Error; err != nil {
+		t.Fatalf("readback sync state: %v", err)
+	}
+	if len(state.ID) != 26 {
+		t.Errorf("persisted sync_state.id len = %d, want 26 (id=%q); column is varchar(26) — PostgreSQL would reject the INSERT",
+			len(state.ID), state.ID)
+	}
+	if _, err := ulid.ParseStrict(state.ID); err != nil {
+		t.Errorf("persisted sync_state.id is not a valid ULID: %v (id=%q)", err, state.ID)
 	}
 }
