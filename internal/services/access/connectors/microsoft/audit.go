@@ -213,9 +213,29 @@ func mapGraphDirectoryAudit(raw json.RawMessage) (*access.AuditLogEntry, error) 
 		ActorEmail:       r.InitiatedBy.User.UserPrincipalName,
 		TargetExternalID: targetID,
 		TargetType:       targetType,
-		Outcome:          r.Result,
+		Outcome:          normalizeDirectoryAuditOutcome(r.Result),
 		RawData:          rawMap,
 	}, nil
+}
+
+// normalizeDirectoryAuditOutcome maps Microsoft Graph directoryAudit `result`
+// values onto the binary success/failure convention used by `mapGraphSignIn`
+// and by every other AccessAuditor implementation in this package.
+//
+// Microsoft's documented enum values are `success`, `failure`, `timeout`, and
+// `unknownFutureValue`; downstream audit-pipeline consumers expect only the
+// first two. `timeout` and `unknownFutureValue` are surfaced as `failure`
+// because neither represents a successful action; an empty `result` falls
+// through to `success` to preserve the prior default for events that do not
+// report a status (Microsoft Graph returns `result=""` for some legacy
+// `directoryAudit` records).
+func normalizeDirectoryAuditOutcome(result string) string {
+	switch strings.ToLower(strings.TrimSpace(result)) {
+	case "success", "":
+		return "success"
+	default:
+		return "failure"
+	}
 }
 
 var _ access.AccessAuditor = (*M365AccessConnector)(nil)

@@ -105,6 +105,24 @@ func TestFetchAccessAuditLogs_PaginatesAndMaps(t *testing.T) {
 	}
 }
 
+func TestNormalizeDirectoryAuditOutcome(t *testing.T) {
+	cases := map[string]string{
+		"success":            "success",
+		"Success":            "success",
+		" success ":          "success",
+		"":                   "success",
+		"failure":            "failure",
+		"timeout":            "failure",
+		"unknownFutureValue": "failure",
+		"weird":              "failure",
+	}
+	for in, want := range cases {
+		if got := normalizeDirectoryAuditOutcome(in); got != want {
+			t.Errorf("normalizeDirectoryAuditOutcome(%q) = %q; want %q", in, got, want)
+		}
+	}
+}
+
 func TestFetchAccessAuditLogs_Failure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
