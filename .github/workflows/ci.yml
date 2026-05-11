@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: go (build / vet / test / swagger / sn360-language)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          check-latest: true
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test (race + 180s timeout)
+        run: go test -race -timeout=180s ./...
+
+      - name: Verify swagger spec is up to date
+        run: bash scripts/generate-swagger.sh --check
+
+      - name: Verify SN360 user-facing language
+        run: bash scripts/check_sn360_language.sh
