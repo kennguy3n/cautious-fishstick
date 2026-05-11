@@ -15,16 +15,16 @@ import (
 // FuncFetchAccessAuditLogs, so we attach it here.
 type auditMockConnector struct {
 	access.MockAccessConnector
-	fetch func(ctx context.Context, cfg, secrets map[string]interface{}, since time.Time, handler func(batch []*access.AuditLogEntry, nextSince time.Time) error) error
+	fetch func(ctx context.Context, cfg, secrets map[string]interface{}, sincePartitions map[string]time.Time, handler func(batch []*access.AuditLogEntry, nextSince time.Time, partitionKey string) error) error
 }
 
 func (a *auditMockConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	cfg, secrets map[string]interface{},
-	since time.Time,
-	handler func(batch []*access.AuditLogEntry, nextSince time.Time) error,
+	sincePartitions map[string]time.Time,
+	handler func(batch []*access.AuditLogEntry, nextSince time.Time, partitionKey string) error,
 ) error {
-	return a.fetch(ctx, cfg, secrets, since, handler)
+	return a.fetch(ctx, cfg, secrets, sincePartitions, handler)
 }
 
 func TestAccessAudit_HappyPath_PublishesAndPersistsCursor(t *testing.T) {
@@ -41,11 +41,11 @@ func TestAccessAudit_HappyPath_PublishesAndPersistsCursor(t *testing.T) {
 	t2 := t0.Add(2 * time.Hour)
 
 	mock := &auditMockConnector{
-		fetch: func(_ context.Context, _, _ map[string]interface{}, _ time.Time, handler func(batch []*access.AuditLogEntry, nextSince time.Time) error) error {
-			if err := handler([]*access.AuditLogEntry{{EventID: "e1", Timestamp: t0}, {EventID: "e2", Timestamp: t1}}, t1); err != nil {
+		fetch: func(_ context.Context, _, _ map[string]interface{}, _ map[string]time.Time, handler func(batch []*access.AuditLogEntry, nextSince time.Time, partitionKey string) error) error {
+			if err := handler([]*access.AuditLogEntry{{EventID: "e1", Timestamp: t0}, {EventID: "e2", Timestamp: t1}}, t1, access.DefaultAuditPartition); err != nil {
 				return err
 			}
-			return handler([]*access.AuditLogEntry{{EventID: "e3", Timestamp: t2}}, t2)
+			return handler([]*access.AuditLogEntry{{EventID: "e3", Timestamp: t2}}, t2, access.DefaultAuditPartition)
 		},
 	}
 
@@ -71,9 +71,10 @@ func TestAccessAudit_HappyPath_PublishesAndPersistsCursor(t *testing.T) {
 	if err := db.Where("connector_id = ? AND kind = ?", connectorID, models.SyncStateKindAudit).First(&state).Error; err != nil {
 		t.Fatalf("readback sync state: %v", err)
 	}
-	parsed, err := time.Parse(time.RFC3339Nano, state.DeltaLink)
-	if err != nil {
-		t.Fatalf("parse cursor: %v", err)
+	cursors := decodeAuditCursors(state.DeltaLink)
+	parsed, ok := cursors[access.DefaultAuditPartition]
+	if !ok {
+		t.Fatalf("cursor missing for default partition; got %v", cursors)
 	}
 	if !parsed.Equal(t2) {
 		t.Errorf("cursor = %s, want %s", parsed, t2)
@@ -114,8 +115,8 @@ func TestAccessAudit_FetchFails_JobFailedButCursorAdvanced(t *testing.T) {
 	t0 := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
 	wantErr := errors.New("upstream blew up after page 1")
 	mock := &auditMockConnector{
-		fetch: func(_ context.Context, _, _ map[string]interface{}, _ time.Time, handler func(batch []*access.AuditLogEntry, nextSince time.Time) error) error {
-			if err := handler([]*access.AuditLogEntry{{EventID: "e1", Timestamp: t0}}, t0); err != nil {
+		fetch: func(_ context.Context, _, _ map[string]interface{}, _ map[string]time.Time, handler func(batch []*access.AuditLogEntry, nextSince time.Time, partitionKey string) error) error {
+			if err := handler([]*access.AuditLogEntry{{EventID: "e1", Timestamp: t0}}, t0, access.DefaultAuditPartition); err != nil {
 				return err
 			}
 			return wantErr
@@ -167,9 +168,9 @@ func TestAccessAudit_ResumesFromCursor(t *testing.T) {
 	}
 	var seenSince time.Time
 	mock := &auditMockConnector{
-		fetch: func(_ context.Context, _, _ map[string]interface{}, since time.Time, handler func(batch []*access.AuditLogEntry, nextSince time.Time) error) error {
-			seenSince = since
-			return handler(nil, since)
+		fetch: func(_ context.Context, _, _ map[string]interface{}, sincePartitions map[string]time.Time, handler func(batch []*access.AuditLogEntry, nextSince time.Time, partitionKey string) error) error {
+			seenSince = sincePartitions[access.DefaultAuditPartition]
+			return handler(nil, seenSince, access.DefaultAuditPartition)
 		},
 	}
 	jc := JobContext{
@@ -187,6 +188,79 @@ func TestAccessAudit_ResumesFromCursor(t *testing.T) {
 	}
 }
 
+// TestAccessAudit_CursorPerPartitionOnPartialFailure is the regression
+// guard for the bug Devin Review flagged on commit 9387989: even after
+// the Microsoft connector resets `cursor := since` per endpoint, the
+// worker collapses each endpoint's nextSince into a single max(...)
+// cursor. After signIns publishes at 13:00 and directoryAudits publishes
+// at 10:00, a partial failure mid-directoryAudit must NOT persist 13:00
+// for the directoryAudits partition — otherwise the retry's
+// `$filter ge 13:00` skips the 09:00–13:00 directoryAudit events
+// permanently. With partition-keyed cursors, each partition advances
+// independently.
+func TestAccessAudit_CursorPerPartitionOnPartialFailure(t *testing.T) {
+	db := newHandlerDB(t)
+	if err := db.AutoMigrate(&models.AccessSyncState{}); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+	seedTestConnector(t, db, "conn-1", "microsoft")
+	seedJob(t, db, "job-aud-6", "conn-1", "access_audit_log", nil)
+
+	signInPart := "microsoft/signIns"
+	dirAuditPart := "microsoft/directoryAudits"
+	signInMax := time.Date(2024, 1, 1, 13, 0, 0, 0, time.UTC)
+	dirAuditMax := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
+	wantErr := errors.New("upstream blew up after directoryAudits page 1")
+
+	mock := &auditMockConnector{
+		fetch: func(_ context.Context, _, _ map[string]interface{}, _ map[string]time.Time, handler func(batch []*access.AuditLogEntry, nextSince time.Time, partitionKey string) error) error {
+			// signIns batch completes successfully at 13:00.
+			if err := handler(
+				[]*access.AuditLogEntry{{EventID: "si-1", Timestamp: signInMax}},
+				signInMax, signInPart,
+			); err != nil {
+				return err
+			}
+			// directoryAudit batch completes successfully at 10:00,
+			// but a later page fails.
+			if err := handler(
+				[]*access.AuditLogEntry{{EventID: "da-1", Timestamp: dirAuditMax}},
+				dirAuditMax, dirAuditPart,
+			); err != nil {
+				return err
+			}
+			return wantErr
+		},
+	}
+
+	jc := JobContext{
+		DB:            db,
+		Resolve:       stubResolve(mock),
+		LoadConn:      DefaultLoadConnector,
+		Now:           time.Now,
+		AuditProducer: &access.NoOpAuditProducer{},
+	}
+	if err := AccessAudit(context.Background(), jc, "job-aud-6"); err == nil {
+		t.Fatal("expected error from upstream failure")
+	}
+
+	var state models.AccessSyncState
+	if err := db.Where("connector_id = ? AND kind = ?", "conn-1", models.SyncStateKindAudit).First(&state).Error; err != nil {
+		t.Fatalf("readback sync state: %v", err)
+	}
+	cursors := decodeAuditCursors(state.DeltaLink)
+	if len(cursors) != 2 {
+		t.Fatalf("expected 2 partition cursors; got %d (%v)", len(cursors), cursors)
+	}
+	if got := cursors[signInPart]; !got.Equal(signInMax) {
+		t.Errorf("signIns cursor = %s; want %s", got, signInMax)
+	}
+	if got := cursors[dirAuditPart]; !got.Equal(dirAuditMax) {
+		t.Errorf("directoryAudits cursor = %s; want %s (signIn max %s leaked into slower partition)",
+			got, dirAuditMax, signInMax)
+	}
+}
+
 func TestAccessAudit_SoftSkipsErrAuditNotAvailable(t *testing.T) {
 	db := newHandlerDB(t)
 	if err := db.AutoMigrate(&models.AccessSyncState{}); err != nil {
@@ -195,7 +269,7 @@ func TestAccessAudit_SoftSkipsErrAuditNotAvailable(t *testing.T) {
 	seedTestConnector(t, db, "conn-1", "slack")
 	seedJob(t, db, "job-aud-5", "conn-1", "access_audit_log", nil)
 	mock := &auditMockConnector{
-		fetch: func(_ context.Context, _, _ map[string]interface{}, _ time.Time, _ func(batch []*access.AuditLogEntry, nextSince time.Time) error) error {
+		fetch: func(_ context.Context, _, _ map[string]interface{}, _ map[string]time.Time, _ func(batch []*access.AuditLogEntry, nextSince time.Time, partitionKey string) error) error {
 			return access.ErrAuditNotAvailable
 		},
 	}

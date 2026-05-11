@@ -28,13 +28,14 @@ import (
 func (c *OktaAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},
-	since time.Time,
-	handler func(batch []*access.AuditLogEntry, nextSince time.Time) error,
+	sincePartitions map[string]time.Time,
+	handler func(batch []*access.AuditLogEntry, nextSince time.Time, partitionKey string) error,
 ) error {
 	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
 	if err != nil {
 		return err
 	}
+	since := sincePartitions[access.DefaultAuditPartition]
 	sinceStr := since.UTC().Format(time.RFC3339)
 	if since.IsZero() {
 		sinceStr = time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339)
@@ -86,7 +87,7 @@ func (c *OktaAccessConnector) FetchAccessAuditLogs(
 			}
 			batch = append(batch, entry)
 		}
-		if err := handler(batch, batchMax); err != nil {
+		if err := handler(batch, batchMax, access.DefaultAuditPartition); err != nil {
 			return err
 		}
 		cursor = batchMax

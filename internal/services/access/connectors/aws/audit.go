@@ -36,14 +36,15 @@ const cloudTrailTarget = "CloudTrail_20131101.LookupEvents"
 func (c *AWSAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},
-	since time.Time,
-	handler func(batch []*access.AuditLogEntry, nextSince time.Time) error,
+	sincePartitions map[string]time.Time,
+	handler func(batch []*access.AuditLogEntry, nextSince time.Time, partitionKey string) error,
 ) error {
 	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
 	if err != nil {
 		return err
 	}
 
+	since := sincePartitions[access.DefaultAuditPartition]
 	cursor := since
 	nextToken := ""
 	for {
@@ -96,7 +97,7 @@ func (c *AWSAccessConnector) FetchAccessAuditLogs(
 			}
 			batch = append(batch, entry)
 		}
-		if err := handler(batch, batchMax); err != nil {
+		if err := handler(batch, batchMax, access.DefaultAuditPartition); err != nil {
 			return err
 		}
 		cursor = batchMax

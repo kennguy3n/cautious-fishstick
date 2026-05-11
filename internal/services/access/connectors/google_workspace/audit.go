@@ -32,13 +32,14 @@ const reportsBaseURL = "https://admin.googleapis.com/admin/reports/v1"
 func (c *GoogleWorkspaceAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},
-	since time.Time,
-	handler func(batch []*access.AuditLogEntry, nextSince time.Time) error,
+	sincePartitions map[string]time.Time,
+	handler func(batch []*access.AuditLogEntry, nextSince time.Time, partitionKey string) error,
 ) error {
 	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
 	if err != nil {
 		return err
 	}
+	since := sincePartitions[access.DefaultAuditPartition]
 	client, err := c.directoryClient(ctx, cfg, secrets)
 	if err != nil {
 		return err
@@ -91,7 +92,7 @@ func (c *GoogleWorkspaceAccessConnector) FetchAccessAuditLogs(
 			}
 			batch = append(batch, entry)
 		}
-		if err := handler(batch, batchMax); err != nil {
+		if err := handler(batch, batchMax, access.DefaultAuditPartition); err != nil {
 			return err
 		}
 		cursor = batchMax

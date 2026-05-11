@@ -12,6 +12,15 @@ import (
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
+// Microsoft Graph audit partition keys. These MUST be stable strings:
+// the worker uses them as map keys in access_sync_state to track each
+// endpoint's cursor independently. Renaming a key would orphan the
+// existing cursor and trigger a full backfill on the next run.
+const (
+	auditPartitionSignIns         = "microsoft/signIns"
+	auditPartitionDirectoryAudits = "microsoft/directoryAudits"
+)
+
 // FetchAccessAuditLogs streams sign-in + directoryAudit events from Microsoft
 // Graph back into the access audit pipeline. Implements
 // access.AccessAuditor.
@@ -22,13 +31,13 @@ import (
 //   - GET /auditLogs/directoryAudits?$filter=activityDateTime ge {since}
 //
 // Pagination uses `@odata.nextLink`. The handler is called once per page in
-// chronological order; `nextSince` is the timestamp of the newest entry in
-// the batch so the access-audit worker can persist a monotonic cursor.
+// chronological order; the handler receives the per-endpoint partition key
+// so the worker can advance each cursor independently.
 func (c *M365AccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},
-	since time.Time,
-	handler func(batch []*access.AuditLogEntry, nextSince time.Time) error,
+	sincePartitions map[string]time.Time,
+	handler func(batch []*access.AuditLogEntry, nextSince time.Time, partitionKey string) error,
 ) error {
 	cfg, secrets, err := decodeBoth(configRaw, secretsRaw)
 	if err != nil {
@@ -37,33 +46,35 @@ func (c *M365AccessConnector) FetchAccessAuditLogs(
 	client := c.graphClient(ctx, cfg, secrets)
 
 	for _, ep := range []struct {
-		path      string
-		tsField   string
-		mapFunc   func(raw json.RawMessage) (*access.AuditLogEntry, error)
-		eventKind string
+		path         string
+		tsField      string
+		mapFunc      func(raw json.RawMessage) (*access.AuditLogEntry, error)
+		eventKind    string
+		partitionKey string
 	}{
 		{
-			path:      "/auditLogs/signIns",
-			tsField:   "createdDateTime",
-			mapFunc:   mapGraphSignIn,
-			eventKind: "signIn",
+			path:         "/auditLogs/signIns",
+			tsField:      "createdDateTime",
+			mapFunc:      mapGraphSignIn,
+			eventKind:    "signIn",
+			partitionKey: auditPartitionSignIns,
 		},
 		{
-			path:      "/auditLogs/directoryAudits",
-			tsField:   "activityDateTime",
-			mapFunc:   mapGraphDirectoryAudit,
-			eventKind: "directoryAudit",
+			path:         "/auditLogs/directoryAudits",
+			tsField:      "activityDateTime",
+			mapFunc:      mapGraphDirectoryAudit,
+			eventKind:    "directoryAudit",
+			partitionKey: auditPartitionDirectoryAudits,
 		},
 	} {
+		since := sincePartitions[ep.partitionKey]
 		// cursor MUST reset per endpoint. Each endpoint paginates
-		// independently from `since`, so the handler's nextSince
-		// must reflect that endpoint's progress only. Sharing one
-		// cursor across endpoints would let the larger
-		// signIn-max timestamp shadow earlier directoryAudit
-		// entries: handler(batch, batchMax) would receive the
-		// inflated signIn max and the worker would persist it on
-		// partial failure, causing $filter ge {inflated} to skip
-		// older un-fetched directoryAudits on retry.
+		// independently from its own partition's `since`, so the
+		// handler's nextSince must reflect that endpoint's progress
+		// only. The partitionKey passed to handler lets the worker
+		// track per-partition cursors in access_sync_state and
+		// prevents a fast-moving partition's max timestamp from
+		// shadowing a slower partition's progress on partial failure.
 		cursor := since
 		next, err := buildAuditStartURL(ep.path, ep.tsField, since)
 		if err != nil {
@@ -103,7 +114,7 @@ func (c *M365AccessConnector) FetchAccessAuditLogs(
 				}
 				batch = append(batch, entry)
 			}
-			if err := handler(batch, batchMax); err != nil {
+			if err := handler(batch, batchMax, ep.partitionKey); err != nil {
 				return err
 			}
 			cursor = batchMax

@@ -77,8 +77,8 @@ func TestFetchAccessAuditLogs_PaginatesAndMaps(t *testing.T) {
 
 	var collected []*access.AuditLogEntry
 	err := c.FetchAccessAuditLogs(context.Background(), validConfig(), validSecrets(),
-		time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-		func(batch []*access.AuditLogEntry, _ time.Time) error {
+		map[string]time.Time{access.DefaultAuditPartition: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)},
+		func(batch []*access.AuditLogEntry, _ time.Time, _ string) error {
 			collected = append(collected, batch...)
 			return nil
 		})
@@ -104,8 +104,9 @@ func TestFetchAccessAuditLogs_Failure(t *testing.T) {
 	c := New()
 	c.urlOverride = srv.URL
 	c.tokenOverride = func(_ context.Context, _ Config, _ Secrets) (string, error) { return "tok", nil }
-	err := c.FetchAccessAuditLogs(context.Background(), validConfig(), validSecrets(), time.Now().Add(-time.Hour),
-		func(_ []*access.AuditLogEntry, _ time.Time) error { return nil })
+	err := c.FetchAccessAuditLogs(context.Background(), validConfig(), validSecrets(),
+		map[string]time.Time{access.DefaultAuditPartition: time.Now().Add(-time.Hour)},
+		func(_ []*access.AuditLogEntry, _ time.Time, _ string) error { return nil })
 	if err == nil {
 		t.Fatal("expected error")
 	}

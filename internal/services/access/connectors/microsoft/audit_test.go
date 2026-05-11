@@ -79,8 +79,12 @@ func TestFetchAccessAuditLogs_PaginatesAndMaps(t *testing.T) {
 	var collected []*access.AuditLogEntry
 	since := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	var lastCursor time.Time
-	err := c.FetchAccessAuditLogs(context.Background(), validConfig(), validSecrets(), since,
-		func(batch []*access.AuditLogEntry, nextSince time.Time) error {
+	err := c.FetchAccessAuditLogs(context.Background(), validConfig(), validSecrets(),
+		map[string]time.Time{
+			auditPartitionSignIns:         since,
+			auditPartitionDirectoryAudits: since,
+		},
+		func(batch []*access.AuditLogEntry, nextSince time.Time, _ string) error {
 			collected = append(collected, batch...)
 			lastCursor = nextSince
 			return nil
@@ -211,17 +215,26 @@ func TestFetchAccessAuditLogs_CursorResetsPerEndpoint(t *testing.T) {
 	}
 
 	type batchCall struct {
-		eventType string
-		nextSince time.Time
+		eventType    string
+		nextSince    time.Time
+		partitionKey string
 	}
 	var calls []batchCall
 	since := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	err := c.FetchAccessAuditLogs(context.Background(), validConfig(), validSecrets(), since,
-		func(batch []*access.AuditLogEntry, nextSince time.Time) error {
+	err := c.FetchAccessAuditLogs(context.Background(), validConfig(), validSecrets(),
+		map[string]time.Time{
+			auditPartitionSignIns:         since,
+			auditPartitionDirectoryAudits: since,
+		},
+		func(batch []*access.AuditLogEntry, nextSince time.Time, partitionKey string) error {
 			if len(batch) == 0 {
 				return nil
 			}
-			calls = append(calls, batchCall{eventType: batch[0].EventType, nextSince: nextSince})
+			calls = append(calls, batchCall{
+				eventType:    batch[0].EventType,
+				nextSince:    nextSince,
+				partitionKey: partitionKey,
+			})
 			return nil
 		})
 	if err != nil {
@@ -236,6 +249,9 @@ func TestFetchAccessAuditLogs_CursorResetsPerEndpoint(t *testing.T) {
 	if signInCall.eventType != "signIn" {
 		t.Fatalf("first call should be signIn; got %q", signInCall.eventType)
 	}
+	if signInCall.partitionKey != auditPartitionSignIns {
+		t.Errorf("signIn partitionKey = %q; want %q", signInCall.partitionKey, auditPartitionSignIns)
+	}
 	wantSignInMax := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 	if !signInCall.nextSince.Equal(wantSignInMax) {
 		t.Errorf("signIn nextSince = %v; want %v", signInCall.nextSince, wantSignInMax)
@@ -246,6 +262,10 @@ func TestFetchAccessAuditLogs_CursorResetsPerEndpoint(t *testing.T) {
 	daCall := calls[1]
 	if daCall.eventType != "UserManagement" {
 		t.Fatalf("second call should be directoryAudit; got %q", daCall.eventType)
+	}
+	if daCall.partitionKey != auditPartitionDirectoryAudits {
+		t.Errorf("directoryAudit partitionKey = %q; want %q",
+			daCall.partitionKey, auditPartitionDirectoryAudits)
 	}
 	wantDaMax := time.Date(2024, 1, 1, 9, 0, 0, 0, time.UTC)
 	if !daCall.nextSince.Equal(wantDaMax) {
@@ -264,8 +284,12 @@ func TestFetchAccessAuditLogs_Failure(t *testing.T) {
 	c.httpClientFor = func(_ context.Context, _ Config, _ Secrets) httpDoer {
 		return &serverFirstFakeClient{base: server.URL, http: server.Client()}
 	}
-	err := c.FetchAccessAuditLogs(context.Background(), validConfig(), validSecrets(), time.Now().Add(-time.Hour),
-		func(_ []*access.AuditLogEntry, _ time.Time) error { return nil })
+	err := c.FetchAccessAuditLogs(context.Background(), validConfig(), validSecrets(),
+		map[string]time.Time{
+			auditPartitionSignIns:         time.Now().Add(-time.Hour),
+			auditPartitionDirectoryAudits: time.Now().Add(-time.Hour),
+		},
+		func(_ []*access.AuditLogEntry, _ time.Time, _ string) error { return nil })
 	if err == nil {
 		t.Fatal("expected 401 to propagate as error")
 	}

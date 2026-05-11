@@ -26,13 +26,14 @@ import (
 func (c *GitHubAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},
-	since time.Time,
-	handler func(batch []*access.AuditLogEntry, nextSince time.Time) error,
+	sincePartitions map[string]time.Time,
+	handler func(batch []*access.AuditLogEntry, nextSince time.Time, partitionKey string) error,
 ) error {
 	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
 	if err != nil {
 		return err
 	}
+	since := sincePartitions[access.DefaultAuditPartition]
 
 	q := url.Values{}
 	q.Set("per_page", "100")
@@ -77,7 +78,7 @@ func (c *GitHubAccessConnector) FetchAccessAuditLogs(
 			}
 			batch = append(batch, entry)
 		}
-		if err := handler(batch, batchMax); err != nil {
+		if err := handler(batch, batchMax, access.DefaultAuditPartition); err != nil {
 			return err
 		}
 		cursor = batchMax

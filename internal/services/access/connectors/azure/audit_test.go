@@ -60,8 +60,8 @@ func TestFetchAccessAuditLogs_PaginatesAndMaps(t *testing.T) {
 	err := c.FetchAccessAuditLogs(context.Background(),
 		map[string]interface{}{"tenant_id": "tnt", "subscription_id": "sub-1"},
 		validSecrets(),
-		time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-		func(batch []*access.AuditLogEntry, _ time.Time) error {
+		map[string]time.Time{access.DefaultAuditPartition: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)},
+		func(batch []*access.AuditLogEntry, _ time.Time, _ string) error {
 			collected = append(collected, batch...)
 			return nil
 		})
@@ -92,8 +92,9 @@ func TestFetchAccessAuditLogs_Failure(t *testing.T) {
 	c.tokenOverride = func(_ context.Context, _ Config, _ Secrets) (string, error) { return "fake-token", nil }
 	err := c.FetchAccessAuditLogs(context.Background(),
 		map[string]interface{}{"tenant_id": "tnt", "subscription_id": "sub-1"},
-		validSecrets(), time.Now().Add(-time.Hour),
-		func(_ []*access.AuditLogEntry, _ time.Time) error { return nil })
+		validSecrets(),
+		map[string]time.Time{access.DefaultAuditPartition: time.Now().Add(-time.Hour)},
+		func(_ []*access.AuditLogEntry, _ time.Time, _ string) error { return nil })
 	if err == nil {
 		t.Fatal("expected error")
 	}

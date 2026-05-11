@@ -64,8 +64,8 @@ func TestFetchAccessAuditLogs_PaginatesAndMaps(t *testing.T) {
 
 	var collected []*access.AuditLogEntry
 	err := c.FetchAccessAuditLogs(context.Background(), nil, validSecrets(),
-		time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-		func(batch []*access.AuditLogEntry, _ time.Time) error {
+		map[string]time.Time{access.DefaultAuditPartition: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)},
+		func(batch []*access.AuditLogEntry, _ time.Time, _ string) error {
 			collected = append(collected, batch...)
 			return nil
 		})
@@ -88,8 +88,9 @@ func TestFetchAccessAuditLogs_NotEnterprise(t *testing.T) {
 	c := New()
 	c.urlOverride = srv.URL
 	c.httpClient = func() httpDoer { return srv.Client() }
-	err := c.FetchAccessAuditLogs(context.Background(), nil, validSecrets(), time.Now().Add(-time.Hour),
-		func(_ []*access.AuditLogEntry, _ time.Time) error { return nil })
+	err := c.FetchAccessAuditLogs(context.Background(), nil, validSecrets(),
+		map[string]time.Time{access.DefaultAuditPartition: time.Now().Add(-time.Hour)},
+		func(_ []*access.AuditLogEntry, _ time.Time, _ string) error { return nil })
 	if !errors.Is(err, access.ErrAuditNotAvailable) {
 		t.Fatalf("err = %v, want ErrAuditNotAvailable", err)
 	}

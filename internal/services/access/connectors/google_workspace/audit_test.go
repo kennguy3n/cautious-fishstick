@@ -71,8 +71,9 @@ func TestFetchAccessAuditLogs_PaginatesAndMaps(t *testing.T) {
 
 	var collected []*access.AuditLogEntry
 	since := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	err := c.FetchAccessAuditLogs(context.Background(), validConfig(), validSecrets(t), since,
-		func(batch []*access.AuditLogEntry, _ time.Time) error {
+	err := c.FetchAccessAuditLogs(context.Background(), validConfig(), validSecrets(t),
+		map[string]time.Time{access.DefaultAuditPartition: since},
+		func(batch []*access.AuditLogEntry, _ time.Time, _ string) error {
 			collected = append(collected, batch...)
 			return nil
 		})
@@ -99,8 +100,9 @@ func TestFetchAccessAuditLogs_Failure(t *testing.T) {
 	c.httpClientFor = func(_ context.Context, _ Config, _ Secrets) (httpDoer, error) {
 		return &fakeDirectoryClient{base: server.URL, c: server.Client()}, nil
 	}
-	err := c.FetchAccessAuditLogs(context.Background(), validConfig(), validSecrets(t), time.Now().Add(-time.Hour),
-		func(_ []*access.AuditLogEntry, _ time.Time) error { return nil })
+	err := c.FetchAccessAuditLogs(context.Background(), validConfig(), validSecrets(t),
+		map[string]time.Time{access.DefaultAuditPartition: time.Now().Add(-time.Hour)},
+		func(_ []*access.AuditLogEntry, _ time.Time, _ string) error { return nil })
 	if err == nil {
 		t.Fatal("expected error on 403")
 	}
