@@ -166,3 +166,36 @@ func TestFetchAccessAuditLogs_ProviderError(t *testing.T) {
 		t.Fatalf("err = ErrAuditNotAvailable; want generic error")
 	}
 }
+
+// TestFetchAccessAuditLogs_EscapesEnvironmentID guards against the
+// environment_id being interpolated raw into the activities URL. All
+// sibling call sites in connector.go pass cfg.EnvironmentID through
+// url.PathEscape; audit.go must follow the same defensive pattern so
+// an environment_id containing reserved path characters cannot break
+// out of its segment and poison the request path.
+func TestFetchAccessAuditLogs_EscapesEnvironmentID(t *testing.T) {
+	const dirtyEnvID = "env/leak"
+	var seenPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/as/token") {
+			_, _ = w.Write([]byte(`{"access_token":"tok-1","token_type":"Bearer"}`))
+			return
+		}
+		seenPath = r.URL.EscapedPath()
+		_ = json.NewEncoder(w).Encode(pingActivitiesPage{})
+	}))
+	t.Cleanup(server.Close)
+	c := New()
+	c.urlOverride = server.URL
+	c.httpClient = func() httpDoer { return server.Client() }
+	cfg := map[string]interface{}{"environment_id": dirtyEnvID, "region": "NA"}
+	if err := c.FetchAccessAuditLogs(context.Background(), cfg, validSecrets(), nil,
+		func(_ []*access.AuditLogEntry, _ time.Time, _ string) error { return nil }); err != nil {
+		t.Fatalf("FetchAccessAuditLogs: %v", err)
+	}
+	want := "/v1/environments/env%2Fleak/activities"
+	if seenPath != want {
+		t.Fatalf("activities path = %q; want %q (env id must be PathEscape'd)", seenPath, want)
+	}
+}

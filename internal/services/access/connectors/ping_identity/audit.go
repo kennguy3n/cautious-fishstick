@@ -47,7 +47,7 @@ func (c *PingIdentityAccessConnector) FetchAccessAuditLogs(
 		}
 		return err
 	}
-	pageURL := c.apiURL(cfg, "/v1/environments/"+cfg.EnvironmentID+"/activities")
+	pageURL := c.apiURL(cfg, fmt.Sprintf("/v1/environments/%s/activities", url.PathEscape(cfg.EnvironmentID)))
 	q := url.Values{}
 	q.Set("limit", "100")
 	if !since.IsZero() {
