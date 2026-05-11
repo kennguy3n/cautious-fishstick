@@ -288,6 +288,236 @@ func TestSSOFederation_PingIdentityOIDC(t *testing.T) {
 	}
 }
 
+// --- Phase 10 wiring: SAML connectors (Task 11) ---
+
+func TestSSOFederation_BambooHRSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://acme.bamboohr.com/saml/metadata",
+		EntityID:    "https://acme.bamboohr.com",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "bamboo-1", "BambooHR", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+	if got.Config["metadataDescriptorUrl"] != meta.MetadataURL {
+		t.Errorf("metadataDescriptorUrl = %q", got.Config["metadataDescriptorUrl"])
+	}
+}
+
+func TestSSOFederation_WorkdaySAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://wd5-impl-services1.workday.com/acme1/saml2/metadata",
+		EntityID:    "https://wd5-impl-services1.workday.com/acme1",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "workday-1", "Workday", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q", got.ProviderID)
+	}
+	if got.Config["entityId"] != meta.EntityID {
+		t.Errorf("entityId = %q", got.Config["entityId"])
+	}
+}
+
+func TestSSOFederation_ZendeskSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://acme.zendesk.com/access/saml/metadata",
+		EntityID:    "https://acme.zendesk.com",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "zendesk-1", "Zendesk", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q", got.ProviderID)
+	}
+	if got.Config["metadataDescriptorUrl"] != meta.MetadataURL {
+		t.Errorf("metadataDescriptorUrl = %q", got.Config["metadataDescriptorUrl"])
+	}
+}
+
+func TestSSOFederation_DropboxBusinessSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://www.dropbox.com/saml_login/metadata",
+		EntityID:    "https://www.dropbox.com",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "dropbox-1", "Dropbox Business", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_SalesforceSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://acme.my.salesforce.com/identity/saml/metadata",
+		EntityID:    "https://acme.my.salesforce.com",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "sf-1", "Salesforce", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q", got.ProviderID)
+	}
+	if got.Config["entityId"] != meta.EntityID {
+		t.Errorf("entityId = %q", got.Config["entityId"])
+	}
+}
+
+func TestSSOFederation_GitHubSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://github.com/organizations/acme/saml/metadata",
+		EntityID:    "https://github.com/organizations/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "gh-1", "GitHub", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q", got.ProviderID)
+	}
+	if got.Config["metadataDescriptorUrl"] != meta.MetadataURL {
+		t.Errorf("metadataDescriptorUrl = %q", got.Config["metadataDescriptorUrl"])
+	}
+}
+
+// --- Phase 10 wiring: OIDC / Atlassian / Entra connectors (Task 12) ---
+
+func TestSSOFederation_Auth0OIDC(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "oidc",
+		MetadataURL: "https://uney.us.auth0.com/.well-known/openid-configuration",
+		EntityID:    "https://uney.us.auth0.com/",
+		SSOLoginURL: "https://uney.us.auth0.com/authorize",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "auth0-1", "Auth0", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "oidc" {
+		t.Errorf("ProviderID = %q", got.ProviderID)
+	}
+	if got.Config["issuer"] != meta.EntityID {
+		t.Errorf("issuer = %q", got.Config["issuer"])
+	}
+	if got.Config["metadataUrl"] != meta.MetadataURL {
+		t.Errorf("metadataUrl = %q", got.Config["metadataUrl"])
+	}
+}
+
+func TestSSOFederation_GitLabGroupSAML(t *testing.T) {
+	// GitLab returns SAML group metadata.
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://gitlab.com/groups/12345/-/saml/metadata",
+		EntityID:    "https://gitlab.com/groups/12345",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "gitlab-1", "GitLab", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_JiraAtlassianSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://acme.atlassian.net/admin/saml/metadata",
+		EntityID:    "https://acme.atlassian.net",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "jira-1", "Jira", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_SlackEnterpriseSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://acme.slack.com/sso/saml/metadata",
+		EntityID:    "https://slack.com/E0123ABCD",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "slack-1", "Slack Enterprise", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_MSTeamsEntraSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://login.microsoftonline.com/tenant-1234/federationmetadata/2007-06/federationmetadata.xml",
+		EntityID:    "https://sts.windows.net/tenant-1234/",
+		SSOLoginURL: "https://login.microsoftonline.com/tenant-1234/saml2",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "msteams-1", "Microsoft Teams", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q", got.ProviderID)
+	}
+	if got.Config["singleSignOnServiceUrl"] != meta.SSOLoginURL {
+		t.Errorf("singleSignOnServiceUrl = %q", got.Config["singleSignOnServiceUrl"])
+	}
+}
+
+// Zoom intentionally has no native SSO metadata; verifies the
+// service returns ErrSSOFederationUnsupported for nil metadata so
+// callers can downgrade gracefully without recording a configuration
+// failure.
+func TestSSOFederation_ZoomUnsupported(t *testing.T) {
+	svc := NewSSOFederationService(newMockKeycloak())
+	_, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "zoom-1", "Zoom", nil)
+	if !errors.Is(err, ErrSSOFederationUnsupported) {
+		t.Fatalf("err = %v; want ErrSSOFederationUnsupported", err)
+	}
+}
+
 // TestHTTPKeycloakClient_EscapesURLPathSegments asserts that
 // realm/alias values containing reserved characters are percent-encoded
 // before being interpolated into the Admin REST path so they cannot
