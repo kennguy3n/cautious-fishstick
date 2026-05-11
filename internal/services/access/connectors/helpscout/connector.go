@@ -454,8 +454,13 @@ func (c *HelpScoutAccessConnector) userInTeam(ctx context.Context, secrets Secre
 		if err := json.Unmarshal(body, &members); err != nil {
 			return false, fmt.Errorf("helpscout: decode team members: %w", err)
 		}
+		// Match strictly on the numeric Help Scout user ID. The same
+		// identifier is required by ProvisionAccess / RevokeAccess (used as
+		// a URL path segment) and is what SyncIdentities emits, so keeping
+		// the comparison narrow avoids surfacing entitlements that the
+		// caller cannot then revoke with the same UserExternalID.
 		for _, u := range members.Embedded.Users {
-			if strconv.FormatInt(u.ID, 10) == userExternalID || strings.EqualFold(u.Email, userExternalID) {
+			if strconv.FormatInt(u.ID, 10) == userExternalID {
 				return true, nil
 			}
 		}

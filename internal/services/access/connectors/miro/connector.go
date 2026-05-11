@@ -283,9 +283,85 @@ type miroTeam struct {
 	Role string `json:"role,omitempty"`
 }
 
+// resolveMemberEmail returns the email address used when adding a user to
+// a Miro team. The Miro POST /orgs/{org_id}/teams/{team_id}/members API
+// only accepts emails, so if grant.UserExternalID was emitted by
+// SyncIdentities (a Miro member ID), we resolve it to an email via
+// GET /orgs/{org_id}/members/{member_id} before composing the payload.
+// If the caller already passed an email, it is returned as-is.
+func (c *MiroAccessConnector) resolveMemberEmail(ctx context.Context, cfg Config, secrets Secrets, userExternalID string) (string, error) {
+	if strings.Contains(userExternalID, "@") {
+		return userExternalID, nil
+	}
+	path := "/orgs/" + url.PathEscape(cfg.OrgID) + "/members/" + url.PathEscape(userExternalID)
+	req, err := c.newRequest(ctx, secrets, http.MethodGet, path)
+	if err != nil {
+		return "", err
+	}
+	body, err := c.do(req)
+	if err != nil {
+		return "", fmt.Errorf("miro: resolve email for member %q: %w", userExternalID, err)
+	}
+	var m miroMember
+	if err := json.Unmarshal(body, &m); err != nil {
+		return "", fmt.Errorf("miro: decode member %q: %w", userExternalID, err)
+	}
+	if strings.TrimSpace(m.Email) == "" {
+		return "", fmt.Errorf("miro: member %q has no email on record", userExternalID)
+	}
+	return m.Email, nil
+}
+
+// resolveMemberID returns the Miro member ID used in URL paths for
+// DELETE .../teams/{team_id}/members/{member_id} and
+// GET .../members/{member_id}/teams. If userExternalID does not contain
+// "@" it is treated as a member ID and returned as-is. Otherwise the
+// connector paginates GET /orgs/{org_id}/members looking for a case-
+// insensitive email match. Returns ("", nil) when no member matches, so
+// callers can short-circuit revoke and list-entitlements as idempotent.
+func (c *MiroAccessConnector) resolveMemberID(ctx context.Context, cfg Config, secrets Secrets, userExternalID string) (string, error) {
+	if !strings.Contains(userExternalID, "@") {
+		return userExternalID, nil
+	}
+	cursor := ""
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		path := "/orgs/" + url.PathEscape(cfg.OrgID) + "/members?limit=100"
+		if cursor != "" {
+			path += "&cursor=" + url.QueryEscape(cursor)
+		}
+		req, err := c.newRequest(ctx, secrets, http.MethodGet, path)
+		if err != nil {
+			return "", err
+		}
+		body, err := c.do(req)
+		if err != nil {
+			return "", fmt.Errorf("miro: resolve member ID for email %q: %w", userExternalID, err)
+		}
+		var resp miroMembersResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return "", fmt.Errorf("miro: decode members: %w", err)
+		}
+		for _, m := range resp.Data {
+			if strings.EqualFold(m.Email, userExternalID) {
+				return m.ID, nil
+			}
+		}
+		if resp.Cursor == "" {
+			return "", nil
+		}
+		cursor = resp.Cursor
+	}
+}
+
 // ProvisionAccess adds a user to a Miro team via
-// POST /v2/orgs/{org_id}/teams/{team_id}/members. The team_id comes from
-// grant.ResourceExternalID and the user from grant.UserExternalID.
+// POST /orgs/{org_id}/teams/{team_id}/members. The team_id comes from
+// grant.ResourceExternalID. grant.UserExternalID may be either an email
+// or a Miro member ID (canonical form emitted by SyncIdentities); when a
+// member ID is supplied, the connector resolves the email first since the
+// Miro v2 API only accepts emails on this endpoint.
 func (c *MiroAccessConnector) ProvisionAccess(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},
@@ -301,18 +377,22 @@ func (c *MiroAccessConnector) ProvisionAccess(
 	if err != nil {
 		return err
 	}
+	email, err := c.resolveMemberEmail(ctx, cfg, secrets, grant.UserExternalID)
+	if err != nil {
+		return err
+	}
 	role := "member"
 	if strings.EqualFold(grant.Role, "admin") {
 		role = "admin"
 	}
 	payload := map[string]interface{}{
-		"members": []map[string]string{{"email": grant.UserExternalID, "role": role}},
+		"members": []map[string]string{{"email": email, "role": role}},
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("miro: marshal payload: %w", err)
 	}
-	path := "/v2/orgs/" + url.PathEscape(cfg.OrgID) + "/teams/" + url.PathEscape(grant.ResourceExternalID) + "/members"
+	path := "/orgs/" + url.PathEscape(cfg.OrgID) + "/teams/" + url.PathEscape(grant.ResourceExternalID) + "/members"
 	req, err := c.newJSONRequest(ctx, secrets, http.MethodPost, path, body)
 	if err != nil {
 		return err
@@ -336,7 +416,11 @@ func (c *MiroAccessConnector) ProvisionAccess(
 }
 
 // RevokeAccess removes a user from a Miro team via
-// DELETE /v2/orgs/{org_id}/teams/{team_id}/members/{user_id}. 404 is idempotent.
+// DELETE /orgs/{org_id}/teams/{team_id}/members/{member_id}. 404 is idempotent.
+// grant.UserExternalID may be either a member ID (canonical) or an email;
+// when given an email the connector resolves the member ID via the org
+// members listing first. An email that does not match any current org
+// member is treated as already-revoked.
 func (c *MiroAccessConnector) RevokeAccess(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},
@@ -352,7 +436,14 @@ func (c *MiroAccessConnector) RevokeAccess(
 	if err != nil {
 		return err
 	}
-	path := "/v2/orgs/" + url.PathEscape(cfg.OrgID) + "/teams/" + url.PathEscape(grant.ResourceExternalID) + "/members/" + url.PathEscape(grant.UserExternalID)
+	memberID, err := c.resolveMemberID(ctx, cfg, secrets, grant.UserExternalID)
+	if err != nil {
+		return err
+	}
+	if memberID == "" {
+		return nil
+	}
+	path := "/orgs/" + url.PathEscape(cfg.OrgID) + "/teams/" + url.PathEscape(grant.ResourceExternalID) + "/members/" + url.PathEscape(memberID)
 	req, err := c.newRequest(ctx, secrets, http.MethodDelete, path)
 	if err != nil {
 		return err
@@ -389,10 +480,17 @@ func (c *MiroAccessConnector) ListEntitlements(
 	if err != nil {
 		return nil, err
 	}
+	memberID, err := c.resolveMemberID(ctx, cfg, secrets, userExternalID)
+	if err != nil {
+		return nil, err
+	}
+	if memberID == "" {
+		return nil, nil
+	}
 	var out []access.Entitlement
 	cursor := ""
 	for {
-		path := "/v2/orgs/" + url.PathEscape(cfg.OrgID) + "/members/" + url.PathEscape(userExternalID) + "/teams?limit=100"
+		path := "/orgs/" + url.PathEscape(cfg.OrgID) + "/members/" + url.PathEscape(memberID) + "/teams?limit=100"
 		if cursor != "" {
 			path += "&cursor=" + url.QueryEscape(cursor)
 		}
