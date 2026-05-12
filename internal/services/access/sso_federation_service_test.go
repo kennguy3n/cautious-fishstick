@@ -1552,6 +1552,95 @@ func TestSSOFederation_HibobSAML(t *testing.T) {
 	}
 }
 
+func TestSSOFederation_HootsuiteSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://hootsuite.com/sso/saml/metadata/acme",
+		EntityID:    "https://hootsuite.com/sso/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "hootsuite-1", "Hootsuite", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+	if got.Config["metadataDescriptorUrl"] != meta.MetadataURL {
+		t.Errorf("metadataDescriptorUrl = %q", got.Config["metadataDescriptorUrl"])
+	}
+}
+
+func TestSSOFederation_SproutSocialSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.sproutsocial.com/sso/saml/metadata/acme",
+		EntityID:    "https://app.sproutsocial.com/sso/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "sprout-social-1", "Sprout Social", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_BufferSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://buffer.com/sso/saml/metadata/acme",
+		EntityID:    "https://buffer.com/sso/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "buffer-1", "Buffer", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_MagentoSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://acme.magento.com/sso/saml/metadata",
+		EntityID:    "https://acme.magento.com/sso",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "magento-1", "Magento", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_SquareSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://squareup.com/sso/saml/metadata/acme",
+		EntityID:    "https://squareup.com/sso/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "square-1", "Square", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+// contains is a substring helper that avoids pulling in `strings` for
 // contains is a substring helper that avoids pulling in `strings` for
 // just one use.
 func contains(haystack, needle string) bool {
