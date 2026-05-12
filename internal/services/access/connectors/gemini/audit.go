@@ -42,7 +42,7 @@ func (c *GeminiAccessConnector) FetchAccessAuditLogs(
 		return err
 	}
 	since := sincePartitions[access.DefaultAuditPartition]
-	endpoint := c.baseURL() + "/v2/entries:list"
+	endpoint := c.auditBaseURL() + "/v2/entries:list"
 
 	filter := fmt.Sprintf(`logName="projects/%s/logs/cloudaudit.googleapis.com%%2Fdata_access"`, cfg.ProjectID)
 	if !since.IsZero() {
