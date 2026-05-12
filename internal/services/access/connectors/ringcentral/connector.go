@@ -263,15 +263,6 @@ func (c *RingcentralAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *RingcentralAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *RingcentralAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *RingcentralAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 // GetSSOMetadata returns the operator-supplied OIDC discovery URL if
 // configured. RingCentral federates SSO via OIDC; when
 // `sso_metadata_url` is blank the helper returns (nil, nil).

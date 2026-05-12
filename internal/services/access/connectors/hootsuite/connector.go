@@ -258,15 +258,6 @@ func (c *HootsuiteAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *HootsuiteAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *HootsuiteAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *HootsuiteAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 // GetSSOMetadata surfaces operator-supplied SAML metadata for the
 // Hootsuite workspace. Hootsuite supports SAML 2.0 SSO via Hootsuite
 // Enterprise; the connector forwards operator-supplied URLs verbatim

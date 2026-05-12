@@ -267,15 +267,6 @@ func (c *OpenAIAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *OpenAIAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *OpenAIAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *OpenAIAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 // GetSSOMetadata advertises OpenAI organization SAML metadata when
 // the connector is configured with a saml_metadata_url. OpenAI
 // Enterprise renders the metadata document per-organization; the

@@ -232,8 +232,8 @@ func (c *CircleCIAccessConnector) SyncIdentities(
 
 // ProvisionAccess, RevokeAccess, ListEntitlements: see advanced.go.
 
-func (c *CircleCIAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+func (c *CircleCIAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *CircleCIAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {
