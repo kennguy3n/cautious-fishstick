@@ -1,6 +1,6 @@
 # Connector Capability Index
 
-> **Last updated:** 2026-05-12 (Phase 10 batch 11 — audit logs 136 / 200, advanced caps 83 / 50 ✅, SSO federation batch 11: +5 wires → 55 wired brokers — PR #37)
+> **Last updated:** 2026-05-12 (Phase 10 batch 12 — audit logs 154 / 200, advanced caps 89 / 50 ✅, SSO federation batch 12: +4 net new wires → 60 wired brokers — PR #38)
 > **Source of truth:** [`docs/PROGRESS.md`](./PROGRESS.md) §1
 > **How to keep in sync:** When you flip a capability column in `docs/PROGRESS.md`, mirror the change here. The audit script in §6 of `docs/PROGRESS.md` lints the two tables for drift.
 
@@ -111,20 +111,20 @@
 | 84 | Personio | T4 | HR | `personio/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 85 | Hibob | T4 | HR | `hibob/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 86 | Workday | T4 | HR | `workday/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
-| 87 | Paychex | T4 | HR | `paychex/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 87 | Paychex | T4 | HR | `paychex/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 88 | Deel | T4 | HR | `deel/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 89 | Zenefits | T4 | HR | `zenefits/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
-| 90 | Namely | T4 | HR | `namely/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 90 | Namely | T4 | HR | `namely/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 91 | QuickBooks Online | T4 | Finance | `quickbooks/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
-| 92 | Xero | T4 | Finance | `xero/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 92 | Xero | T4 | Finance | `xero/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 93 | Stripe | T4 | Finance | `stripe/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
 | 94 | PayPal | T4 | Finance | `paypal/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
 | 95 | Bill.com | T4 | Finance | `billdotcom/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
 | 96 | Expensify | T4 | Finance | `expensify/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
 | 97 | Sage Intacct | T4 | Finance | `sage_intacct/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
-| 98 | FreshBooks | T4 | Finance | `freshbooks/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
-| 99 | Wave | T4 | Finance | `wave/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
-| 100 | Plaid | T4 | Finance | `plaid/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 98 | FreshBooks | T4 | Finance | `freshbooks/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
+| 99 | Wave | T4 | Finance | `wave/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
+| 100 | Plaid | T4 | Finance | `plaid/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 101 | Brex | T4 | Finance | `brex/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
 | 102 | Ramp | T4 | Finance | `ramp/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
 | 103 | Clio | T4 | Legal | `clio/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
@@ -159,12 +159,12 @@
 | 132 | Fortinet | T5 | Network | `fortinet/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
 | 133 | Zscaler | T5 | Network | `zscaler/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
 | 134 | Check Point | T5 | Network | `checkpoint/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
-| 135 | Palo Alto Prisma | T5 | Network | `paloalto/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 136 | NordLayer | T5 | Network | `nordlayer/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 137 | Perimeter 81 | T5 | Network | `perimeter81/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 138 | Netskope | T5 | Network | `netskope/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 139 | Sophos Central | T5 | Security | `sophos_central/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 140 | Sophos XG | T5 | Security | `sophos_xg/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
+| 135 | Palo Alto Prisma | T5 | Network | `paloalto/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 136 | NordLayer | T5 | Network | `nordlayer/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 137 | Perimeter 81 | T5 | Network | `perimeter81/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 138 | Netskope | T5 | Network | `netskope/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 139 | Sophos Central | T5 | Security | `sophos_central/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 140 | Sophos XG | T5 | Security | `sophos_xg/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
 | 141 | CrowdStrike | T5 | Security | `crowdstrike/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 142 | SentinelOne | T5 | Security | `sentinelone/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 143 | Snyk | T5 | Security | `snyk/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
@@ -172,29 +172,29 @@
 | 145 | HIBP | T5 | Security | `hibp/` | n/a | n/a | n/a | ⏳ | n/a |
 | 146 | BitSight | T5 | Security | `bitsight/` | n/a | n/a | n/a | ⏳ | n/a |
 | 147 | Tenable.io | T5 | Security | `tenable/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
-| 148 | Qualys VMDR | T5 | Security | `qualys/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
+| 148 | Qualys VMDR | T5 | Security | `qualys/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
 | 149 | Rapid7 | T5 | Security | `rapid7/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 150 | VirusTotal | T5 | Security | `virustotal/` | n/a | n/a | n/a | ⏳ | n/a |
-| 151 | Malwarebytes | T5 | Security | `malwarebytes/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 152 | ForgeRock | T5 | IAM | `forgerock/` | 🟡 | ⏳ | ⏳ | ⏳ | 🟡 |
-| 153 | BeyondTrust | T5 | IAM/PAM | `beyondtrust/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 154 | Keeper | T5 | Secrets/Vault | `keeper/` | 🟡 | ⏳ | ⏳ | ⏳ | 🟡 |
+| 151 | Malwarebytes | T5 | Security | `malwarebytes/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 152 | ForgeRock | T5 | IAM | `forgerock/` | 🟡 | ⏳ | ⏳ | 🟡 | 🟡 |
+| 153 | BeyondTrust | T5 | IAM/PAM | `beyondtrust/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 154 | Keeper | T5 | Secrets/Vault | `keeper/` | 🟡 | ⏳ | ⏳ | 🟡 | 🟡 |
 | 155 | Wazuh | T5 | SIEM | `wazuh/` | n/a | n/a | n/a | ⏳ | n/a |
-| 156 | OpenAI (ChatGPT) | T5 | GenAI | `openai/` | 🟡 | ⏳ | ⏳ | ⏳ | 🟡 |
-| 157 | Google Gemini | T5 | GenAI | `gemini/` | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ |
-| 158 | Anthropic (Claude) | T5 | GenAI | `anthropic/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
+| 156 | OpenAI (ChatGPT) | T5 | GenAI | `openai/` | 🟡 | ⏳ | ⏳ | 🟡 | 🟡 |
+| 157 | Google Gemini | T5 | GenAI | `gemini/` | 🟡 | ⏳ | ⏳ | 🟡 | ⏳ |
+| 158 | Anthropic (Claude) | T5 | GenAI | `anthropic/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
 | 159 | Perplexity AI | T5 | GenAI | `perplexity/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 160 | Mistral AI | T5 | GenAI | `mistral/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 161 | Midjourney | T5 | GenAI | `midjourney/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 162 | Jasper AI | T5 | GenAI | `jasper/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 163 | Copy.ai | T5 | GenAI | `copyai/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
+| 160 | Mistral AI | T5 | GenAI | `mistral/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 161 | Midjourney | T5 | GenAI | `midjourney/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 162 | Jasper AI | T5 | GenAI | `jasper/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 163 | Copy.ai | T5 | GenAI | `copyai/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
 | 164 | Practice Fusion | T5 | Health | `practice_fusion/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 165 | Kareo | T5 | Health | `kareo/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 166 | Zocdoc | T5 | Health | `zocdoc/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 167 | Yardi | T5 | Real Estate | `yardi/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 168 | Buildium | T5 | Real Estate | `buildium/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 169 | AppFolio | T5 | Real Estate | `appfolio/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 170 | NetSuite | T5 | ERP | `netsuite/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
+| 170 | NetSuite | T5 | ERP | `netsuite/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 171 | Coursera | T5 | Education | `coursera/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 172 | LinkedIn Learning | T5 | Training | `linkedin_learning/` | 🟡 | ⏳ | ⏳ | ⏳ | 🟡 |
 | 173 | Udemy Business | T5 | Training | `udemy_business/` | 🟡 | ⏳ | ⏳ | ⏳ | 🟡 |
@@ -230,10 +230,10 @@
 
 - Total connectors registered: **200**
 - `sync_identity` shipped: **194/200**
-- `provision_access` shipped: **83/200** (50 real provider integrations across five Phase 10 batches — top-50 by usage complete; Zoho CRM, Pipedrive, Terraform Cloud, Docker Hub, JFrog, LaunchDarkly added in batch 6 (PR #32); Travis CI, Mezmo, Drift added in batch 7; SonarCloud, CircleCI, New Relic, Splunk Cloud, Grafana — PR #34 batch 8; Sumo Logic, Crisp, LiveChat, Gorgias, Loom, Slack Enterprise, Basecamp — PR #35 batch 9; Quip, Wrike, Teamwork, LiquidPlanner, KnowBe4, Discord — PR #36 batch 10; **Gusto, Rippling, Personio, Hibob, Deel, Zenefits — PR #37 batch 11**)
-- `list_entitlements` shipped: **83/200**
-- `get_access_log` shipped: **136/200** (Microsoft Entra ID, Google Workspace, Okta, Auth0, AWS IAM, Azure RBAC, GCP IAM, Slack, GitHub, Salesforce — PR #25; Cloudflare, Zoom, HubSpot, Dropbox Business, PagerDuty, Sentry, Datadog, CrowdStrike, Snyk, Zendesk — PR #27; GitLab, Atlassian Jira, MS Teams, Notion, BambooHR, Workday, Asana, Monday.com, Figma, Miro, Trello, Airtable, Smartsheet, ClickUp, Box, Egnyte, Freshdesk, Help Scout, Front, Intercom — PR #28; SentinelOne, NetSuite, QuickBooks Online, DocuSign, Tenable, Rapid7 InsightVM, Duo Security, 1Password, LastPass, Ping Identity — PR #29 via the `AccessAuditor` optional interface — closing 50/50 ✅ of the top-50; Stripe, Discord, Shopify, Rippling, HackerOne, Zoho CRM, Sumo Logic, Mixpanel, Grafana, Mailchimp — PR #31 batch-5 expansion; Terraform Cloud, Docker Hub, JFrog, LaunchDarkly, New Relic, Splunk Cloud, Heroku, SonarCloud, CircleCI, Pipedrive — PR #32 batch-6 expansion; Tailscale, DigitalOcean, Vercel, Netlify, Vultr, Linode, OVHcloud, Alibaba Cloud, CloudSigma, Wasabi — PR #33 batch 7 Tier-2 Cloud Infrastructure expansion; Crisp, LiveChat, Gorgias, Loom, Slack Enterprise, Basecamp, KnowBe4, Wrike, Teamwork, LiquidPlanner — PR #34 batch 8 Tier-3 Business SaaS expansion; Gusto, Personio, Hibob, Paychex, Deel, Zenefits, Namely, Xero, FreshBooks, Wave — PR #35 batch 9 Tier-4 HR/Finance expansion; **Gong, Salesloft, Apollo.io, Copper, Insightly, Close, Klaviyo, ActiveCampaign, Constant Contact, Braze, PayPal, Bill.com, Expensify, Sage Intacct, Plaid, Brex, Ramp, Navan — PR #36 batch 10 Tier-4 Sales / Marketing / Finance / Legal / Supply expansion; **Clio, Ironclad, DocuSign CLM, MyCase, PandaDoc, PandaDoc CLM, HelloSign, Segment, Typeform, SurveyMonkey, Eventbrite, Anvyl, Coupa, SAP Concur, Cisco Meraki, Fortinet, Zscaler, Check Point — PR #37 batch 11 Tier-4 Legal / Events / Analytics / CDP / Supply + Tier-5 Network Security expansion**).
-- `sso_federation` shipped: **55/200** (Microsoft Entra ID, Google Workspace, Okta, Ping Identity, Auth0, Generic SAML, Generic OIDC, Slack, MS Teams, Salesforce, Dropbox Business, GitHub, GitLab, Atlassian Jira, Zendesk, BambooHR, Workday — prior PRs; Cloudflare, Rippling, ForgeRock, Keeper, OpenAI — PR #29; AWS IAM Identity Center, Azure Entra ID, GCP Workforce Identity Federation — PR #31; SAP Concur, Coupa, LinkedIn Learning, Udemy Business, RingCentral — PR #32 batch-5; HubSpot, Notion, Box, PagerDuty, Sentry — PR #33 batch 6 via `access.SSOMetadataFromConfig` helper; JFrog, LaunchDarkly, New Relic, Splunk Cloud, Sumo Logic — PR #34 batch 8; Datadog, Freshdesk, Front, Asana, Monday.com — PR #35 batch 9; Figma, Miro, Airtable, Smartsheet, ClickUp — PR #36 batch 10; **Zoho CRM, Egnyte, KnowBe4, Docker Hub, Terraform Cloud — PR #37 batch 11**; Zoom is `n/a`)
+- `provision_access` shipped: **89/200** (50 real provider integrations across five Phase 10 batches — top-50 by usage complete; Zoho CRM, Pipedrive, Terraform Cloud, Docker Hub, JFrog, LaunchDarkly added in batch 6 (PR #32); Travis CI, Mezmo, Drift added in batch 7; SonarCloud, CircleCI, New Relic, Splunk Cloud, Grafana — PR #34 batch 8; Sumo Logic, Crisp, LiveChat, Gorgias, Loom, Slack Enterprise, Basecamp — PR #35 batch 9; Quip, Wrike, Teamwork, LiquidPlanner, KnowBe4, Discord — PR #36 batch 10; Gusto, Rippling, Personio, Hibob, Deel, Zenefits — PR #37 batch 11; **Paychex, Namely, Xero, FreshBooks, Wave, Plaid — PR #38 batch 12**)
+- `list_entitlements` shipped: **89/200**
+- `get_access_log` shipped: **154/200** (Microsoft Entra ID, Google Workspace, Okta, Auth0, AWS IAM, Azure RBAC, GCP IAM, Slack, GitHub, Salesforce — PR #25; Cloudflare, Zoom, HubSpot, Dropbox Business, PagerDuty, Sentry, Datadog, CrowdStrike, Snyk, Zendesk — PR #27; GitLab, Atlassian Jira, MS Teams, Notion, BambooHR, Workday, Asana, Monday.com, Figma, Miro, Trello, Airtable, Smartsheet, ClickUp, Box, Egnyte, Freshdesk, Help Scout, Front, Intercom — PR #28; SentinelOne, NetSuite, QuickBooks Online, DocuSign, Tenable, Rapid7 InsightVM, Duo Security, 1Password, LastPass, Ping Identity — PR #29 via the `AccessAuditor` optional interface — closing 50/50 ✅ of the top-50; Stripe, Discord, Shopify, Rippling, HackerOne, Zoho CRM, Sumo Logic, Mixpanel, Grafana, Mailchimp — PR #31 batch-5 expansion; Terraform Cloud, Docker Hub, JFrog, LaunchDarkly, New Relic, Splunk Cloud, Heroku, SonarCloud, CircleCI, Pipedrive — PR #32 batch-6 expansion; Tailscale, DigitalOcean, Vercel, Netlify, Vultr, Linode, OVHcloud, Alibaba Cloud, CloudSigma, Wasabi — PR #33 batch 7 Tier-2 Cloud Infrastructure expansion; Crisp, LiveChat, Gorgias, Loom, Slack Enterprise, Basecamp, KnowBe4, Wrike, Teamwork, LiquidPlanner — PR #34 batch 8 Tier-3 Business SaaS expansion; Gusto, Personio, Hibob, Paychex, Deel, Zenefits, Namely, Xero, FreshBooks, Wave — PR #35 batch 9 Tier-4 HR/Finance expansion; **Gong, Salesloft, Apollo.io, Copper, Insightly, Close, Klaviyo, ActiveCampaign, Constant Contact, Braze, PayPal, Bill.com, Expensify, Sage Intacct, Plaid, Brex, Ramp, Navan — PR #36 batch 10 Tier-4 Sales / Marketing / Finance / Legal / Supply expansion; Clio, Ironclad, DocuSign CLM, MyCase, PandaDoc, PandaDoc CLM, HelloSign, Segment, Typeform, SurveyMonkey, Eventbrite, Anvyl, Coupa, SAP Concur, Cisco Meraki, Fortinet, Zscaler, Check Point — PR #37 batch 11 Tier-4 Legal / Events / Analytics / CDP / Supply + Tier-5 Network Security expansion; **Palo Alto Prisma, NordLayer, Perimeter 81, Netskope, Sophos Central, Sophos XG, Qualys VMDR, Malwarebytes, ForgeRock, BeyondTrust, Keeper, OpenAI, Anthropic, Mistral, Jasper, Copy.ai, Midjourney, Google Gemini — PR #38 batch 12 Tier-5 Network / Security / IAM / Secrets / GenAI expansion**).
+- `sso_federation` shipped: **60/200** (Microsoft Entra ID, Google Workspace, Okta, Ping Identity, Auth0, Generic SAML, Generic OIDC, Slack, MS Teams, Salesforce, Dropbox Business, GitHub, GitLab, Atlassian Jira, Zendesk, BambooHR, Workday — prior PRs; Cloudflare, Rippling, ForgeRock, Keeper, OpenAI — PR #29; AWS IAM Identity Center, Azure Entra ID, GCP Workforce Identity Federation — PR #31; SAP Concur, Coupa, LinkedIn Learning, Udemy Business, RingCentral — PR #32 batch-5; HubSpot, Notion, Box, PagerDuty, Sentry — PR #33 batch 6 via `access.SSOMetadataFromConfig` helper; JFrog, LaunchDarkly, New Relic, Splunk Cloud, Sumo Logic — PR #34 batch 8; Datadog, Freshdesk, Front, Asana, Monday.com — PR #35 batch 9; Figma, Miro, Airtable, Smartsheet, ClickUp — PR #36 batch 10; Zoho CRM, Egnyte, KnowBe4, Docker Hub, Terraform Cloud — PR #37 batch 11; **Crisp, Shopify, NetSuite, Coursera — PR #38 batch 12 (Slack Enterprise already SAML-wired in batch 9)**; Zoom is `n/a`)
 
 ## How to update this file
 
