@@ -134,6 +134,13 @@ func (c *GeminiAccessConnector) baseURL() string {
 	return "https://aiplatform.googleapis.com"
 }
 
+func (c *GeminiAccessConnector) auditBaseURL() string {
+	if c.urlOverride != "" {
+		return strings.TrimRight(c.urlOverride, "/")
+	}
+	return "https://logging.googleapis.com"
+}
+
 func (c *GeminiAccessConnector) client() httpDoer {
 	if c.httpClient != nil {
 		return c.httpClient()

@@ -1397,6 +1397,76 @@ func TestSSOFederation_TerraformCloudSAML(t *testing.T) {
 	}
 }
 
+// --- Phase 10 wiring batch 5: SSO federation for 4 more connectors ---
+
+func TestSSOFederation_CrispSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.crisp.chat/sso/saml/metadata/acme",
+		EntityID:    "https://app.crisp.chat/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "crisp-1", "Crisp", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_ShopifySAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://acme.myshopify.com/admin/sso/saml/metadata",
+		EntityID:    "https://shopify.com/store/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "shopify-1", "Shopify", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_NetSuiteSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://suitetalk.api.netsuite.com/sso/saml/metadata/acme",
+		EntityID:    "https://netsuite.com/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "netsuite-1", "NetSuite", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_CourseraSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://www.coursera.org/business/sso/saml/metadata/acme",
+		EntityID:    "https://coursera.org/business/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "coursera-1", "Coursera", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
 // contains is a substring helper that avoids pulling in `strings` for
 // just one use.
 func contains(haystack, needle string) bool {
