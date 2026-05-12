@@ -40,6 +40,20 @@ type httpDoer interface {
 type Config struct {
 	Region       string `json:"aws_region"`
 	AccountID    string `json:"aws_account_id"`
+
+	// SSOSAMLMetadataURL is the AWS IAM Identity Center SAML metadata
+	// document URL pasted from the Identity Center console. When set
+	// the connector advertises SAML federation metadata via
+	// GetSSOMetadata so the access platform can broker AWS SSO via
+	// Keycloak.
+	SSOSAMLMetadataURL string `json:"sso_saml_metadata_url,omitempty"`
+	// SSOSAMLEntityID is the SAML entity ID configured for the
+	// Identity Center instance (often the start URL). Optional —
+	// when empty the metadata URL is used.
+	SSOSAMLEntityID string `json:"sso_saml_entity_id,omitempty"`
+	// SSOLoginURL is the AWS SSO sign-in URL (e.g.
+	// https://d-1234567890.awsapps.com/start). Optional.
+	SSOLoginURL string `json:"sso_login_url,omitempty"`
 }
 
 type Secrets struct {
@@ -66,6 +80,15 @@ func DecodeConfig(raw map[string]interface{}) (Config, error) {
 	}
 	if v, ok := raw["aws_account_id"].(string); ok {
 		cfg.AccountID = v
+	}
+	if v, ok := raw["sso_saml_metadata_url"].(string); ok {
+		cfg.SSOSAMLMetadataURL = v
+	}
+	if v, ok := raw["sso_saml_entity_id"].(string); ok {
+		cfg.SSOSAMLEntityID = v
+	}
+	if v, ok := raw["sso_login_url"].(string); ok {
+		cfg.SSOLoginURL = v
 	}
 	return cfg, nil
 }
@@ -471,8 +494,38 @@ type listAttachedUserPoliciesResponse struct {
 		} `xml:"AttachedPolicies>member"`
 	} `xml:"ListAttachedUserPoliciesResult"`
 }
-func (c *AWSAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata returns SAML federation metadata for AWS IAM Identity
+// Center when the operator has configured sso_saml_metadata_url. AWS
+// IAM Identity Center publishes a per-instance SAML metadata document;
+// the operator pastes its URL into the connector config and the
+// access platform brokers federation through Keycloak via
+// SSOFederationService.ConfigureBroker.
+//
+// When sso_saml_metadata_url is empty the method returns (nil, nil) —
+// the connector still works for identity sync / provisioning but
+// SSO federation is opt-in.
+func (c *AWSAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	cfg, err := DecodeConfig(configRaw)
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+	md := strings.TrimSpace(cfg.SSOSAMLMetadataURL)
+	if md == "" {
+		return nil, nil
+	}
+	entity := strings.TrimSpace(cfg.SSOSAMLEntityID)
+	if entity == "" {
+		entity = md
+	}
+	return &access.SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: md,
+		EntityID:    entity,
+		SSOLoginURL: strings.TrimSpace(cfg.SSOLoginURL),
+	}, nil
 }
 
 type listAccessKeysResponse struct {

@@ -42,6 +42,13 @@ type httpDoer interface {
 type Config struct {
 	TenantID       string `json:"tenant_id"`
 	SubscriptionID string `json:"subscription_id"`
+
+	// SSOProtocol selects which federation protocol GetSSOMetadata
+	// advertises for the Entra ID tenant. Allowed values are
+	// "oidc" (default) and "saml". The two endpoints map to:
+	//   oidc: https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration
+	//   saml: https://login.microsoftonline.com/{tenant}/federationmetadata/2007-06/federationmetadata.xml
+	SSOProtocol string `json:"sso_protocol,omitempty"`
 }
 
 type Secrets struct {
@@ -68,6 +75,9 @@ func DecodeConfig(raw map[string]interface{}) (Config, error) {
 	}
 	if v, ok := raw["subscription_id"].(string); ok {
 		cfg.SubscriptionID = v
+	}
+	if v, ok := raw["sso_protocol"].(string); ok {
+		cfg.SSOProtocol = v
 	}
 	return cfg, nil
 }
@@ -521,8 +531,47 @@ type armRoleAssignment struct {
 		Scope            string `json:"scope"`
 	} `json:"properties"`
 }
-func (c *AzureAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata returns Entra ID federation metadata that the access
+// platform feeds into SSOFederationService.ConfigureBroker. The tenant
+// ID alone is enough to derive the canonical Microsoft Entra ID
+// metadata document for either OIDC (default) or SAML federation;
+// operators select the protocol via the optional sso_protocol config
+// field.
+//
+// OIDC metadata: https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration
+// SAML metadata: https://login.microsoftonline.com/{tenant}/federationmetadata/2007-06/federationmetadata.xml
+func (c *AzureAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	cfg, err := DecodeConfig(configRaw)
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+	tenant := strings.TrimSpace(cfg.TenantID)
+	proto := strings.ToLower(strings.TrimSpace(cfg.SSOProtocol))
+	if proto == "" {
+		proto = "oidc"
+	}
+	switch proto {
+	case "oidc":
+		return &access.SSOMetadata{
+			Protocol:    "oidc",
+			MetadataURL: fmt.Sprintf("https://login.microsoftonline.com/%s/v2.0/.well-known/openid-configuration", url.PathEscape(tenant)),
+			EntityID:    fmt.Sprintf("https://login.microsoftonline.com/%s/v2.0", url.PathEscape(tenant)),
+			SSOLoginURL: fmt.Sprintf("https://login.microsoftonline.com/%s/oauth2/v2.0/authorize", url.PathEscape(tenant)),
+		}, nil
+	case "saml":
+		return &access.SSOMetadata{
+			Protocol:     "saml",
+			MetadataURL:  fmt.Sprintf("https://login.microsoftonline.com/%s/federationmetadata/2007-06/federationmetadata.xml", url.PathEscape(tenant)),
+			EntityID:     fmt.Sprintf("https://sts.windows.net/%s/", url.PathEscape(tenant)),
+			SSOLoginURL:  fmt.Sprintf("https://login.microsoftonline.com/%s/saml2", url.PathEscape(tenant)),
+			SSOLogoutURL: fmt.Sprintf("https://login.microsoftonline.com/%s/saml2/logout", url.PathEscape(tenant)),
+		}, nil
+	default:
+		return nil, fmt.Errorf("azure: unsupported sso_protocol %q (want oidc | saml)", cfg.SSOProtocol)
+	}
 }
 
 // GetCredentialsMetadata returns the client-secret expiry advertised by
