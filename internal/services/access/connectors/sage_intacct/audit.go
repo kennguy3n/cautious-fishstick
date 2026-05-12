@@ -124,7 +124,7 @@ func buildSageIntacctAuditXML(cfg Config, secrets Secrets, offset int, since tim
 	_ = xml.EscapeText(&sb, []byte(strings.TrimSpace(secrets.UserPassword)))
 	sb.WriteString(`</password></login></authentication><content><function controlid="audit"><readByQuery><object>AUDITHISTORY</object><query>`)
 	if !since.IsZero() {
-		_ = xml.EscapeText(&sb, []byte("ACCESSTIME &gt; '"+since.UTC().Format("2006-01-02 15:04:05")+"'"))
+		_ = xml.EscapeText(&sb, []byte("ACCESSTIME > '"+since.UTC().Format("2006-01-02 15:04:05")+"'"))
 	}
 	sb.WriteString(`</query><pagesize>`)
 	fmt.Fprintf(&sb, "%d", pageSize)
