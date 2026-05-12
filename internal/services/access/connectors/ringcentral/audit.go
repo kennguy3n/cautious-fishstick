@@ -48,7 +48,7 @@ func (c *RingcentralAccessConnector) FetchAccessAuditLogs(
 		}
 		q := url.Values{}
 		q.Set("perPage", fmt.Sprintf("%d", ringcentralAuditPageSize))
-		q.Set("page", fmt.Sprintf("%d", page*ringcentralAuditPageSize))
+		q.Set("page", fmt.Sprintf("%d", page+1))
 		if !since.IsZero() {
 			q.Set("dateFrom", since.UTC().Format(time.RFC3339))
 		}

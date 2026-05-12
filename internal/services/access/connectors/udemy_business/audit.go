@@ -48,7 +48,7 @@ func (c *UdemyBusinessAccessConnector) FetchAccessAuditLogs(
 		}
 		q := url.Values{}
 		q.Set("page_size", fmt.Sprintf("%d", udemybusinessAuditPageSize))
-		q.Set("page", fmt.Sprintf("%d", page*udemybusinessAuditPageSize))
+		q.Set("page", fmt.Sprintf("%d", page+1))
 		if !since.IsZero() {
 			q.Set("since", since.UTC().Format(time.RFC3339))
 		}

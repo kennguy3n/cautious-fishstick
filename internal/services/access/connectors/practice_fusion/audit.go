@@ -48,7 +48,7 @@ func (c *PracticeFusionAccessConnector) FetchAccessAuditLogs(
 		}
 		q := url.Values{}
 		q.Set("per_page", fmt.Sprintf("%d", practicefusionAuditPageSize))
-		q.Set("page", fmt.Sprintf("%d", page*practicefusionAuditPageSize))
+		q.Set("page", fmt.Sprintf("%d", page+1))
 		if !since.IsZero() {
 			q.Set("since", since.UTC().Format(time.RFC3339))
 		}

@@ -48,7 +48,7 @@ func (c *VonageAccessConnector) FetchAccessAuditLogs(
 		}
 		q := url.Values{}
 		q.Set("page_size", fmt.Sprintf("%d", vonageAuditPageSize))
-		q.Set("page_index", fmt.Sprintf("%d", page*vonageAuditPageSize))
+		q.Set("page_index", fmt.Sprintf("%d", page))
 		if !since.IsZero() {
 			q.Set("date_from", since.UTC().Format(time.RFC3339))
 		}

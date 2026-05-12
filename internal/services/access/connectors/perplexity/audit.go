@@ -48,7 +48,7 @@ func (c *PerplexityAccessConnector) FetchAccessAuditLogs(
 		}
 		q := url.Values{}
 		q.Set("per_page", fmt.Sprintf("%d", perplexityAuditPageSize))
-		q.Set("page", fmt.Sprintf("%d", page*perplexityAuditPageSize))
+		q.Set("page", fmt.Sprintf("%d", page+1))
 		if !since.IsZero() {
 			q.Set("since", since.UTC().Format(time.RFC3339))
 		}
