@@ -1640,6 +1640,74 @@ func TestSSOFederation_SquareSAML(t *testing.T) {
 	}
 }
 
+func TestSSOFederation_TwilioSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://login.twilio.com/sso/saml/metadata/acme",
+		EntityID:    "https://twilio.com/sso/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "twilio-1", "Twilio", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_SendgridSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.sendgrid.com/sso/saml/metadata/acme",
+		EntityID:    "https://sendgrid.com/sso/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "sendgrid-1", "Sendgrid", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_VonageSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://dashboard.nexmo.com/sso/saml/metadata/acme",
+		EntityID:    "https://vonage.com/sso/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "vonage-1", "Vonage", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_WordPressSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://acme.wordpress.com/wp-json/jetpack/v4/sso/saml/metadata",
+		EntityID:    "https://wordpress.com/sso/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "wordpress-1", "WordPress", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
 // contains is a substring helper that avoids pulling in `strings` for
 // contains is a substring helper that avoids pulling in `strings` for
 // just one use.
