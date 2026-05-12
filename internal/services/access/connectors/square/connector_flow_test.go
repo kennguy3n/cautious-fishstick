@@ -43,7 +43,7 @@ func TestSquareConnectorFlow_FullLifecycle(t *testing.T) {
 			roleID = role
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"team_member":{"id":"` + userID + `","reference_id":"` + userID + `","status":"ACTIVE","job_assignment":{"role_id":"` + role + `"}}}`))
-		case r.Method == http.MethodPost && r.URL.Path == member:
+		case r.Method == http.MethodPut && r.URL.Path == member:
 			if status != "ACTIVE" {
 				w.WriteHeader(http.StatusNotFound)
 				return
@@ -52,6 +52,9 @@ func TestSquareConnectorFlow_FullLifecycle(t *testing.T) {
 			roleID = ""
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"team_member":{"id":"` + userID + `","status":"INACTIVE"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == member:
+			t.Errorf("RevokeAccess used POST on %s; Square UpdateTeamMember requires PUT", member)
+			w.WriteHeader(http.StatusMethodNotAllowed)
 		case r.Method == http.MethodGet && r.URL.Path == member:
 			if status == "" {
 				w.WriteHeader(http.StatusNotFound)

@@ -19,8 +19,10 @@ import (
 //   - ProvisionAccess  -> POST  /v2/team-members
 //     body: {"team_member": {"reference_id": email, "is_owner": false,
 //                            "given_name": email}}
-//   - RevokeAccess     -> POST  /v2/team-members/{userID} with
-//     {"team_member":{"status":"INACTIVE"}} (Square soft-deactivates)
+//   - RevokeAccess     -> PUT   /v2/team-members/{userID} with
+//     {"team_member":{"status":"INACTIVE"}} (Square soft-deactivates).
+//     Square's UpdateTeamMember endpoint is PUT, not POST — POST on
+//     the per-id URL returns 404/405 in production.
 //   - ListEntitlements -> GET   /v2/team-members/{userID}
 //
 // AccessGrant maps:
@@ -108,7 +110,7 @@ func (c *SquareAccessConnector) RevokeAccess(ctx context.Context, configRaw, sec
 			"status": "INACTIVE",
 		},
 	})
-	req, err := c.newRequest(ctx, secrets, http.MethodPost, c.teamMemberURL(grant.UserExternalID), bytes.NewReader(payload))
+	req, err := c.newRequest(ctx, secrets, http.MethodPut, c.teamMemberURL(grant.UserExternalID), bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
