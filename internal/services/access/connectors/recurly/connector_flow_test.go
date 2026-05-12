@@ -27,28 +27,28 @@ func TestRecurlyConnectorFlow_FullLifecycle(t *testing.T) {
 		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
 			t.Errorf("auth missing")
 		}
-		users := "/users"
-		user := users + "/" + email
+		accounts := "/accounts"
+		account := accounts + "/" + email
 		mu.Lock()
 		defer mu.Unlock()
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == users:
+		case r.Method == http.MethodPost && r.URL.Path == accounts:
 			if state != "" {
 				w.WriteHeader(http.StatusConflict)
-				_, _ = w.Write([]byte(`{"error":"user already exists"}`))
+				_, _ = w.Write([]byte(`{"error":"account already exists"}`))
 				return
 			}
 			state = role
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id":"` + email + `","email":"` + email + `","role":"` + role + `"}`))
-		case r.Method == http.MethodDelete && r.URL.Path == user:
+		case r.Method == http.MethodDelete && r.URL.Path == account:
 			if state == "" {
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
 			state = ""
 			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodGet && r.URL.Path == user:
+		case r.Method == http.MethodGet && r.URL.Path == account:
 			if state == "" {
 				w.WriteHeader(http.StatusNotFound)
 				return

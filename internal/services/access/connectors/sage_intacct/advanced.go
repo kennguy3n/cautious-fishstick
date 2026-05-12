@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -145,20 +146,7 @@ func (c *SageIntacctAccessConnector) doXMLStatus(ctx context.Context, body strin
 		return 0, nil, fmt.Errorf("sage_intacct: %s %s: %w", req.Method, req.URL.Path, err)
 	}
 	defer resp.Body.Close()
-	out := make([]byte, 0, 1<<10)
-	buf := make([]byte, 1<<14)
-	for {
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			out = append(out, buf[:n]...)
-			if len(out) > 1<<20 {
-				break
-			}
-		}
-		if err != nil {
-			break
-		}
-	}
+	out, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	return resp.StatusCode, out, nil
 }
 
