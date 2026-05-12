@@ -242,8 +242,12 @@ func (c *NetlifyAccessConnector) SyncIdentities(
 	return handler(identities, "")
 }
 
-func (c *NetlifyAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata returns the operator-supplied SAML metadata for
+// Netlify team-level SSO (Business plan and above). When
+// `sso_metadata_url` is blank the helper returns (nil, nil) and the
+// caller gracefully downgrades.
+func (c *NetlifyAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *NetlifyAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {

@@ -243,8 +243,13 @@ func (c *TailscaleAccessConnector) SyncIdentities(
 	return handler(identities, "")
 }
 
-func (c *TailscaleAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata returns the operator-supplied OIDC metadata for the
+// Tailscale tenant. Tailscale federates SSO via the tailnet's identity
+// provider settings (Okta / Azure AD / Google / OIDC). When
+// `sso_metadata_url` is blank the helper returns (nil, nil) and the
+// caller gracefully downgrades.
+func (c *TailscaleAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "oidc"), nil
 }
 
 func (c *TailscaleAccessConnector) GetCredentialsMetadata(ctx context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {

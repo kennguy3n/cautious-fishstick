@@ -273,8 +273,13 @@ func (c *HerokuAccessConnector) SyncIdentities(
 	return handler(identities, "")
 }
 
-func (c *HerokuAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata returns the operator-supplied SAML metadata URL for
+// Heroku Enterprise teams. Heroku federates SSO via SAML 2.0 with
+// metadata hosted by the customer's IdP; when `sso_metadata_url` is
+// blank the helper returns (nil, nil) and the caller gracefully
+// downgrades.
+func (c *HerokuAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *HerokuAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {

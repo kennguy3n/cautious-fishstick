@@ -1708,6 +1708,96 @@ func TestSSOFederation_WordPressSAML(t *testing.T) {
 	}
 }
 
+// TestSSOFederation_Batch17 (Phase 10 SSO batch 17) verifies the
+// end-to-end broker flow for the 5 newly-wired Tier-2 connectors:
+// Tailscale (OIDC), Heroku (SAML), DigitalOcean (SAML), Vercel (SAML)
+// and Netlify (SAML). Each connector federates SSO via the
+// SSOMetadataFromConfig helper.
+func TestSSOFederation_TailscaleOIDC(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "oidc",
+		MetadataURL: "https://login.tailscale.com/.well-known/openid-configuration",
+		EntityID:    "https://login.tailscale.com",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "tailscale-1", "Tailscale", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "oidc" {
+		t.Errorf("ProviderID = %q; want oidc", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_HerokuSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://sso.heroku.com/saml/teams/acme/metadata",
+		EntityID:    "https://sso.heroku.com/saml/teams/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "heroku-1", "Heroku", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_DigitalOceanSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://cloud.digitalocean.com/sso/saml/acme/metadata",
+		EntityID:    "https://cloud.digitalocean.com/sso/saml/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "digitalocean-1", "DigitalOcean", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_VercelSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://vercel.com/sso/saml/teams/acme/metadata",
+		EntityID:    "https://vercel.com/sso/saml/teams/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "vercel-1", "Vercel", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_NetlifySAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.netlify.com/sso/saml/acme/metadata",
+		EntityID:    "https://app.netlify.com/sso/saml/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "netlify-1", "Netlify", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
 // contains is a substring helper that avoids pulling in `strings` for
 // contains is a substring helper that avoids pulling in `strings` for
 // just one use.

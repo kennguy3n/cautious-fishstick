@@ -295,8 +295,12 @@ func (c *VercelAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *VercelAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata returns the operator-supplied SAML metadata for
+// Vercel team-level SSO (Enterprise plan). When `sso_metadata_url` is
+// blank the helper returns (nil, nil) and the caller gracefully
+// downgrades.
+func (c *VercelAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *VercelAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {
