@@ -19,7 +19,7 @@ func pipedriveAuditSecrets() map[string]interface{} {
 
 func TestPipedriveFetchAccessAuditLogs_Maps(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/v1/auditLogs") {
+		if !strings.HasPrefix(r.URL.Path, "/auditLogs") {
 			t.Errorf("path = %s", r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{

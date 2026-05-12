@@ -20,6 +20,10 @@ import (
 //   - RevokeAccess     -> DELETE /v1/permissionSets/{set_id}/assignments/{user_id}
 //   - ListEntitlements -> GET    /v1/users/{user_id}/permissionSetAssignments
 //
+// baseURL() already includes the /v1 prefix, so the path arguments
+// passed to newRequest / newRequestWithBody omit /v1 to avoid
+// double-prefixing.
+//
 // AccessGrant maps:
 //   - grant.UserExternalID     -> {user_id}
 //   - grant.ResourceExternalID -> {set_id}
@@ -76,7 +80,7 @@ func (c *PipedriveAccessConnector) ProvisionAccess(ctx context.Context, configRa
 	userID := strings.TrimSpace(grant.UserExternalID)
 	payload, _ := json.Marshal(map[string]string{"user_id": userID})
 	req, err := c.newRequestWithBody(ctx, secrets, http.MethodPost,
-		"/v1/permissionSets/"+setID+"/assignments", payload)
+		"/permissionSets/"+setID+"/assignments", payload)
 	if err != nil {
 		return err
 	}
@@ -109,7 +113,7 @@ func (c *PipedriveAccessConnector) RevokeAccess(ctx context.Context, configRaw, 
 	setID := url.PathEscape(strings.TrimSpace(grant.ResourceExternalID))
 	userID := url.PathEscape(strings.TrimSpace(grant.UserExternalID))
 	req, err := c.newRequestWithBody(ctx, secrets, http.MethodDelete,
-		"/v1/permissionSets/"+setID+"/assignments/"+userID, nil)
+		"/permissionSets/"+setID+"/assignments/"+userID, nil)
 	if err != nil {
 		return err
 	}
@@ -141,7 +145,7 @@ func (c *PipedriveAccessConnector) ListEntitlements(ctx context.Context, configR
 		return nil, err
 	}
 	req, err := c.newRequest(ctx, secrets, http.MethodGet,
-		"/v1/users/"+url.PathEscape(user)+"/permissionSetAssignments")
+		"/users/"+url.PathEscape(user)+"/permissionSetAssignments")
 	if err != nil {
 		return nil, err
 	}

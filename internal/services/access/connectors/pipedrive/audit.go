@@ -24,6 +24,9 @@ const (
 //
 //	GET /v1/auditLogs?start=N&limit=100&since={iso}
 //
+// baseURL() already includes the /v1 prefix, so the path passed to
+// newRequest is /auditLogs (without /v1) to avoid double-prefixing.
+//
 // Authentication is the api_token (sent as Bearer per existing
 // connector). Pipedrive scopes audit access to Enterprise plans;
 // other tenants return 401 / 403 / 404 which the connector
@@ -46,7 +49,7 @@ func (c *PipedriveAccessConnector) FetchAccessAuditLogs(
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		path := fmt.Sprintf("/v1/auditLogs?start=%d&limit=%d", start, pipedriveAuditPageSize)
+		path := fmt.Sprintf("/auditLogs?start=%d&limit=%d", start, pipedriveAuditPageSize)
 		if !since.IsZero() {
 			path += "&since=" + since.UTC().Format(time.RFC3339)
 		}

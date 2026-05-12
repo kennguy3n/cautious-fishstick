@@ -20,7 +20,7 @@ func TestConnectorFlow_FullLifecycle(t *testing.T) {
 			t.Errorf("auth header missing")
 		}
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/permissionSets/"+setID+"/assignments":
+		case r.Method == http.MethodPost && r.URL.Path == "/permissionSets/"+setID+"/assignments":
 			if assigned {
 				w.WriteHeader(http.StatusConflict)
 				_, _ = w.Write([]byte(`{"success":false,"error":"already a member of permission set"}`))
@@ -28,7 +28,7 @@ func TestConnectorFlow_FullLifecycle(t *testing.T) {
 			}
 			assigned = true
 			w.WriteHeader(http.StatusCreated)
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1/permissionSets/"+setID+"/assignments/"+userID:
+		case r.Method == http.MethodDelete && r.URL.Path == "/permissionSets/"+setID+"/assignments/"+userID:
 			if !assigned {
 				w.WriteHeader(http.StatusNotFound)
 				_, _ = w.Write([]byte(`{"success":false,"error":"not found"}`))
@@ -36,7 +36,7 @@ func TestConnectorFlow_FullLifecycle(t *testing.T) {
 			}
 			assigned = false
 			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/users/"+userID+"/permissionSetAssignments":
+		case r.Method == http.MethodGet && r.URL.Path == "/users/"+userID+"/permissionSetAssignments":
 			if assigned {
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"success": true,
