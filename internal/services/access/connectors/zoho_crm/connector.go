@@ -21,8 +21,6 @@ const (
 	pageSize       = 200
 )
 
-var ErrNotImplemented = errors.New("zoho_crm: capability not implemented in Phase 7")
-
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
@@ -239,15 +237,6 @@ func (c *ZohoCRMAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *ZohoCRMAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *ZohoCRMAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *ZohoCRMAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 func (c *ZohoCRMAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil
 }

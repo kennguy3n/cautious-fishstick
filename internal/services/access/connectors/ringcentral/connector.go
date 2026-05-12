@@ -272,8 +272,11 @@ func (c *RingcentralAccessConnector) RevokeAccess(_ context.Context, _, _ map[st
 func (c *RingcentralAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
 	return nil, ErrNotImplemented
 }
-func (c *RingcentralAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata returns the operator-supplied OIDC discovery URL if
+// configured. RingCentral federates SSO via OIDC; when
+// `sso_metadata_url` is blank the helper returns (nil, nil).
+func (c *RingcentralAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "oidc"), nil
 }
 
 func (c *RingcentralAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {

@@ -24,7 +24,6 @@ const (
 	pageSize     = 100
 )
 
-var ErrNotImplemented = errors.New("docker_hub: capability not implemented in Phase 7")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -299,15 +298,6 @@ func (c *DockerHubAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *DockerHubAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *DockerHubAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *DockerHubAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 func (c *DockerHubAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil
 }

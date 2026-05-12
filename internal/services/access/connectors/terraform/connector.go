@@ -21,7 +21,6 @@ const (
 	pageSize     = 100
 )
 
-var ErrNotImplemented = errors.New("terraform: capability not implemented in Phase 7")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -305,15 +304,6 @@ func (c *TerraformAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *TerraformAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *TerraformAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *TerraformAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 func (c *TerraformAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil
 }

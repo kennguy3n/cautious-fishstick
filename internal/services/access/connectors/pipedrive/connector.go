@@ -21,7 +21,6 @@ const (
 	defaultBaseURL = "https://api.pipedrive.com/v1"
 )
 
-var ErrNotImplemented = errors.New("pipedrive: capability not implemented in Phase 7")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -247,15 +246,6 @@ func (c *PipedriveAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *PipedriveAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *PipedriveAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *PipedriveAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 func (c *PipedriveAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil
 }

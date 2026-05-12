@@ -262,8 +262,11 @@ func (c *LinkedInLearningAccessConnector) RevokeAccess(_ context.Context, _, _ m
 func (c *LinkedInLearningAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
 	return nil, ErrNotImplemented
 }
-func (c *LinkedInLearningAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata returns the operator-supplied SAML metadata URL if
+// configured. LinkedIn Learning federates SSO via SAML 2.0; when
+// `sso_metadata_url` is blank the helper returns (nil, nil).
+func (c *LinkedInLearningAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *LinkedInLearningAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {

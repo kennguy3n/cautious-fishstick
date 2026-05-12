@@ -20,7 +20,6 @@ const (
 	pageSize     = 100
 )
 
-var ErrNotImplemented = errors.New("launchdarkly: capability not implemented in Phase 7")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -248,15 +247,6 @@ func (c *LaunchDarklyAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *LaunchDarklyAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *LaunchDarklyAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *LaunchDarklyAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 func (c *LaunchDarklyAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil
 }
