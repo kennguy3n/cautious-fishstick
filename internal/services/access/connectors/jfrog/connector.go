@@ -20,7 +20,6 @@ const (
 	pageSize     = 100
 )
 
-var ErrNotImplemented = errors.New("jfrog: capability not implemented in Phase 7")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -263,15 +262,6 @@ func (c *JFrogAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *JFrogAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *JFrogAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *JFrogAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 func (c *JFrogAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil
 }

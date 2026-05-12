@@ -792,6 +792,160 @@ func TestSSOFederation_GCPWorkforcePoolOIDC(t *testing.T) {
 	}
 }
 
+// --- Phase 10 wiring: SSO federation batch 5 (Tasks 17-18) ---
+
+// TestSSOFederation_Phase10Batch5 wires the five operator-supplied
+// SSO metadata pairs (SAP Concur, Coupa, LinkedIn Learning, Udemy
+// Business — SAML; RingCentral — OIDC) end-to-end through
+// SSOFederationService.ConfigureBroker.
+func TestSSOFederation_SAPConcurSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://us.api.concursolutions.com/saml2/metadata",
+		EntityID:    "https://us.api.concursolutions.com",
+		SSOLoginURL: "https://us.api.concursolutions.com/saml2/sso",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "concur-1", "SAP Concur", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+	if got.Config["metadataDescriptorUrl"] != meta.MetadataURL {
+		t.Errorf("metadataDescriptorUrl = %q", got.Config["metadataDescriptorUrl"])
+	}
+	if got.Config["singleSignOnServiceUrl"] != meta.SSOLoginURL {
+		t.Errorf("singleSignOnServiceUrl = %q", got.Config["singleSignOnServiceUrl"])
+	}
+}
+
+func TestSSOFederation_CoupaSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://acme.coupahost.com/saml/metadata",
+		EntityID:    "https://acme.coupahost.com",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "coupa-1", "Coupa", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+	if got.Config["entityId"] != meta.EntityID {
+		t.Errorf("entityId = %q", got.Config["entityId"])
+	}
+}
+
+func TestSSOFederation_LinkedInLearningSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://www.linkedin.com/learning/admin/sso/saml-metadata",
+		EntityID:    "urn:linkedin.com:learning:acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "linkedin-learning-1", "LinkedIn Learning", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+	if got.Config["metadataDescriptorUrl"] != meta.MetadataURL {
+		t.Errorf("metadataDescriptorUrl = %q", got.Config["metadataDescriptorUrl"])
+	}
+}
+
+func TestSSOFederation_UdemyBusinessSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://acme.udemy.com/organization/saml/metadata",
+		EntityID:    "https://acme.udemy.com",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "udemy-1", "Udemy Business", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+	if got.Config["entityId"] != meta.EntityID {
+		t.Errorf("entityId = %q", got.Config["entityId"])
+	}
+}
+
+func TestSSOFederation_RingCentralOIDC(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "oidc",
+		MetadataURL: "https://platform.ringcentral.com/.well-known/openid-configuration",
+		EntityID:    "https://platform.ringcentral.com",
+		SSOLoginURL: "https://platform.ringcentral.com/restapi/oauth/authorize",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "ringcentral-1", "RingCentral", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "oidc" {
+		t.Errorf("ProviderID = %q; want oidc", got.ProviderID)
+	}
+	if got.Config["metadataUrl"] != meta.MetadataURL {
+		t.Errorf("metadataUrl = %q", got.Config["metadataUrl"])
+	}
+	if got.Config["authorizationUrl"] != meta.SSOLoginURL {
+		t.Errorf("authorizationUrl = %q", got.Config["authorizationUrl"])
+	}
+}
+
+// TestSSOMetadataFromConfig_HelperBehaviour exercises the shared
+// helper at the connector seam: blank metadata URL → nil; populated
+// URL → SSOMetadata threaded through Keycloak.
+func TestSSOMetadataFromConfig_BlankReturnsNil(t *testing.T) {
+	if got := SSOMetadataFromConfig(nil, "saml"); got != nil {
+		t.Errorf("nil config: got %v", got)
+	}
+	if got := SSOMetadataFromConfig(map[string]interface{}{"sso_metadata_url": ""}, "saml"); got != nil {
+		t.Errorf("blank URL: got %v", got)
+	}
+}
+
+func TestSSOMetadataFromConfig_PopulatesFields(t *testing.T) {
+	cfg := map[string]interface{}{
+		"sso_metadata_url": "https://idp.example.com/saml/metadata",
+		"sso_entity_id":    "https://idp.example.com",
+		"sso_login_url":    "https://idp.example.com/saml/sso",
+		"sso_logout_url":   "https://idp.example.com/saml/slo",
+	}
+	got := SSOMetadataFromConfig(cfg, "saml")
+	if got == nil {
+		t.Fatalf("expected SSOMetadata, got nil")
+	}
+	if got.Protocol != "saml" {
+		t.Errorf("Protocol = %q", got.Protocol)
+	}
+	if got.MetadataURL != cfg["sso_metadata_url"].(string) {
+		t.Errorf("MetadataURL = %q", got.MetadataURL)
+	}
+	if got.EntityID != cfg["sso_entity_id"].(string) {
+		t.Errorf("EntityID = %q", got.EntityID)
+	}
+	if got.SSOLoginURL != cfg["sso_login_url"].(string) {
+		t.Errorf("SSOLoginURL = %q", got.SSOLoginURL)
+	}
+	if got.SSOLogoutURL != cfg["sso_logout_url"].(string) {
+		t.Errorf("SSOLogoutURL = %q", got.SSOLogoutURL)
+	}
+}
+
 // contains is a substring helper that avoids pulling in `strings` for
 // just one use.
 func contains(haystack, needle string) bool {
