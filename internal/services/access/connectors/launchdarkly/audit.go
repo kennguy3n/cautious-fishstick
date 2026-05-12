@@ -144,6 +144,12 @@ func mapLaunchDarklyAuditEntry(e *launchDarklyAuditEntry) *access.AuditLogEntry 
 	if e == nil || strings.TrimSpace(e.ID) == "" {
 		return nil
 	}
+	// time.UnixMilli(0) returns 1970-01-01T00:00:00Z, not the zero time, so
+	// a missing/zero Date would otherwise leak into the batch with a 1970
+	// timestamp and poison the cursor. Drop the row instead.
+	if e.Date == 0 {
+		return nil
+	}
 	ts := time.UnixMilli(e.Date).UTC()
 	raw, _ := json.Marshal(e)
 	rawMap := map[string]interface{}{}

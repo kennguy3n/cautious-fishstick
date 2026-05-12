@@ -124,6 +124,20 @@ func TestLaunchDarklyFetchAccessAuditLogs_ServerError(t *testing.T) {
 	}
 }
 
+func TestLaunchDarklyMapAuditEntry_DropsZeroDate(t *testing.T) {
+	// A row with Date == 0 must be dropped — otherwise time.UnixMilli(0)
+	// would emit a 1970-01-01 timestamp into the batch and poison the cursor.
+	got := mapLaunchDarklyAuditEntry(&launchDarklyAuditEntry{
+		ID:   "evt-zero",
+		Kind: "flag",
+		Name: "Created flag",
+		Date: 0,
+	})
+	if got != nil {
+		t.Fatalf("mapLaunchDarklyAuditEntry(Date=0) = %#v, want nil", got)
+	}
+}
+
 func fmtInt(i int) string {
 	if i == 0 {
 		return "0"
