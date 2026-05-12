@@ -19,7 +19,7 @@ func (noNetworkRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) 
 	return nil, errors.New("network call attempted")
 }
 
-func validConfig() map[string]interface{}  { return map[string]interface{}{"guild_id": "1234567890"} }
+func validConfig() map[string]interface{} { return map[string]interface{}{"guild_id": "1234567890"} }
 func validSecrets() map[string]interface{} {
 	return map[string]interface{}{"bot_token": "dscdAAAA1234bbbbCCCC"}
 }
@@ -82,7 +82,7 @@ func TestSync_PaginatesUsers(t *testing.T) {
 			}
 			for i := 0; i < pageSize; i++ {
 				items = append(items, map[string]interface{}{
-					"user": map[string]interface{}{"id": fmt.Sprintf("%d", 10000+i), "username": fmt.Sprintf("u%d", i), "global_name": "User"},
+					"user":  map[string]interface{}{"id": fmt.Sprintf("%d", 10000+i), "username": fmt.Sprintf("u%d", i), "global_name": "User"},
 					"roles": []string{"role1"},
 				})
 			}

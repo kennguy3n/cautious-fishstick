@@ -331,10 +331,10 @@ func (c *SageIntacctAccessConnector) GetCredentialsMetadata(_ context.Context, c
 		return nil, err
 	}
 	return map[string]interface{}{
-		"provider":          ProviderName,
-		"auth_type":         "session_xml",
-		"sender_short":      shortToken(secrets.SenderID),
-		"user_short":        shortToken(secrets.UserID),
+		"provider":     ProviderName,
+		"auth_type":    "session_xml",
+		"sender_short": shortToken(secrets.SenderID),
+		"user_short":   shortToken(secrets.UserID),
 	}, nil
 }
 

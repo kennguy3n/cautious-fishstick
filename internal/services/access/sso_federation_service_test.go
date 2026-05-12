@@ -1227,6 +1227,91 @@ func TestSSOFederation_MondaySAML(t *testing.T) {
 	}
 }
 
+func TestSSOFederation_FigmaSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://www.figma.com/api/sso/saml/metadata/acme",
+		EntityID:    "https://www.figma.com/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "figma-1", "Figma", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_MiroSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://miro.com/api/v1/sso/saml/metadata?org=acme",
+		EntityID:    "https://miro.com/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "miro-1", "Miro", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_AirtableSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://airtable.com/sso/saml/metadata/acme",
+		EntityID:    "https://airtable.com/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "airtable-1", "Airtable", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_SmartsheetSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.smartsheet.com/sso/saml/metadata/acme",
+		EntityID:    "https://app.smartsheet.com/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "smartsheet-1", "Smartsheet", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_ClickUpSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.clickup.com/sso/saml/metadata/acme",
+		EntityID:    "https://app.clickup.com/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "clickup-1", "ClickUp", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
 // contains is a substring helper that avoids pulling in `strings` for
 // just one use.
 func contains(haystack, needle string) bool {

@@ -215,8 +215,8 @@ type expPolicy struct {
 }
 
 type expResponse struct {
-	PolicyList []expPolicy `json:"policyList"`
-	ResponseCode int        `json:"responseCode"`
+	PolicyList   []expPolicy `json:"policyList"`
+	ResponseCode int         `json:"responseCode"`
 }
 
 func (c *ExpensifyAccessConnector) CountIdentities(ctx context.Context, configRaw, secretsRaw map[string]interface{}) (int, error) {
@@ -288,10 +288,10 @@ func (c *ExpensifyAccessConnector) GetCredentialsMetadata(_ context.Context, con
 		return nil, err
 	}
 	return map[string]interface{}{
-		"provider":          ProviderName,
-		"auth_type":         "partner_credentials",
-		"partner_id_short":  shortToken(secrets.PartnerUserID),
-		"secret_short":      shortToken(secrets.PartnerUserSecret),
+		"provider":         ProviderName,
+		"auth_type":        "partner_credentials",
+		"partner_id_short": shortToken(secrets.PartnerUserID),
+		"secret_short":     shortToken(secrets.PartnerUserSecret),
 	}, nil
 }
 

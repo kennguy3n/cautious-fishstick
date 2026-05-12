@@ -112,10 +112,10 @@ type airtableAuditEvent struct {
 		IPAddress string `json:"ipAddress,omitempty"`
 		UserAgent string `json:"userAgent,omitempty"`
 	} `json:"origin"`
-	ModelType    string                 `json:"modelType,omitempty"`
-	ModelID      string                 `json:"modelId,omitempty"`
+	ModelType      string                 `json:"modelType,omitempty"`
+	ModelID        string                 `json:"modelId,omitempty"`
 	ContextDetails map[string]interface{} `json:"contextDetails,omitempty"`
-	Payload      map[string]interface{} `json:"payload,omitempty"`
+	Payload        map[string]interface{} `json:"payload,omitempty"`
 }
 
 func mapAirtableAuditEvent(e *airtableAuditEvent) *access.AuditLogEntry {

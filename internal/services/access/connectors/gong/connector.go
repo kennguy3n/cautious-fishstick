@@ -172,12 +172,12 @@ func (c *GongAccessConnector) VerifyPermissions(ctx context.Context, configRaw, 
 }
 
 type gongUser struct {
-	ID         string `json:"id"`
-	EmailAddr  string `json:"emailAddress"`
-	FirstName  string `json:"firstName"`
-	LastName   string `json:"lastName"`
-	Title      string `json:"title"`
-	Active     bool   `json:"active"`
+	ID        string `json:"id"`
+	EmailAddr string `json:"emailAddress"`
+	FirstName string `json:"firstName"`
+	LastName  string `json:"lastName"`
+	Title     string `json:"title"`
+	Active    bool   `json:"active"`
 }
 
 type gongListResponse struct {
@@ -274,9 +274,9 @@ func (c *GongAccessConnector) GetCredentialsMetadata(_ context.Context, configRa
 		return nil, err
 	}
 	return map[string]interface{}{
-		"provider":    ProviderName,
-		"auth_type":   "basic",
-		"key_short":   shortToken(secrets.AccessKey),
+		"provider":     ProviderName,
+		"auth_type":    "basic",
+		"key_short":    shortToken(secrets.AccessKey),
 		"secret_short": shortToken(secrets.SecretKey),
 	}, nil
 }

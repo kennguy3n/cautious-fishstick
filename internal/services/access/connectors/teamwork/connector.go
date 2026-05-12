@@ -199,13 +199,13 @@ func (c *TeamworkAccessConnector) VerifyPermissions(ctx context.Context, configR
 }
 
 type teamworkPerson struct {
-	ID         string `json:"id"`
-	UserID     string `json:"user-id"`
-	FirstName  string `json:"first-name"`
-	LastName   string `json:"last-name"`
-	EmailAddr  string `json:"email-address"`
-	Administrator bool `json:"administrator"`
-	UserType   string `json:"user-type"`
+	ID            string `json:"id"`
+	UserID        string `json:"user-id"`
+	FirstName     string `json:"first-name"`
+	LastName      string `json:"last-name"`
+	EmailAddr     string `json:"email-address"`
+	Administrator bool   `json:"administrator"`
+	UserType      string `json:"user-type"`
 }
 
 type teamworkListResponse struct {
@@ -287,15 +287,6 @@ func (c *TeamworkAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *TeamworkAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *TeamworkAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *TeamworkAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 func (c *TeamworkAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil
 }

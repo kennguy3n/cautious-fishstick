@@ -523,8 +523,11 @@ func (c *MiroAccessConnector) ListEntitlements(
 		cursor = resp.Cursor
 	}
 }
-func (c *MiroAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+
+// GetSSOMetadata returns Miro SAML federation metadata when the operator
+// supplies `sso_metadata_url` in the connector config.
+func (c *MiroAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *MiroAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {

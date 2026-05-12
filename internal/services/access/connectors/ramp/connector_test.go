@@ -19,7 +19,7 @@ func (noNetworkRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) 
 	return nil, errors.New("network call attempted")
 }
 
-func validConfig() map[string]interface{}  { return map[string]interface{}{} }
+func validConfig() map[string]interface{} { return map[string]interface{}{} }
 func validSecrets() map[string]interface{} {
 	return map[string]interface{}{"token": "rmp_AAAA1234bbbbCCCC"}
 }
@@ -70,7 +70,7 @@ func TestSync_PaginatesUsers(t *testing.T) {
 				t.Errorf("page = %q", page)
 			}
 			for i := 0; i < pageSize; i++ {
-				arr = append(arr, map[string]interface{}{ "id": fmt.Sprintf("u%d", i), "email": fmt.Sprintf("u%d@x.com", i), "first_name": fmt.Sprintf("U%d", i), "last_name": fmt.Sprintf("U%d", i), "status": "active" })
+				arr = append(arr, map[string]interface{}{"id": fmt.Sprintf("u%d", i), "email": fmt.Sprintf("u%d@x.com", i), "first_name": fmt.Sprintf("U%d", i), "last_name": fmt.Sprintf("U%d", i), "status": "active"})
 			}
 		} else {
 			if page != "2" {
@@ -123,4 +123,3 @@ func TestGetCredentialsMetadata_RedactsToken(t *testing.T) {
 		t.Errorf("redaction failed: %q", got)
 	}
 }
-

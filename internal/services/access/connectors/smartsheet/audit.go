@@ -102,16 +102,16 @@ type smartsheetEventPage struct {
 }
 
 type smartsheetEvent struct {
-	EventID     string                 `json:"id"`
-	ObjectType  string                 `json:"objectType"`
-	Action      string                 `json:"action"`
-	EventTime   string                 `json:"eventTimestamp"`
-	UserID      json.Number            `json:"userId"`
-	UserAlt     string                 `json:"userAlt,omitempty"`
-	AccessToken string                 `json:"accessTokenName,omitempty"`
-	Source      string                 `json:"source,omitempty"`
-	RequestID   string                 `json:"requestUserId,omitempty"`
-	ObjectID    json.Number            `json:"objectId"`
+	EventID           string                 `json:"id"`
+	ObjectType        string                 `json:"objectType"`
+	Action            string                 `json:"action"`
+	EventTime         string                 `json:"eventTimestamp"`
+	UserID            json.Number            `json:"userId"`
+	UserAlt           string                 `json:"userAlt,omitempty"`
+	AccessToken       string                 `json:"accessTokenName,omitempty"`
+	Source            string                 `json:"source,omitempty"`
+	RequestID         string                 `json:"requestUserId,omitempty"`
+	ObjectID          json.Number            `json:"objectId"`
 	AdditionalDetails map[string]interface{} `json:"additionalDetails,omitempty"`
 }
 

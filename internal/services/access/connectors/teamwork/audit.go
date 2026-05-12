@@ -119,8 +119,8 @@ type teamworkAuditEvent struct {
 type teamworkAuditResponse struct {
 	AuditTrail []teamworkAuditEvent `json:"audit_trail"`
 	Meta       struct {
-		Page    int `json:"page"`
-		Total   int `json:"total"`
+		Page  int `json:"page"`
+		Total int `json:"total"`
 	} `json:"meta"`
 }
 

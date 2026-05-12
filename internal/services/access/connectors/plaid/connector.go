@@ -280,10 +280,10 @@ func (c *PlaidAccessConnector) GetCredentialsMetadata(_ context.Context, configR
 		return nil, err
 	}
 	return map[string]interface{}{
-		"provider":          ProviderName,
-		"auth_type":         "client_id_secret",
-		"client_id_short":   shortToken(secrets.ClientID),
-		"secret_short":      shortToken(secrets.Secret),
+		"provider":        ProviderName,
+		"auth_type":       "client_id_secret",
+		"client_id_short": shortToken(secrets.ClientID),
+		"secret_short":    shortToken(secrets.Secret),
 	}, nil
 }
 

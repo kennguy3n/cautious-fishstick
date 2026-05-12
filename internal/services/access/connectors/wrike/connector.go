@@ -211,11 +211,11 @@ func (c *WrikeAccessConnector) VerifyPermissions(ctx context.Context, configRaw,
 }
 
 type wrikeContact struct {
-	ID         string   `json:"id"`
-	FirstName  string   `json:"firstName"`
-	LastName   string   `json:"lastName"`
-	Type       string   `json:"type"`
-	Profiles   []struct {
+	ID        string `json:"id"`
+	FirstName string `json:"firstName"`
+	LastName  string `json:"lastName"`
+	Type      string `json:"type"`
+	Profiles  []struct {
 		Email string `json:"email"`
 	} `json:"profiles"`
 	Deleted bool `json:"deleted"`
@@ -301,15 +301,6 @@ func (c *WrikeAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *WrikeAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *WrikeAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *WrikeAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 func (c *WrikeAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil
 }

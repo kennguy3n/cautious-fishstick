@@ -239,10 +239,10 @@ func (c *PayPalAccessConnector) VerifyPermissions(ctx context.Context, configRaw
 }
 
 type paypalMerchant struct {
-	MerchantID    string `json:"merchant_id"`
-	TrackingID    string `json:"tracking_id"`
-	PrimaryEmail  string `json:"primary_email"`
-	PaymentsReceivable bool `json:"payments_receivable"`
+	MerchantID         string `json:"merchant_id"`
+	TrackingID         string `json:"tracking_id"`
+	PrimaryEmail       string `json:"primary_email"`
+	PaymentsReceivable bool   `json:"payments_receivable"`
 	OAuthIntegrations  []struct {
 		IntegrationType string `json:"integration_type"`
 	} `json:"oauth_integrations"`

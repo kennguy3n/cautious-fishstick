@@ -276,10 +276,10 @@ func (c *AirtableAccessConnector) SyncIdentities(
 // ---------- Phase 10 advanced capabilities ----------
 
 type airtableCollaborator struct {
-	UserID      string `json:"userId"`
-	Email       string `json:"email"`
-	Permission  string `json:"permissionLevel"`
-	GranularID  string `json:"granularId,omitempty"`
+	UserID     string `json:"userId"`
+	Email      string `json:"email"`
+	Permission string `json:"permissionLevel"`
+	GranularID string `json:"granularId,omitempty"`
 }
 
 type airtableBaseCollaboratorsResponse struct {
@@ -538,8 +538,11 @@ func (c *AirtableAccessConnector) listBaseCollaborators(ctx context.Context, sec
 	}
 	return list.IndividualCollaborators, nil
 }
-func (c *AirtableAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+
+// GetSSOMetadata returns Airtable SAML federation metadata when the
+// operator supplies `sso_metadata_url` in the connector config.
+func (c *AirtableAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *AirtableAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {
