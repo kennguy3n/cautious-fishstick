@@ -301,15 +301,6 @@ func (c *DocuSignCLMAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *DocuSignCLMAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *DocuSignCLMAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *DocuSignCLMAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 // GetSSOMetadata surfaces operator-supplied SAML metadata for the
 // DocuSign CLM workspace. DocuSign CLM supports SAML 2.0 SSO via
 // the CLM admin console; the connector forwards the operator-supplied

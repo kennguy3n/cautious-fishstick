@@ -239,8 +239,15 @@ func (c *BufferAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]
 func (c *BufferAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
 	return nil, ErrNotImplemented
 }
-func (c *BufferAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata surfaces operator-supplied SAML metadata for the
+// Buffer workspace. Buffer supports SAML 2.0 SSO via the platform
+// admin console for paid plans; the connector forwards
+// operator-supplied URLs verbatim via access.SSOMetadataFromConfig
+// so the SSOFederationService can register a Keycloak SAML broker.
+// Returns (nil, nil) when the operator has not supplied a metadata
+// URL so the caller downgrades gracefully.
+func (c *BufferAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *BufferAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {
