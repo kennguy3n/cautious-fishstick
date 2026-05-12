@@ -269,17 +269,12 @@ func (c *ExpensifyAccessConnector) SyncIdentities(
 	return handler(identities, "")
 }
 
-func (c *ExpensifyAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *ExpensifyAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *ExpensifyAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
-func (c *ExpensifyAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata returns the operator-supplied SAML metadata URL if
+// configured. Expensify federates SSO via SAML 2.0 with metadata
+// hosted by the customer's IdP; when `sso_metadata_url` is blank the
+// helper returns nil so callers gracefully downgrade.
+func (c *ExpensifyAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *ExpensifyAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {

@@ -250,17 +250,12 @@ func (c *RecurlyAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *RecurlyAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *RecurlyAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *RecurlyAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
-func (c *RecurlyAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata returns the operator-supplied SAML metadata URL if
+// configured. Recurly federates SSO via SAML 2.0; when
+// `sso_metadata_url` is blank the helper returns nil so the caller
+// gracefully downgrades.
+func (c *RecurlyAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *RecurlyAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {
