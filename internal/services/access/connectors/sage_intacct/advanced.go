@@ -32,11 +32,49 @@ import (
 // detect those wordings instead of relying on HTTP status alone.
 
 func sageValidateGrant(g access.AccessGrant) error {
-	if strings.TrimSpace(g.UserExternalID) == "" {
+	user := strings.TrimSpace(g.UserExternalID)
+	if user == "" {
 		return errors.New("sage_intacct: grant.UserExternalID is required")
 	}
-	if strings.TrimSpace(g.ResourceExternalID) == "" {
+	if err := sageRejectUnsafeIdentifier("UserExternalID", user); err != nil {
+		return err
+	}
+	role := strings.TrimSpace(g.ResourceExternalID)
+	if role == "" {
 		return errors.New("sage_intacct: grant.ResourceExternalID is required")
+	}
+	if err := sageRejectUnsafeIdentifier("ResourceExternalID", role); err != nil {
+		return err
+	}
+	return nil
+}
+
+// sageEscapeQueryLiteral escapes a value for embedding inside a Sage
+// Intacct readByQuery <query> string literal delimited by single
+// quotes (e.g. USERID = '...'). xml.EscapeText handles the XML
+// structural characters (<, >, &, ") but does NOT escape single
+// quotes, which are the literal delimiter — without doubling them a
+// caller-supplied value containing ' can break out of the literal
+// and inject arbitrary query predicates.
+func sageEscapeQueryLiteral(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
+}
+
+// sageRejectUnsafeIdentifier blocks UserExternalID / ResourceExternalID
+// values that contain characters which have no legitimate meaning in a
+// Sage Intacct USERID / ROLEID and which would otherwise need special
+// escaping (null bytes, CR / LF, and embedded single quotes). The
+// query builder also escapes single quotes via sageEscapeQueryLiteral,
+// but rejecting them here is defense-in-depth: the malformed value
+// never reaches the upstream API in the first place.
+func sageRejectUnsafeIdentifier(field, value string) error {
+	for _, r := range value {
+		switch r {
+		case '\x00', '\r', '\n':
+			return fmt.Errorf("sage_intacct: grant.%s contains forbidden control character", field)
+		case '\'':
+			return fmt.Errorf("sage_intacct: grant.%s contains forbidden single-quote character", field)
+		}
 	}
 	return nil
 }
@@ -87,7 +125,7 @@ func (c *SageIntacctAccessConnector) buildUserQueryXML(cfg Config, secrets Secre
 	sb.WriteString(`</companyid><password>`)
 	xml.EscapeText(&sb, []byte(strings.TrimSpace(secrets.UserPassword)))
 	sb.WriteString(`</password></login></authentication><content><function controlid="users-query"><readByQuery><object>USERINFO</object><query>USERID = '`)
-	xml.EscapeText(&sb, []byte(strings.TrimSpace(userID)))
+	xml.EscapeText(&sb, []byte(sageEscapeQueryLiteral(strings.TrimSpace(userID))))
 	sb.WriteString(`'</query><pagesize>100</pagesize></readByQuery></function></content></operation></request>`)
 	return sb.String()
 }
@@ -229,6 +267,9 @@ func (c *SageIntacctAccessConnector) ListEntitlements(ctx context.Context, confi
 	user := strings.TrimSpace(userExternalID)
 	if user == "" {
 		return nil, errors.New("sage_intacct: user external id is required")
+	}
+	if err := sageRejectUnsafeIdentifier("UserExternalID", user); err != nil {
+		return nil, err
 	}
 	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
 	if err != nil {
