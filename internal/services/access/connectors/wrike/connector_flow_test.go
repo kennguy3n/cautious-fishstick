@@ -94,6 +94,57 @@ func TestConnectorFlow_FullLifecycle(t *testing.T) {
 	}
 }
 
+// TestConnectorFlow_RevokeBypassesPreCheck guards against regressing the bug
+// where RevokeAccess silently no-opped whenever the /groups/{id} pre-check
+// fetch failed with a transient error. With the pre-check removed, a flaky
+// group-fetch endpoint must NOT prevent the destructive PUT removeMembers
+// from being issued. We simulate a hard failure on the GET endpoint, assert
+// no GET is ever made (the pre-check is gone), and assert exactly one PUT
+// removeMembers fires.
+func TestConnectorFlow_RevokeBypassesPreCheck(t *testing.T) {
+	const userID = "KX1234"
+	const groupID = "G-9"
+	var getCount, putCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/groups/"+groupID:
+			getCount++
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"errorDescription":"backend unavailable"}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v4/groups/"+groupID:
+			body, _ := io.ReadAll(r.Body)
+			if !strings.Contains(string(body), "removeMembers") {
+				t.Errorf("expected removeMembers body, got %s", string(body))
+			}
+			if !strings.Contains(string(body), userID) {
+				t.Errorf("expected user id %q in body, got %s", userID, string(body))
+			}
+			putCount++
+			_, _ = w.Write([]byte(`{"data":[{"id":"` + groupID + `"}]}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	if err := c.RevokeAccess(context.Background(),
+		map[string]interface{}{"host": "app-us2.wrike.com", "group_id": groupID},
+		map[string]interface{}{"token": "tok"},
+		access.AccessGrant{UserExternalID: userID, ResourceExternalID: groupID}); err != nil {
+		t.Fatalf("RevokeAccess with flaky pre-check endpoint: %v", err)
+	}
+	if getCount != 0 {
+		t.Fatalf("expected zero pre-check GETs (pre-check removed), got %d", getCount)
+	}
+	if putCount != 1 {
+		t.Fatalf("expected exactly one PUT removeMembers, got %d", putCount)
+	}
+}
+
 func TestConnectorFlow_ProvisionForbiddenFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)

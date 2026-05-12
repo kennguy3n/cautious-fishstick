@@ -169,6 +169,50 @@ func TestConnectorFlow_ProvisionResolvesNumericToEmail(t *testing.T) {
 	}
 }
 
+// TestConnectorFlow_RevokeSurfacesPreCheckError guards against regressing the
+// bug where RevokeAccess returned nil whenever the /members pre-check fetch
+// failed with a transient error. A transient lookup failure must NOT be
+// interpreted as "user already revoked" — that would silently leave the
+// caller believing the user has lost access while they still hold workspace
+// membership. We assert that a 5xx on the listing endpoint propagates as an
+// error and that no DELETE is attempted (no destructive operation against an
+// unknown member id).
+func TestConnectorFlow_RevokeSurfacesPreCheckError(t *testing.T) {
+	const workspaceID = "12345"
+	var deleteCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/workspaces/"+workspaceID+"/members":
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"backend unavailable"}`))
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/workspaces/"+workspaceID+"/members/"):
+			deleteCount++
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	err := c.RevokeAccess(context.Background(),
+		map[string]interface{}{"workspace_id": workspaceID},
+		map[string]interface{}{"token": "tok"},
+		access.AccessGrant{UserExternalID: "ada@example.com", ResourceExternalID: workspaceID})
+	if err == nil {
+		t.Fatalf("expected revoke pre-check error to propagate, got nil (silent no-op)")
+	}
+	if !strings.Contains(err.Error(), "revoke pre-check") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if deleteCount != 0 {
+		t.Fatalf("expected zero DELETEs when pre-check fails, got %d", deleteCount)
+	}
+}
+
 func TestConnectorFlow_ProvisionForbiddenFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)

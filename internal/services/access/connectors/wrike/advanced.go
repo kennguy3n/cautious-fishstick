@@ -109,9 +109,12 @@ func (c *WrikeAccessConnector) RevokeAccess(ctx context.Context, configRaw, secr
 	if err != nil {
 		return err
 	}
-	if !c.userAlreadyInGroup(ctx, cfg, secrets, grant.ResourceExternalID, grant.UserExternalID) {
-		return nil
-	}
+	// No pre-check here: a transient /groups/{id} fetch failure must NOT be
+	// interpreted as "user not in group" — that would silently no-op the
+	// revoke while the user retains access. We issue the PUT removeMembers
+	// directly and let the idempotency-status handler absorb the response
+	// when the user was never a member (Wrike returns 200 OK with the group
+	// unchanged) or when the group itself is gone (404).
 	payload, _ := json.Marshal(map[string]interface{}{
 		"removeMembers": []string{strings.TrimSpace(grant.UserExternalID)},
 	})

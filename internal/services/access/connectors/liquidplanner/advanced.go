@@ -77,7 +77,11 @@ func (c *LiquidPlannerAccessConnector) ProvisionAccess(ctx context.Context, conf
 	if err != nil {
 		return err
 	}
-	if _, ok := c.findLiquidplannerMember(ctx, cfg, secrets, grant.UserExternalID); ok {
+	// Pre-check is best-effort here: a transient lookup error is tolerated
+	// because a real duplicate POST is absorbed by IsIdempotentProvisionStatus
+	// below. RevokeAccess uses the strict variant to avoid silently no-opping
+	// on transient errors.
+	if _, ok, _ := c.findLiquidplannerMember(ctx, cfg, secrets, grant.UserExternalID); ok {
 		return nil
 	}
 	email, err := c.resolveLiquidplannerEmail(ctx, cfg, secrets, grant.UserExternalID)
@@ -119,7 +123,14 @@ func (c *LiquidPlannerAccessConnector) RevokeAccess(ctx context.Context, configR
 	if err != nil {
 		return err
 	}
-	memberID, ok := c.findLiquidplannerMember(ctx, cfg, secrets, grant.UserExternalID)
+	// Strict pre-check: a transient /members fetch failure must NOT silently
+	// succeed as "already revoked" — that would let a network blip leave the
+	// user with workspace access while reporting a successful revoke to the
+	// caller. Propagate the error so the caller can retry.
+	memberID, ok, err := c.findLiquidplannerMember(ctx, cfg, secrets, grant.UserExternalID)
+	if err != nil {
+		return fmt.Errorf("liquidplanner: revoke pre-check: %w", err)
+	}
 	if !ok || memberID == "" {
 		return nil
 	}
@@ -199,19 +210,25 @@ func (c *LiquidPlannerAccessConnector) fetchLiquidplannerMembers(ctx context.Con
 	return members, nil
 }
 
-func (c *LiquidPlannerAccessConnector) findLiquidplannerMember(ctx context.Context, cfg Config, secrets Secrets, identifier string) (string, bool) {
+// findLiquidplannerMember returns (memberID, found, err). Callers MUST treat
+// a non-nil err as "lookup failed" rather than "user absent"; otherwise a
+// transient /members failure during RevokeAccess would silently return
+// success while the user retains workspace access. ProvisionAccess may
+// safely ignore the error and fall through to the create POST, because the
+// idempotency-status handler absorbs duplicate-member responses.
+func (c *LiquidPlannerAccessConnector) findLiquidplannerMember(ctx context.Context, cfg Config, secrets Secrets, identifier string) (string, bool, error) {
 	members, err := c.fetchLiquidplannerMembers(ctx, cfg, secrets)
 	if err != nil {
-		return "", false
+		return "", false, err
 	}
 	id := strings.TrimSpace(identifier)
 	for i := range members {
 		if strings.EqualFold(strings.TrimSpace(members[i].EmailAddr), id) ||
 			fmt.Sprintf("%d", members[i].ID) == id {
-			return fmt.Sprintf("%d", members[i].ID), true
+			return fmt.Sprintf("%d", members[i].ID), true, nil
 		}
 	}
-	return "", false
+	return "", false, nil
 }
 
 // resolveLiquidplannerEmail returns the email to send in the create-member
