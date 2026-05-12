@@ -52,7 +52,7 @@ func (c *BasecampAccessConnector) newRequestWithBody(ctx context.Context, secret
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "shieldnet360-access (ops@example.com)")
+	req.Header.Set("User-Agent", "shieldnet360-access (security@uney.com)")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
 	return req, nil
 }
