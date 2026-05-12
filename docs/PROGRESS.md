@@ -127,10 +127,10 @@ Path is the target directory under `internal/services/access/connectors/` once t
 | # | Provider | Category | Path | `sync_identity` | `provision_access` | `list_entitlements` | `get_access_log` | `sso_federation` | Status |
 |---|----------|----------|------|:---------------:|:------------------:|:-------------------:|:----------------:|:----------------:|:------:|
 | 81 | BambooHR | HR | `bamboohr/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
-| 82 | Gusto | HR | `gusto/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a | 🟡 |
+| 82 | Gusto | HR | `gusto/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 83 | Rippling | HR | `rippling/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 84 | Personio | HR | `personio/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a | 🟡 |
-| 85 | Hibob | HR | `hibob/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a | 🟡 |
+| 85 | Hibob | HR | `hibob/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 86 | Workday | HR | `workday/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 87 | Paychex | HR | `paychex/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a | 🟡 |
 | 88 | Deel | HR | `deel/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a | 🟡 |

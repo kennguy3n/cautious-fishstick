@@ -106,10 +106,10 @@
 | 79 | LiquidPlanner | T3 | Productivity | `liquidplanner/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 80 | KnowBe4 | T3 | Security Training | `knowbe4/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 81 | BambooHR | T4 | HR | `bamboohr/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
-| 82 | Gusto | T4 | HR | `gusto/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
+| 82 | Gusto | T4 | HR | `gusto/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 83 | Rippling | T4 | HR | `rippling/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 84 | Personio | T4 | HR | `personio/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
-| 85 | Hibob | T4 | HR | `hibob/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
+| 85 | Hibob | T4 | HR | `hibob/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 86 | Workday | T4 | HR | `workday/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 87 | Paychex | T4 | HR | `paychex/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 88 | Deel | T4 | HR | `deel/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
