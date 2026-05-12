@@ -29,28 +29,28 @@ func TestChargebeeConnectorFlow_FullLifecycle(t *testing.T) {
 		if !strings.HasPrefix(r.Header.Get("Authorization"), "Basic ") {
 			t.Errorf("auth missing")
 		}
-		users := "/api/v2/users"
-		user := users + "/" + email
+		customers := "/api/v2/customers"
+		customer := customers + "/" + email
 		mu.Lock()
 		defer mu.Unlock()
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == users:
+		case r.Method == http.MethodPost && r.URL.Path == customers:
 			if state != "" {
 				w.WriteHeader(http.StatusConflict)
-				_, _ = w.Write([]byte(`{"error":"user already exists"}`))
+				_, _ = w.Write([]byte(`{"error":"customer already exists"}`))
 				return
 			}
 			state = role
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id":"` + email + `","email":"` + email + `","role":"` + role + `"}`))
-		case r.Method == http.MethodDelete && r.URL.Path == user:
+		case r.Method == http.MethodDelete && r.URL.Path == customer:
 			if state == "" {
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
 			state = ""
 			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodGet && r.URL.Path == user:
+		case r.Method == http.MethodGet && r.URL.Path == customer:
 			if state == "" {
 				w.WriteHeader(http.StatusNotFound)
 				return

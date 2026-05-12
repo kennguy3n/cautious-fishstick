@@ -15,14 +15,19 @@ import (
 
 // Phase 10 advanced-capability mapping for recurly:
 //
-//   - ProvisionAccess  -> POST   /users        (creates the admin user
-//     with the supplied role; Recurly uses the admin API for
-//     user/role assignments)
-//   - RevokeAccess     -> DELETE /users/{userID}
-//   - ListEntitlements -> GET    /users/{userID}
+//   - ProvisionAccess  -> POST   /accounts
+//   - RevokeAccess     -> DELETE /accounts/{accountID}
+//   - ListEntitlements -> GET    /accounts/{accountID}
+//
+// Recurly's public v3 API exposes the `accounts` resource (the same
+// resource the connector's `Connect` probe and `SyncIdentities` already
+// hit). It does NOT expose a top-level `/users` resource on this base
+// URL, so the access-grant mapping uses accounts as the user identity
+// space (`SyncIdentities` already projects Recurly accounts into
+// `access.Identity`).
 //
 // AccessGrant maps:
-//   - grant.UserExternalID     -> Recurly admin user id (email)
+//   - grant.UserExternalID     -> Recurly account id (email)
 //   - grant.ResourceExternalID -> role slug (admin|api|read_only|...)
 //
 // Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
@@ -47,9 +52,9 @@ func (c *RecurlyAccessConnector) doRaw(req *http.Request) (int, []byte, error) {
 	return resp.StatusCode, body, nil
 }
 
-func (c *RecurlyAccessConnector) usersURL() string { return c.baseURL() + "/users" }
-func (c *RecurlyAccessConnector) userURL(userID string) string {
-	return c.usersURL() + "/" + url.PathEscape(strings.TrimSpace(userID))
+func (c *RecurlyAccessConnector) accountsURL() string { return c.baseURL() + "/accounts" }
+func (c *RecurlyAccessConnector) accountURL(accountID string) string {
+	return c.accountsURL() + "/" + url.PathEscape(strings.TrimSpace(accountID))
 }
 
 func (c *RecurlyAccessConnector) newJSONRequest(ctx context.Context, secrets Secrets, method, fullURL string, body []byte) (*http.Request, error) {
@@ -81,7 +86,7 @@ func (c *RecurlyAccessConnector) ProvisionAccess(ctx context.Context, configRaw,
 		"email": strings.TrimSpace(grant.UserExternalID),
 		"role":  strings.TrimSpace(grant.ResourceExternalID),
 	})
-	req, err := c.newJSONRequest(ctx, secrets, http.MethodPost, c.usersURL(), payload)
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodPost, c.accountsURL(), payload)
 	if err != nil {
 		return err
 	}
@@ -109,7 +114,7 @@ func (c *RecurlyAccessConnector) RevokeAccess(ctx context.Context, configRaw, se
 	if err != nil {
 		return err
 	}
-	req, err := c.newJSONRequest(ctx, secrets, http.MethodDelete, c.userURL(grant.UserExternalID), nil)
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodDelete, c.accountURL(grant.UserExternalID), nil)
 	if err != nil {
 		return err
 	}
@@ -138,7 +143,7 @@ func (c *RecurlyAccessConnector) ListEntitlements(ctx context.Context, configRaw
 	if err != nil {
 		return nil, err
 	}
-	req, err := c.newJSONRequest(ctx, secrets, http.MethodGet, c.userURL(user), nil)
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodGet, c.accountURL(user), nil)
 	if err != nil {
 		return nil, err
 	}

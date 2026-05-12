@@ -16,12 +16,19 @@ import (
 
 // Phase 10 advanced-capability mapping for chargebee:
 //
-//   - ProvisionAccess  -> POST   /api/v2/users
-//   - RevokeAccess     -> DELETE /api/v2/users/{userID}
-//   - ListEntitlements -> GET    /api/v2/users/{userID}
+//   - ProvisionAccess  -> POST   /api/v2/customers
+//   - RevokeAccess     -> DELETE /api/v2/customers/{customerID}
+//   - ListEntitlements -> GET    /api/v2/customers/{customerID}
+//
+// Chargebee's public v2 API exposes the `customers` resource (the same
+// resource the connector's `Connect` probe and `SyncIdentities` already
+// hit). It does NOT expose a top-level `/api/v2/users` admin-user
+// resource, so the access-grant mapping uses customers as the user
+// identity space (`SyncIdentities` already projects Chargebee customers
+// into `access.Identity`).
 //
 // AccessGrant maps:
-//   - grant.UserExternalID     -> Chargebee user id (email)
+//   - grant.UserExternalID     -> Chargebee customer id (email)
 //   - grant.ResourceExternalID -> role slug (admin|read_only|...)
 //
 // Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
@@ -46,12 +53,12 @@ func (c *ChargebeeAccessConnector) doRaw(req *http.Request) (int, []byte, error)
 	return resp.StatusCode, body, nil
 }
 
-func (c *ChargebeeAccessConnector) usersURL(cfg Config) string {
-	return c.baseURL(cfg) + "/api/v2/users"
+func (c *ChargebeeAccessConnector) customersURL(cfg Config) string {
+	return c.baseURL(cfg) + "/api/v2/customers"
 }
 
-func (c *ChargebeeAccessConnector) userURL(cfg Config, userID string) string {
-	return c.usersURL(cfg) + "/" + url.PathEscape(strings.TrimSpace(userID))
+func (c *ChargebeeAccessConnector) customerURL(cfg Config, customerID string) string {
+	return c.customersURL(cfg) + "/" + url.PathEscape(strings.TrimSpace(customerID))
 }
 
 func (c *ChargebeeAccessConnector) newJSONRequest(ctx context.Context, secrets Secrets, method, fullURL string, body []byte) (*http.Request, error) {
@@ -84,7 +91,7 @@ func (c *ChargebeeAccessConnector) ProvisionAccess(ctx context.Context, configRa
 		"email": strings.TrimSpace(grant.UserExternalID),
 		"role":  strings.TrimSpace(grant.ResourceExternalID),
 	})
-	req, err := c.newJSONRequest(ctx, secrets, http.MethodPost, c.usersURL(cfg), payload)
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodPost, c.customersURL(cfg), payload)
 	if err != nil {
 		return err
 	}
@@ -112,7 +119,7 @@ func (c *ChargebeeAccessConnector) RevokeAccess(ctx context.Context, configRaw, 
 	if err != nil {
 		return err
 	}
-	req, err := c.newJSONRequest(ctx, secrets, http.MethodDelete, c.userURL(cfg, grant.UserExternalID), nil)
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodDelete, c.customerURL(cfg, grant.UserExternalID), nil)
 	if err != nil {
 		return err
 	}
@@ -141,7 +148,7 @@ func (c *ChargebeeAccessConnector) ListEntitlements(ctx context.Context, configR
 	if err != nil {
 		return nil, err
 	}
-	req, err := c.newJSONRequest(ctx, secrets, http.MethodGet, c.userURL(cfg, user), nil)
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodGet, c.customerURL(cfg, user), nil)
 	if err != nil {
 		return nil, err
 	}
