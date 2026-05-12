@@ -13,6 +13,17 @@ import (
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
+// mailchimpAuditMaxPages bounds a single sweep to ~20k chatter
+// entries. Mailchimp's chimp-chatter feed is reverse-chronological
+// (newest first) via offset pagination, so this only kicks in on the
+// very first sync of a long-dormant account; the `since={iso}` filter
+// narrows the window on every subsequent run.
+const mailchimpAuditMaxPages = 200
+
+// mailchimpAuditPageSize matches Mailchimp's documented maximum page
+// size on the chimp-chatter activity feed.
+const mailchimpAuditPageSize = 100
+
 // FetchAccessAuditLogs streams Mailchimp account activity into the
 // access audit pipeline. Implements access.AccessAuditor.
 //
@@ -25,6 +36,19 @@ import (
 // surface and is the same feed shown to operators in the dashboard.
 // Tenants on plans that don't expose the feed surface 401/403/404
 // which the connector soft-skips via access.ErrAuditNotAvailable.
+//
+// The chimp-chatter feed is reverse-chronological (newest first) and
+// the AccessAuditor contract requires that any `nextSince` passed to
+// the handler cover only events already yielded — the worker persists
+// this cursor even on partial failure (see
+// internal/workers/handlers/access_audit.go). To honour the contract
+// under reverse-chronological pagination we collect the full sweep
+// first, then reverse the entire collection into chronological
+// (oldest-first) order and call the handler exactly once with the
+// maximum timestamp as `nextSince`. If any page fails mid-sweep (or
+// the handler call itself fails) the cursor is never advanced past
+// un-yielded events, so a retry replays the same window rather than
+// silently skipping older entries below the persisted cursor.
 func (c *MailchimpAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},
@@ -36,15 +60,16 @@ func (c *MailchimpAccessConnector) FetchAccessAuditLogs(
 		return err
 	}
 	since := sincePartitions[access.DefaultAuditPartition]
-	cursor := since
-	offset := 0
 	base := c.baseURL(secrets) + "/3.0/activity-feed/chimp-chatter"
-	for {
+
+	var collected []mailchimpChatter
+	offset := 0
+	for page := 0; page < mailchimpAuditMaxPages; page++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		q := url.Values{}
-		q.Set("count", "100")
+		q.Set("count", fmt.Sprintf("%d", mailchimpAuditPageSize))
 		q.Set("offset", fmt.Sprintf("%d", offset))
 		if !since.IsZero() {
 			q.Set("since", since.UTC().Format(time.RFC3339))
@@ -72,32 +97,47 @@ func (c *MailchimpAccessConnector) FetchAccessAuditLogs(
 		if err := json.Unmarshal(body, &p); err != nil {
 			return fmt.Errorf("mailchimp: decode chimp-chatter: %w", err)
 		}
-		batch := make([]*access.AuditLogEntry, 0, len(p.ChimpChatter))
-		batchMax := cursor
+		if len(p.ChimpChatter) == 0 {
+			break
+		}
 		stopBackfill := false
 		for i := range p.ChimpChatter {
-			entry := mapMailchimpChatter(&p.ChimpChatter[i])
-			if entry == nil {
-				continue
-			}
-			if !since.IsZero() && !entry.Timestamp.After(since) {
+			ts := parseMailchimpTime(p.ChimpChatter[i].UpdateTime)
+			if !since.IsZero() && !ts.IsZero() && !ts.After(since) {
 				stopBackfill = true
 				continue
 			}
-			if entry.Timestamp.After(batchMax) {
-				batchMax = entry.Timestamp
-			}
-			batch = append(batch, entry)
+			collected = append(collected, p.ChimpChatter[i])
 		}
-		if err := handler(batch, batchMax, access.DefaultAuditPartition); err != nil {
-			return err
-		}
-		cursor = batchMax
-		if stopBackfill || len(p.ChimpChatter) < 100 {
-			return nil
+		if stopBackfill || len(p.ChimpChatter) < mailchimpAuditPageSize {
+			break
 		}
 		offset += len(p.ChimpChatter)
 	}
+
+	if len(collected) == 0 {
+		return nil
+	}
+
+	// Walk the collected entries oldest-first so the handler sees a
+	// chronologically ascending batch and `nextSince` covers every
+	// event we just yielded.
+	batch := make([]*access.AuditLogEntry, 0, len(collected))
+	batchMax := since
+	for i := len(collected) - 1; i >= 0; i-- {
+		entry := mapMailchimpChatter(&collected[i])
+		if entry == nil {
+			continue
+		}
+		if entry.Timestamp.After(batchMax) {
+			batchMax = entry.Timestamp
+		}
+		batch = append(batch, entry)
+	}
+	if len(batch) == 0 {
+		return nil
+	}
+	return handler(batch, batchMax, access.DefaultAuditPartition)
 }
 
 type mailchimpChatterPage struct {
