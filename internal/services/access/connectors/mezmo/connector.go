@@ -17,7 +17,9 @@ import (
 
 const ProviderName = "mezmo"
 
-var ErrNotImplemented = errors.New("mezmo: capability not implemented in Phase 7")
+// ErrNotImplemented is retained as a public sentinel for backwards
+// compatibility; all access capabilities are now implemented.
+var ErrNotImplemented = errors.New("mezmo: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -230,15 +232,6 @@ func (c *MezmoAccessConnector) SyncIdentities(
 	return handler(identities, "")
 }
 
-func (c *MezmoAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *MezmoAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *MezmoAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 func (c *MezmoAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil
 }
@@ -249,9 +242,9 @@ func (c *MezmoAccessConnector) GetCredentialsMetadata(_ context.Context, configR
 		return nil, err
 	}
 	return map[string]interface{}{
-		"provider":    ProviderName,
-		"auth_type":   "service_key",
-		"key_short":   shortToken(secrets.ServiceKey),
+		"provider":  ProviderName,
+		"auth_type": "service_key",
+		"key_short": shortToken(secrets.ServiceKey),
 	}, nil
 }
 

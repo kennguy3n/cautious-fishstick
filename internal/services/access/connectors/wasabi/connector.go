@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	ProviderName  = "wasabi"
+	ProviderName   = "wasabi"
 	defaultBaseURL = "https://iam.wasabisys.com/"
 	defaultRegion  = "us-east-1"
 	iamAPIVersion  = "2010-05-08"

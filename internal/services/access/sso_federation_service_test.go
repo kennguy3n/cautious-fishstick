@@ -946,6 +946,111 @@ func TestSSOMetadataFromConfig_PopulatesFields(t *testing.T) {
 	}
 }
 
+// TestSSOFederation_Batch6 (Phase 10 SSO batch 6) verifies the
+// end-to-end broker flow for the 5 newly-wired connectors:
+// HubSpot, Notion, Box, PagerDuty, Sentry. Each connector federates
+// SSO via SAML 2.0 through the SSOMetadataFromConfig helper.
+func TestSSOFederation_HubSpotSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://api.hubapi.com/sso/saml/metadata",
+		EntityID:    "https://app.hubspot.com",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "hubspot-1", "HubSpot", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+	if got.Config["metadataDescriptorUrl"] != meta.MetadataURL {
+		t.Errorf("metadataDescriptorUrl = %q", got.Config["metadataDescriptorUrl"])
+	}
+}
+
+func TestSSOFederation_NotionSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://www.notion.so/api/v3/saml/metadata",
+		EntityID:    "https://www.notion.so/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "notion-1", "Notion", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+	if got.Config["entityId"] != meta.EntityID {
+		t.Errorf("entityId = %q", got.Config["entityId"])
+	}
+}
+
+func TestSSOFederation_BoxSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://api.box.com/2.0/sso/saml/metadata",
+		EntityID:    "https://app.box.com/saml",
+		SSOLoginURL: "https://app.box.com/saml/login",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "box-1", "Box", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+	if got.Config["singleSignOnServiceUrl"] != meta.SSOLoginURL {
+		t.Errorf("singleSignOnServiceUrl = %q", got.Config["singleSignOnServiceUrl"])
+	}
+}
+
+func TestSSOFederation_PagerDutySAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://acme.pagerduty.com/sso/saml/metadata",
+		EntityID:    "https://acme.pagerduty.com",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "pagerduty-1", "PagerDuty", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+	if got.Config["metadataDescriptorUrl"] != meta.MetadataURL {
+		t.Errorf("metadataDescriptorUrl = %q", got.Config["metadataDescriptorUrl"])
+	}
+}
+
+func TestSSOFederation_SentrySAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://sentry.io/api/0/organizations/acme/auth-provider/saml/metadata/",
+		EntityID:    "https://sentry.io/organizations/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "sentry-1", "Sentry", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+	if got.Config["entityId"] != meta.EntityID {
+		t.Errorf("entityId = %q", got.Config["entityId"])
+	}
+}
+
 // contains is a substring helper that avoids pulling in `strings` for
 // just one use.
 func contains(haystack, needle string) bool {

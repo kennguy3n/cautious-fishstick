@@ -271,21 +271,33 @@ func (c *SentryAccessConnector) ProvisionAccess(ctx context.Context, configRaw, 
 		return errors.New("sentry: grant.UserExternalID and grant.ResourceExternalID are required")
 	}
 	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	role := grant.Role
-	if role == "" { role = "member" }
+	if role == "" {
+		role = "member"
+	}
 	body, _ := json.Marshal(map[string]string{"email": grant.UserExternalID, "role": role})
 	urlStr := fmt.Sprintf("%s/api/0/organizations/%s/members/", c.baseURL(), url.PathEscape(cfg.OrganizationSlug))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(body))
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AuthToken))
 	resp, err := c.client().Do(req)
-	if err != nil { return fmt.Errorf("sentry: provision: %w", err) }
+	if err != nil {
+		return fmt.Errorf("sentry: provision: %w", err)
+	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-	if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK { return nil }
-	if strings.Contains(string(respBody), "already") { return nil }
+	if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	if strings.Contains(string(respBody), "already") {
+		return nil
+	}
 	return fmt.Errorf("sentry: provision status %d: %s", resp.StatusCode, string(respBody))
 }
 
@@ -294,38 +306,64 @@ func (c *SentryAccessConnector) RevokeAccess(ctx context.Context, configRaw, sec
 		return errors.New("sentry: grant.UserExternalID and grant.ResourceExternalID are required")
 	}
 	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	urlStr := fmt.Sprintf("%s/api/0/organizations/%s/members/%s/", c.baseURL(), url.PathEscape(cfg.OrganizationSlug), url.PathEscape(grant.UserExternalID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, urlStr, nil)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AuthToken))
 	resp, err := c.client().Do(req)
-	if err != nil { return fmt.Errorf("sentry: revoke: %w", err) }
+	if err != nil {
+		return fmt.Errorf("sentry: revoke: %w", err)
+	}
 	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNotFound { return nil }
+	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 	return fmt.Errorf("sentry: revoke status %d: %s", resp.StatusCode, string(respBody))
 }
 
 func (c *SentryAccessConnector) ListEntitlements(ctx context.Context, configRaw, secretsRaw map[string]interface{}, userExternalID string) ([]access.Entitlement, error) {
-	if userExternalID == "" { return nil, errors.New("sentry: user external id is required") }
+	if userExternalID == "" {
+		return nil, errors.New("sentry: user external id is required")
+	}
 	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	urlStr := fmt.Sprintf("%s/api/0/organizations/%s/members/%s/", c.baseURL(), url.PathEscape(cfg.OrganizationSlug), url.PathEscape(userExternalID))
 	req, err := c.newRequest(ctx, secrets, http.MethodGet, urlStr)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	_, body, err := c.doRaw(req)
-	if err != nil { return nil, nil }
-	var m struct { Role string `json:"role"`; Teams []string `json:"teams"` }
-	if json.Unmarshal(body, &m) != nil { return nil, nil }
+	if err != nil {
+		return nil, nil
+	}
+	var m struct {
+		Role  string   `json:"role"`
+		Teams []string `json:"teams"`
+	}
+	if json.Unmarshal(body, &m) != nil {
+		return nil, nil
+	}
 	out := []access.Entitlement{{ResourceExternalID: cfg.OrganizationSlug, Role: m.Role, Source: "direct"}}
 	for _, t := range m.Teams {
 		out = append(out, access.Entitlement{ResourceExternalID: t, Role: "member", Source: "direct"})
 	}
 	return out, nil
 }
-func (c *SentryAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+
+// GetSSOMetadata returns the operator-supplied SAML metadata URL if
+// configured. Sentry federates SSO via SAML 2.0 from organization
+// auth settings; when `sso_metadata_url` is blank the helper returns
+// (nil, nil) and the caller gracefully downgrades.
+func (c *SentryAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *SentryAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {

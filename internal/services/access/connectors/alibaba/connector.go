@@ -43,9 +43,9 @@ type Secrets struct {
 }
 
 type AlibabaAccessConnector struct {
-	httpClient   func() httpDoer
-	urlOverride  string
-	timeOverride func() time.Time
+	httpClient    func() httpDoer
+	urlOverride   string
+	timeOverride  func() time.Time
 	nonceOverride func() string
 }
 

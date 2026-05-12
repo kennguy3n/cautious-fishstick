@@ -17,7 +17,9 @@ func (noNetworkRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) 
 	return nil, errors.New("network call attempted")
 }
 
-func validSecrets() map[string]interface{} { return map[string]interface{}{"api_token": "dop_v1_xxxxx"} }
+func validSecrets() map[string]interface{} {
+	return map[string]interface{}{"api_token": "dop_v1_xxxxx"}
+}
 
 func TestValidate_HappyPath(t *testing.T) {
 	if err := New().Validate(context.Background(), nil, validSecrets()); err != nil {

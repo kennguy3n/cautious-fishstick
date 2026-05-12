@@ -186,9 +186,9 @@ func (c *BoxAccessConnector) VerifyPermissions(ctx context.Context, configRaw, s
 }
 
 type boxUser struct {
-	ID    string `json:"id"`
-	Login string `json:"login"`
-	Name  string `json:"name"`
+	ID     string `json:"id"`
+	Login  string `json:"login"`
+	Name   string `json:"name"`
 	Status string `json:"status"`
 }
 
@@ -291,9 +291,9 @@ type boxCollaboration struct {
 }
 
 type boxCollaborationsResponse struct {
-	Entries     []boxCollaboration `json:"entries"`
-	NextMarker  string             `json:"next_marker,omitempty"`
-	TotalCount  int                `json:"total_count"`
+	Entries    []boxCollaboration `json:"entries"`
+	NextMarker string             `json:"next_marker,omitempty"`
+	TotalCount int                `json:"total_count"`
 }
 
 func boxRole(grantRole string) string {
@@ -491,8 +491,13 @@ func (c *BoxAccessConnector) ListEntitlements(
 	}
 	return out, nil
 }
-func (c *BoxAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+
+// GetSSOMetadata returns the operator-supplied SAML metadata URL if
+// configured. Box federates SSO via SAML 2.0 from the Box Admin
+// Console; when `sso_metadata_url` is blank the helper returns
+// (nil, nil) and the caller gracefully downgrades.
+func (c *BoxAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *BoxAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {

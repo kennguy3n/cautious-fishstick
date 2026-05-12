@@ -237,17 +237,25 @@ func (c *HubSpotAccessConnector) ProvisionAccess(ctx context.Context, configRaw,
 		return errors.New("hubspot: grant.UserExternalID and grant.ResourceExternalID are required")
 	}
 	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	body, _ := json.Marshal(map[string]interface{}{"roleId": grant.ResourceExternalID})
 	urlStr := fmt.Sprintf("%s/settings/v3/users/%s/roles", c.baseURL(), url.PathEscape(grant.UserExternalID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, urlStr, bytes.NewReader(body))
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
 	resp, err := c.client().Do(req)
-	if err != nil { return fmt.Errorf("hubspot: provision: %w", err) }
+	if err != nil {
+		return fmt.Errorf("hubspot: provision: %w", err)
+	}
 	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent { return nil }
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 	return fmt.Errorf("hubspot: provision status %d: %s", resp.StatusCode, string(respBody))
 }
@@ -257,38 +265,63 @@ func (c *HubSpotAccessConnector) RevokeAccess(ctx context.Context, configRaw, se
 		return errors.New("hubspot: grant.UserExternalID and grant.ResourceExternalID are required")
 	}
 	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	urlStr := fmt.Sprintf("%s/settings/v3/users/%s/roles/%s", c.baseURL(), url.PathEscape(grant.UserExternalID), url.PathEscape(grant.ResourceExternalID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, urlStr, nil)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.AccessToken))
 	resp, err := c.client().Do(req)
-	if err != nil { return fmt.Errorf("hubspot: revoke: %w", err) }
+	if err != nil {
+		return fmt.Errorf("hubspot: revoke: %w", err)
+	}
 	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound { return nil }
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 	return fmt.Errorf("hubspot: revoke status %d: %s", resp.StatusCode, string(respBody))
 }
 
 func (c *HubSpotAccessConnector) ListEntitlements(ctx context.Context, configRaw, secretsRaw map[string]interface{}, userExternalID string) ([]access.Entitlement, error) {
-	if userExternalID == "" { return nil, errors.New("hubspot: user external id is required") }
+	if userExternalID == "" {
+		return nil, errors.New("hubspot: user external id is required")
+	}
 	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	path := fmt.Sprintf("/settings/v3/users/%s", url.PathEscape(userExternalID))
 	req, err := c.newRequest(ctx, secrets, http.MethodGet, path)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	body, err := c.do(req)
-	if err != nil { return nil, err }
-	var resp struct { RoleIds []string `json:"roleIds"` }
-	if json.Unmarshal(body, &resp) != nil { return nil, nil }
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		RoleIds []string `json:"roleIds"`
+	}
+	if json.Unmarshal(body, &resp) != nil {
+		return nil, nil
+	}
 	var out []access.Entitlement
 	for _, r := range resp.RoleIds {
 		out = append(out, access.Entitlement{ResourceExternalID: r, Role: r, Source: "direct"})
 	}
 	return out, nil
 }
-func (c *HubSpotAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+
+// GetSSOMetadata returns the operator-supplied SAML metadata URL if
+// configured. HubSpot federates SSO via SAML 2.0 with metadata hosted
+// by the customer's IdP; when `sso_metadata_url` is blank the helper
+// returns (nil, nil) and the caller gracefully downgrades.
+func (c *HubSpotAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *HubSpotAccessConnector) GetCredentialsMetadata(_ context.Context, _, secretsRaw map[string]interface{}) (map[string]interface{}, error) {
