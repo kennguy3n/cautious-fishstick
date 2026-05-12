@@ -264,15 +264,6 @@ func (c *RipplingAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *RipplingAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *RipplingAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *RipplingAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 // GetSSOMetadata advertises Rippling SAML metadata when the connector
 // is configured with a saml_metadata_url. Rippling's SAML IdP is
 // rendered per-customer; the operator provides the metadata URL from

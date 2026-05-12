@@ -501,8 +501,12 @@ func (c *EgnyteAccessConnector) ListEntitlements(
 		start = resp.StartIndex + resp.ItemsPerPage
 	}
 }
-func (c *EgnyteAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata returns Egnyte SAML federation metadata when the operator
+// supplied an `sso_metadata_url` in configRaw. Returns nil (and nil error)
+// when the config does not advertise a metadata URL so callers downgrade to
+// access.ErrSSOFederationUnsupported.
+func (c *EgnyteAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *EgnyteAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {
