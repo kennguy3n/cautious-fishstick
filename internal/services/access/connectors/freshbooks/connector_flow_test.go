@@ -63,13 +63,13 @@ func TestConnectorFlow_FullLifecycle(t *testing.T) {
 			isMember = true
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodGet && r.URL.Path == listPath:
-			staffs := []map[string]interface{}{}
+			staff := []map[string]interface{}{}
 			if isMember {
-				staffs = append(staffs, map[string]interface{}{"id": userID, "role": resID})
+				staff = append(staff, map[string]interface{}{"id": userID, "role": resID})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"response": map[string]interface{}{
-					"result": map[string]interface{}{"staffs": staffs},
+					"result": map[string]interface{}{"staff": staff},
 				},
 			})
 		default:

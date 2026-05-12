@@ -185,18 +185,18 @@ func (c *FreshBooksAccessConnector) ListEntitlements(ctx context.Context, config
 	var envelope struct {
 		Response struct {
 			Result struct {
-				Staffs []struct {
+				Staff []struct {
 					ID   interface{} `json:"id"`
 					Role string      `json:"role"`
-				} `json:"staffs"`
+				} `json:"staff"`
 			} `json:"result"`
 		} `json:"response"`
 	}
 	if err := json.Unmarshal(body, &envelope); err != nil {
-		return nil, fmt.Errorf("freshbooks: decode staffs: %w", err)
+		return nil, fmt.Errorf("freshbooks: decode staff: %w", err)
 	}
-	out := make([]access.Entitlement, 0, len(envelope.Response.Result.Staffs))
-	for _, s := range envelope.Response.Result.Staffs {
+	out := make([]access.Entitlement, 0, len(envelope.Response.Result.Staff))
+	for _, s := range envelope.Response.Result.Staff {
 		id := strings.TrimSpace(fmt.Sprintf("%v", s.ID))
 		if id == "" || id != user {
 			continue
