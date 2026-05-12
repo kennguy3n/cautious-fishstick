@@ -3,6 +3,7 @@ package freshbooks
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,18 +25,42 @@ func TestConnectorFlow_FullLifecycle(t *testing.T) {
 		listPath := "/accounting/account/" + accountID + "/users/staffs"
 		switch {
 		case r.Method == http.MethodPut && r.URL.Path == staffPath:
+			if got := r.Header.Get("Content-Type"); got != "application/json" {
+				t.Errorf("Content-Type = %q, want application/json", got)
+			}
+			raw, _ := io.ReadAll(r.Body)
+			var p struct {
+				Staff struct {
+					Role     string `json:"role"`
+					VisState int    `json:"vis_state"`
+				} `json:"staff"`
+			}
+			if err := json.Unmarshal(raw, &p); err != nil {
+				t.Errorf("decode staff PUT body: %v (body=%q)", err, string(raw))
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if strings.TrimSpace(p.Staff.Role) != resID {
+				t.Errorf("PUT staff.role = %q, want %q", p.Staff.Role, resID)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if p.Staff.VisState == 1 {
+				// soft-delete (revoke)
+				if !isMember {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				isMember = false
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			// role assignment (provision)
 			if isMember {
 				w.WriteHeader(http.StatusConflict)
 				return
 			}
 			isMember = true
-			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodDelete && r.URL.Path == staffPath:
-			if !isMember {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			isMember = false
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodGet && r.URL.Path == listPath:
 			staffs := []map[string]interface{}{}
@@ -73,8 +98,15 @@ func TestConnectorFlow_FullLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListEntitlements after provision: %v", err)
 	}
-	if len(ents) != 1 || ents[0].Role != resID {
-		t.Fatalf("ents = %#v", ents)
+	if len(ents) != 1 {
+		t.Fatalf("ents len = %d, want 1: %#v", len(ents), ents)
+	}
+	if ents[0].ResourceExternalID != resID {
+		t.Fatalf("ents[0].ResourceExternalID = %q, want %q (must round-trip grant.ResourceExternalID)",
+			ents[0].ResourceExternalID, resID)
+	}
+	if ents[0].Role != resID {
+		t.Fatalf("ents[0].Role = %q, want %q", ents[0].Role, resID)
 	}
 	for i := 0; i < 2; i++ {
 		if err := c.RevokeAccess(context.Background(), cfg, secrets, grant); err != nil {
