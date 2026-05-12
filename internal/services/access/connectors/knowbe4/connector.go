@@ -289,8 +289,12 @@ func (c *KnowBe4AccessConnector) SyncIdentities(
 	}
 }
 
-func (c *KnowBe4AccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata returns KnowBe4 SAML federation metadata when the operator
+// supplied an `sso_metadata_url` in configRaw. Returns nil (and nil error)
+// when the config does not advertise a metadata URL so callers downgrade to
+// access.ErrSSOFederationUnsupported.
+func (c *KnowBe4AccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *KnowBe4AccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {

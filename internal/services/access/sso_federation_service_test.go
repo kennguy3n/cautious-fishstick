@@ -1312,6 +1312,91 @@ func TestSSOFederation_ClickUpSAML(t *testing.T) {
 	}
 }
 
+func TestSSOFederation_ZohoCRMSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://accounts.zoho.com/samlauthrequest/acme/metadata",
+		EntityID:    "https://crm.zoho.com/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "zoho-crm-1", "Zoho CRM", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_EgnyteSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://acme.egnyte.com/sso/saml/metadata",
+		EntityID:    "https://acme.egnyte.com",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "egnyte-1", "Egnyte", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_KnowBe4SAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://training.knowbe4.com/sso/saml/metadata/acme",
+		EntityID:    "https://training.knowbe4.com/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "knowbe4-1", "KnowBe4", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_DockerHubSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://hub.docker.com/orgs/acme/sso/saml/metadata",
+		EntityID:    "https://hub.docker.com/orgs/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "docker-hub-1", "Docker Hub", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_TerraformCloudSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.terraform.io/sso/saml/metadata/acme",
+		EntityID:    "https://app.terraform.io/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "terraform-cloud-1", "Terraform Cloud", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
 // contains is a substring helper that avoids pulling in `strings` for
 // just one use.
 func contains(haystack, needle string) bool {
