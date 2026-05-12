@@ -183,13 +183,13 @@ func (c *LiquidPlannerAccessConnector) VerifyPermissions(ctx context.Context, co
 }
 
 type liquidplannerMember struct {
-	ID         int    `json:"id"`
-	UserName   string `json:"user_name"`
-	FirstName  string `json:"first_name"`
-	LastName   string `json:"last_name"`
-	EmailAddr  string `json:"email"`
+	ID          int    `json:"id"`
+	UserName    string `json:"user_name"`
+	FirstName   string `json:"first_name"`
+	LastName    string `json:"last_name"`
+	EmailAddr   string `json:"email"`
 	AccessLevel string `json:"access_level"`
-	Disabled   bool   `json:"disabled"`
+	Disabled    bool   `json:"disabled"`
 }
 
 func (c *LiquidPlannerAccessConnector) CountIdentities(ctx context.Context, configRaw, secretsRaw map[string]interface{}) (int, error) {
@@ -248,15 +248,6 @@ func (c *LiquidPlannerAccessConnector) SyncIdentities(
 	return handler(identities, "")
 }
 
-func (c *LiquidPlannerAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *LiquidPlannerAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *LiquidPlannerAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 func (c *LiquidPlannerAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil
 }

@@ -18,8 +18,10 @@ func (noNetworkRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) 
 	return nil, errors.New("network call attempted")
 }
 
-func validConfig() map[string]interface{}  { return map[string]interface{}{"team_id": "123"} }
-func validSecrets() map[string]interface{} { return map[string]interface{}{"access_token": "figd_aaaaBBBBccccDDDD"} }
+func validConfig() map[string]interface{} { return map[string]interface{}{"team_id": "123"} }
+func validSecrets() map[string]interface{} {
+	return map[string]interface{}{"access_token": "figd_aaaaBBBBccccDDDD"}
+}
 
 func TestValidate_HappyPath(t *testing.T) {
 	if err := New().Validate(context.Background(), validConfig(), validSecrets()); err != nil {
@@ -236,4 +238,3 @@ func TestProvisionRevoke_RejectMissing(t *testing.T) {
 		t.Error("revoke should require resource id")
 	}
 }
-

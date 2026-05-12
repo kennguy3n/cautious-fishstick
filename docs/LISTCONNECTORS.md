@@ -1,6 +1,6 @@
 # Connector Capability Index
 
-> **Last updated:** 2026-05-12 (Phase 10 batch 9 — audit logs 100 / 200, advanced caps 71 / 50 ✅, SSO federation batch 9: +5 wires → 45 wired brokers — PR #35)
+> **Last updated:** 2026-05-12 (Phase 10 batch 10 — audit logs 118 / 200, advanced caps 77 / 50 ✅, SSO federation batch 10: +5 wires → 50 wired brokers — PR #36)
 > **Source of truth:** [`docs/PROGRESS.md`](./PROGRESS.md) §1
 > **How to keep in sync:** When you flip a capability column in `docs/PROGRESS.md`, mirror the change here. The audit script in §6 of `docs/PROGRESS.md` lints the two tables for drift.
 
@@ -56,12 +56,12 @@
 | 29 | Notion | T3 | Productivity | `notion/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 30 | Asana | T3 | Productivity | `asana/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 31 | Monday.com | T3 | Productivity | `monday/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
-| 32 | Figma | T3 | Design | `figma/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
-| 33 | Miro | T3 | Whiteboard | `miro/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
+| 32 | Figma | T3 | Design | `figma/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
+| 33 | Miro | T3 | Whiteboard | `miro/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 34 | Trello | T3 | Productivity | `trello/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
-| 35 | Airtable | T3 | Productivity | `airtable/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
-| 36 | Smartsheet | T3 | Productivity | `smartsheet/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
-| 37 | ClickUp | T3 | Productivity | `clickup/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
+| 35 | Airtable | T3 | Productivity | `airtable/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
+| 36 | Smartsheet | T3 | Productivity | `smartsheet/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
+| 37 | ClickUp | T3 | Productivity | `clickup/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 38 | Salesforce | T3 | CRM | `salesforce/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 39 | HubSpot | T3 | CRM | `hubspot/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 40 | Zoho CRM | T3 | CRM | `zoho_crm/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
@@ -97,14 +97,14 @@
 | 70 | LiveChat | T3 | Support | `livechat/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 71 | Gorgias | T3 | Support | `gorgias/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 72 | Loom | T3 | Collab | `loom/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
-| 73 | Discord | T3 | Collab | `discord/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 73 | Discord | T3 | Collab | `discord/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 74 | Slack Enterprise | T3 | Collab | `slack_enterprise/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
 | 75 | Basecamp | T3 | Productivity | `basecamp/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
-| 76 | Quip | T3 | Productivity | `quip/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 77 | Wrike | T3 | Productivity | `wrike/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
-| 78 | Teamwork | T3 | Productivity | `teamwork/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
-| 79 | LiquidPlanner | T3 | Productivity | `liquidplanner/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
-| 80 | KnowBe4 | T3 | Security Training | `knowbe4/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 76 | Quip | T3 | Productivity | `quip/` | 🟡 | 🟡 | 🟡 | ⏳ | n/a |
+| 77 | Wrike | T3 | Productivity | `wrike/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
+| 78 | Teamwork | T3 | Productivity | `teamwork/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
+| 79 | LiquidPlanner | T3 | Productivity | `liquidplanner/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
+| 80 | KnowBe4 | T3 | Security Training | `knowbe4/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 81 | BambooHR | T4 | HR | `bamboohr/` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | 82 | Gusto | T4 | HR | `gusto/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
 | 83 | Rippling | T4 | HR | `rippling/` | 🟡 | ⏳ | ⏳ | 🟡 | 🟡 |
@@ -118,15 +118,15 @@
 | 91 | QuickBooks Online | T4 | Finance | `quickbooks/` | 🟡 | 🟡 | 🟡 | 🟡 | n/a |
 | 92 | Xero | T4 | Finance | `xero/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
 | 93 | Stripe | T4 | Finance | `stripe/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
-| 94 | PayPal | T4 | Finance | `paypal/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 95 | Bill.com | T4 | Finance | `billdotcom/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 96 | Expensify | T4 | Finance | `expensify/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 97 | Sage Intacct | T4 | Finance | `sage_intacct/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
+| 94 | PayPal | T4 | Finance | `paypal/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 95 | Bill.com | T4 | Finance | `billdotcom/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 96 | Expensify | T4 | Finance | `expensify/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 97 | Sage Intacct | T4 | Finance | `sage_intacct/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
 | 98 | FreshBooks | T4 | Finance | `freshbooks/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
 | 99 | Wave | T4 | Finance | `wave/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
-| 100 | Plaid | T4 | Finance | `plaid/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 101 | Brex | T4 | Finance | `brex/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 102 | Ramp | T4 | Finance | `ramp/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
+| 100 | Plaid | T4 | Finance | `plaid/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 101 | Brex | T4 | Finance | `brex/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 102 | Ramp | T4 | Finance | `ramp/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
 | 103 | Clio | T4 | Legal | `clio/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 104 | Ironclad | T4 | Legal | `ironclad/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 105 | DocuSign | T4 | Legal | `docusign/` | 🟡 | 🟡 | 🟡 | 🟡 | ⏳ |
@@ -135,23 +135,23 @@
 | 108 | PandaDoc | T4 | Legal | `pandadoc/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 109 | PandaDoc CLM | T4 | Legal | `pandadoc_clm/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 110 | HelloSign | T4 | Legal | `hellosign/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 111 | Gong | T4 | Sales | `gong/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 112 | Salesloft | T4 | Sales | `salesloft/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 113 | Apollo.io | T4 | Sales | `apollo/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 114 | Copper | T4 | Sales | `copper/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 115 | Insightly | T4 | Sales | `insightly/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 116 | Close | T4 | Sales | `close/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
+| 111 | Gong | T4 | Sales | `gong/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 112 | Salesloft | T4 | Sales | `salesloft/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 113 | Apollo.io | T4 | Sales | `apollo/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 114 | Copper | T4 | Sales | `copper/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 115 | Insightly | T4 | Sales | `insightly/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 116 | Close | T4 | Sales | `close/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
 | 117 | Mailchimp | T4 | Marketing | `mailchimp/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
-| 118 | Klaviyo | T4 | Marketing | `klaviyo/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 119 | ActiveCampaign | T4 | Marketing | `activecampaign/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 120 | Constant Contact | T4 | Marketing | `constant_contact/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 121 | Braze | T4 | Marketing | `braze/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
+| 118 | Klaviyo | T4 | Marketing | `klaviyo/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 119 | ActiveCampaign | T4 | Marketing | `activecampaign/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 120 | Constant Contact | T4 | Marketing | `constant_contact/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
+| 121 | Braze | T4 | Marketing | `braze/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
 | 122 | Mixpanel | T4 | Analytics | `mixpanel/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
 | 123 | Segment | T4 | CDP | `segment/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 124 | Typeform | T4 | Marketing | `typeform/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 125 | SurveyMonkey | T4 | Marketing | `surveymonkey/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
 | 126 | Eventbrite | T4 | Events | `eventbrite/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
-| 127 | Navan | T4 | Travel | `navan/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
+| 127 | Navan | T4 | Travel | `navan/` | 🟡 | ⏳ | ⏳ | 🟡 | n/a |
 | 128 | SAP Concur | T4 | Supply | `sap_concur/` | 🟡 | ⏳ | ⏳ | ⏳ | 🟡 |
 | 129 | Coupa | T4 | Supply | `coupa/` | 🟡 | ⏳ | ⏳ | ⏳ | 🟡 |
 | 130 | Anvyl | T4 | Supply | `anvyl/` | 🟡 | ⏳ | ⏳ | ⏳ | n/a |
@@ -230,10 +230,10 @@
 
 - Total connectors registered: **200**
 - `sync_identity` shipped: **194/200**
-- `provision_access` shipped: **71/200** (50 real provider integrations across five Phase 10 batches — top-50 by usage complete; Zoho CRM, Pipedrive, Terraform Cloud, Docker Hub, JFrog, LaunchDarkly added in batch 6 (PR #32); Travis CI, Mezmo, Drift added in batch 7; **SonarCloud, CircleCI, New Relic, Splunk Cloud, Grafana — PR #34 batch 8 advanced-capability expansion**)
-- `list_entitlements` shipped: **71/200**
-- `get_access_log` shipped: **100/200** (Microsoft Entra ID, Google Workspace, Okta, Auth0, AWS IAM, Azure RBAC, GCP IAM, Slack, GitHub, Salesforce — PR #25; Cloudflare, Zoom, HubSpot, Dropbox Business, PagerDuty, Sentry, Datadog, CrowdStrike, Snyk, Zendesk — PR #27; GitLab, Atlassian Jira, MS Teams, Notion, BambooHR, Workday, Asana, Monday.com, Figma, Miro, Trello, Airtable, Smartsheet, ClickUp, Box, Egnyte, Freshdesk, Help Scout, Front, Intercom — PR #28; SentinelOne, NetSuite, QuickBooks Online, DocuSign, Tenable, Rapid7 InsightVM, Duo Security, 1Password, LastPass, Ping Identity — PR #29 via the `AccessAuditor` optional interface — closing 50/50 ✅ of the top-50; Stripe, Discord, Shopify, Rippling, HackerOne, Zoho CRM, Sumo Logic, Mixpanel, Grafana, Mailchimp — PR #31 batch-5 expansion; Terraform Cloud, Docker Hub, JFrog, LaunchDarkly, New Relic, Splunk Cloud, Heroku, SonarCloud, CircleCI, Pipedrive — PR #32 batch-6 expansion; Tailscale, DigitalOcean, Vercel, Netlify, Vultr, Linode, OVHcloud, Alibaba Cloud, CloudSigma, Wasabi — PR #33 batch 7 Tier-2 Cloud Infrastructure expansion; **Crisp, LiveChat, Gorgias, Loom, Slack Enterprise, Basecamp, KnowBe4, Wrike, Teamwork, LiquidPlanner — PR #34 batch 8 Tier-3 Business SaaS expansion; **Gusto, Personio, Hibob, Paychex, Deel, Zenefits, Namely, Xero, FreshBooks, Wave — PR #35 batch 9 Tier-4 HR/Finance expansion**).**).
-- `sso_federation` shipped: **45/200** (Microsoft Entra ID, Google Workspace, Okta, Ping Identity, Auth0, Generic SAML, Generic OIDC, Slack, MS Teams, Salesforce, Dropbox Business, GitHub, GitLab, Atlassian Jira, Zendesk, BambooHR, Workday — prior PRs; Cloudflare, Rippling, ForgeRock, Keeper, OpenAI — PR #29; AWS IAM Identity Center, Azure Entra ID, GCP Workforce Identity Federation — PR #31; SAP Concur, Coupa, LinkedIn Learning, Udemy Business, RingCentral — PR #32 batch-5; HubSpot, Notion, Box, PagerDuty, Sentry — PR #33 batch 6 via `access.SSOMetadataFromConfig` helper; **JFrog, LaunchDarkly, New Relic, Splunk Cloud, Sumo Logic — PR #34 batch 8; **Datadog, Freshdesk, Front, Asana, Monday.com — PR #35 batch 9**; Zoom is `n/a`)
+- `provision_access` shipped: **77/200** (50 real provider integrations across five Phase 10 batches — top-50 by usage complete; Zoho CRM, Pipedrive, Terraform Cloud, Docker Hub, JFrog, LaunchDarkly added in batch 6 (PR #32); Travis CI, Mezmo, Drift added in batch 7; SonarCloud, CircleCI, New Relic, Splunk Cloud, Grafana — PR #34 batch 8; Sumo Logic, Crisp, LiveChat, Gorgias, Loom, Slack Enterprise, Basecamp — PR #35 batch 9; **Quip, Wrike, Teamwork, LiquidPlanner, KnowBe4, Discord — PR #36 batch 10**)
+- `list_entitlements` shipped: **77/200**
+- `get_access_log` shipped: **118/200** (Microsoft Entra ID, Google Workspace, Okta, Auth0, AWS IAM, Azure RBAC, GCP IAM, Slack, GitHub, Salesforce — PR #25; Cloudflare, Zoom, HubSpot, Dropbox Business, PagerDuty, Sentry, Datadog, CrowdStrike, Snyk, Zendesk — PR #27; GitLab, Atlassian Jira, MS Teams, Notion, BambooHR, Workday, Asana, Monday.com, Figma, Miro, Trello, Airtable, Smartsheet, ClickUp, Box, Egnyte, Freshdesk, Help Scout, Front, Intercom — PR #28; SentinelOne, NetSuite, QuickBooks Online, DocuSign, Tenable, Rapid7 InsightVM, Duo Security, 1Password, LastPass, Ping Identity — PR #29 via the `AccessAuditor` optional interface — closing 50/50 ✅ of the top-50; Stripe, Discord, Shopify, Rippling, HackerOne, Zoho CRM, Sumo Logic, Mixpanel, Grafana, Mailchimp — PR #31 batch-5 expansion; Terraform Cloud, Docker Hub, JFrog, LaunchDarkly, New Relic, Splunk Cloud, Heroku, SonarCloud, CircleCI, Pipedrive — PR #32 batch-6 expansion; Tailscale, DigitalOcean, Vercel, Netlify, Vultr, Linode, OVHcloud, Alibaba Cloud, CloudSigma, Wasabi — PR #33 batch 7 Tier-2 Cloud Infrastructure expansion; Crisp, LiveChat, Gorgias, Loom, Slack Enterprise, Basecamp, KnowBe4, Wrike, Teamwork, LiquidPlanner — PR #34 batch 8 Tier-3 Business SaaS expansion; Gusto, Personio, Hibob, Paychex, Deel, Zenefits, Namely, Xero, FreshBooks, Wave — PR #35 batch 9 Tier-4 HR/Finance expansion; **Gong, Salesloft, Apollo.io, Copper, Insightly, Close, Klaviyo, ActiveCampaign, Constant Contact, Braze, PayPal, Bill.com, Expensify, Sage Intacct, Plaid, Brex, Ramp, Navan — PR #36 batch 10 Tier-4 Sales / Marketing / Finance / Legal / Supply expansion**).
+- `sso_federation` shipped: **50/200** (Microsoft Entra ID, Google Workspace, Okta, Ping Identity, Auth0, Generic SAML, Generic OIDC, Slack, MS Teams, Salesforce, Dropbox Business, GitHub, GitLab, Atlassian Jira, Zendesk, BambooHR, Workday — prior PRs; Cloudflare, Rippling, ForgeRock, Keeper, OpenAI — PR #29; AWS IAM Identity Center, Azure Entra ID, GCP Workforce Identity Federation — PR #31; SAP Concur, Coupa, LinkedIn Learning, Udemy Business, RingCentral — PR #32 batch-5; HubSpot, Notion, Box, PagerDuty, Sentry — PR #33 batch 6 via `access.SSOMetadataFromConfig` helper; JFrog, LaunchDarkly, New Relic, Splunk Cloud, Sumo Logic — PR #34 batch 8; Datadog, Freshdesk, Front, Asana, Monday.com — PR #35 batch 9; **Figma, Miro, Airtable, Smartsheet, ClickUp — PR #36 batch 10**; Zoom is `n/a`)
 
 ## How to update this file
 

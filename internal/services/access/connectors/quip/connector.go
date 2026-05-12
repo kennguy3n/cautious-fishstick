@@ -162,10 +162,10 @@ func (c *QuipAccessConnector) VerifyPermissions(ctx context.Context, configRaw, 
 }
 
 type quipUser struct {
-	ID      string   `json:"id"`
-	Name    string   `json:"name"`
-	Emails  []string `json:"emails"`
-	Disabled bool    `json:"disabled"`
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Emails   []string `json:"emails"`
+	Disabled bool     `json:"disabled"`
 }
 
 func (c *QuipAccessConnector) CountIdentities(ctx context.Context, configRaw, secretsRaw map[string]interface{}) (int, error) {
@@ -225,15 +225,6 @@ func (c *QuipAccessConnector) SyncIdentities(
 	return handler(identities, "")
 }
 
-func (c *QuipAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *QuipAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *QuipAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 func (c *QuipAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil
 }

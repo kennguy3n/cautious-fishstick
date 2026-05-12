@@ -99,11 +99,11 @@ type clickupAuditPage struct {
 }
 
 type clickupAuditEvent struct {
-	ID         string `json:"id"`
-	EventType  string `json:"event_type"`
-	Date       string `json:"date"`
+	ID          string `json:"id"`
+	EventType   string `json:"event_type"`
+	Date        string `json:"date"`
 	WorkspaceID string `json:"workspace_id,omitempty"`
-	User       struct {
+	User        struct {
 		ID       json.Number `json:"id"`
 		Username string      `json:"username,omitempty"`
 		Email    string      `json:"email,omitempty"`

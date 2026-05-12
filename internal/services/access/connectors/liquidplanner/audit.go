@@ -107,14 +107,14 @@ func (c *LiquidPlannerAccessConnector) FetchAccessAuditLogs(
 }
 
 type liquidPlannerAuditEvent struct {
-	ID         int64  `json:"id"`
-	Event      string `json:"event"`
-	CreatedAt  string `json:"created_at"`
-	MemberID   int64  `json:"member_id"`
+	ID          int64  `json:"id"`
+	Event       string `json:"event"`
+	CreatedAt   string `json:"created_at"`
+	MemberID    int64  `json:"member_id"`
 	MemberEmail string `json:"member_email"`
-	TargetType string `json:"target_type"`
-	TargetID   int64  `json:"target_id"`
-	IPAddress  string `json:"ip_address"`
+	TargetType  string `json:"target_type"`
+	TargetID    int64  `json:"target_id"`
+	IPAddress   string `json:"ip_address"`
 }
 
 func mapLiquidPlannerAuditEvent(e *liquidPlannerAuditEvent) *access.AuditLogEntry {

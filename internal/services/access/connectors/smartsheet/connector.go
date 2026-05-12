@@ -570,8 +570,11 @@ func (c *SmartsheetAccessConnector) lookupAccessLevelForUser(ctx context.Context
 		page = list.PageNumber + 1
 	}
 }
-func (c *SmartsheetAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+
+// GetSSOMetadata returns Smartsheet SAML federation metadata when the
+// operator supplies `sso_metadata_url` in the connector config.
+func (c *SmartsheetAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *SmartsheetAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {

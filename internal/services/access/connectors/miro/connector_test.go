@@ -18,8 +18,10 @@ func (noNetworkRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) 
 	return nil, errors.New("network call attempted")
 }
 
-func validConfig() map[string]interface{}  { return map[string]interface{}{"org_id": "ORG"} }
-func validSecrets() map[string]interface{} { return map[string]interface{}{"access_token": "miroAAAA1234BBBB"} }
+func validConfig() map[string]interface{} { return map[string]interface{}{"org_id": "ORG"} }
+func validSecrets() map[string]interface{} {
+	return map[string]interface{}{"access_token": "miroAAAA1234BBBB"}
+}
 
 func TestValidate_HappyPath(t *testing.T) {
 	if err := New().Validate(context.Background(), validConfig(), validSecrets()); err != nil {

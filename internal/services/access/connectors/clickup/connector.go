@@ -408,8 +408,11 @@ func clickupRoleName(role int) string {
 		return "member"
 	}
 }
-func (c *ClickUpAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+
+// GetSSOMetadata returns ClickUp SAML federation metadata when the
+// operator supplies `sso_metadata_url` in the connector config.
+func (c *ClickUpAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *ClickUpAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {

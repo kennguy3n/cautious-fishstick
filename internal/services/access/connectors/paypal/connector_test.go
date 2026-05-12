@@ -19,7 +19,7 @@ func (noNetworkRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) 
 	return nil, errors.New("network call attempted")
 }
 
-func validConfig() map[string]interface{}  { return map[string]interface{}{"partner_id": "PARTNER123"} }
+func validConfig() map[string]interface{} { return map[string]interface{}{"partner_id": "PARTNER123"} }
 func validSecrets() map[string]interface{} {
 	return map[string]interface{}{"client_id": "ppCID1234bbbbCCCC", "client_secret": "ppCS1234bbbbCCCC"}
 }

@@ -175,10 +175,10 @@ type klaviyoAccount struct {
 			DefaultSenderEmail string `json:"default_sender_email"`
 			OrganizationName   string `json:"organization_name"`
 		} `json:"contact_information"`
-		IndustryStatus     string `json:"industry"`
-		PreferredCurrency  string `json:"preferred_currency"`
-		PublicAPIKey       string `json:"public_api_key"`
-		Locale             string `json:"locale"`
+		IndustryStatus    string `json:"industry"`
+		PreferredCurrency string `json:"preferred_currency"`
+		PublicAPIKey      string `json:"public_api_key"`
+		Locale            string `json:"locale"`
 	} `json:"attributes"`
 }
 
@@ -260,10 +260,10 @@ func (c *KlaviyoAccessConnector) SyncIdentities(
 				Email:       a.Attributes.ContactInformation.DefaultSenderEmail,
 				Status:      "active",
 				RawData: map[string]interface{}{
-					"industry":          a.Attributes.IndustryStatus,
+					"industry":           a.Attributes.IndustryStatus,
 					"preferred_currency": a.Attributes.PreferredCurrency,
-					"public_api_key":    a.Attributes.PublicAPIKey,
-					"locale":            a.Attributes.Locale,
+					"public_api_key":     a.Attributes.PublicAPIKey,
+					"locale":             a.Attributes.Locale,
 				},
 			})
 		}

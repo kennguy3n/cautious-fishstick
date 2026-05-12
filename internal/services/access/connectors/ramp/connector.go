@@ -39,7 +39,7 @@ type RampAccessConnector struct {
 }
 
 func New() *RampAccessConnector { return &RampAccessConnector{} }
-func init()                { access.RegisterAccessConnector(ProviderName, New()) }
+func init()                     { access.RegisterAccessConnector(ProviderName, New()) }
 
 func DecodeConfig(raw map[string]interface{}) (Config, error) {
 	if raw == nil {
@@ -167,11 +167,11 @@ func (c *RampAccessConnector) VerifyPermissions(ctx context.Context, configRaw, 
 }
 
 type rampUser struct {
-	ID     string `json:"id"`
-	Email  string `json:"email"`
+	ID        string `json:"id"`
+	Email     string `json:"email"`
 	FirstName string `json:"first_name"`
-	LastName string `json:"last_name"`
-	Status string `json:"status"`
+	LastName  string `json:"last_name"`
+	Status    string `json:"status"`
 }
 
 type rampListResponse struct {

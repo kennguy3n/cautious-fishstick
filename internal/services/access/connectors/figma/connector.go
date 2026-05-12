@@ -475,8 +475,12 @@ func (c *FigmaAccessConnector) ListEntitlements(
 	}
 	return out, nil
 }
-func (c *FigmaAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+
+// GetSSOMetadata returns Figma SAML federation metadata when the operator
+// supplies `sso_metadata_url` (and optionally entity/login/logout URLs) in
+// the connector config. Otherwise it returns nil so callers downgrade.
+func (c *FigmaAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *FigmaAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {
