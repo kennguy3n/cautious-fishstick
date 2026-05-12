@@ -238,20 +238,30 @@ func (c *NotionAccessConnector) ProvisionAccess(ctx context.Context, configRaw, 
 		return errors.New("notion: grant.UserExternalID and grant.ResourceExternalID are required")
 	}
 	secrets, err := c.decodeBoth(secretsRaw)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	body, _ := json.Marshal(map[string]interface{}{"properties": map[string]interface{}{}, "permissions": []map[string]interface{}{{"type": "user", "user_id": grant.UserExternalID, "role": "editor"}}})
 	urlStr := fmt.Sprintf("%s/v1/pages/%s", c.baseURL(), url.PathEscape(grant.ResourceExternalID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, urlStr, bytes.NewReader(body))
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.APIToken))
 	req.Header.Set("Notion-Version", "2022-06-28")
 	resp, err := c.client().Do(req)
-	if err != nil { return fmt.Errorf("notion: provision: %w", err) }
+	if err != nil {
+		return fmt.Errorf("notion: provision: %w", err)
+	}
 	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusOK { return nil }
+	if resp.StatusCode == http.StatusOK {
+		return nil
+	}
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-	if strings.Contains(string(respBody), "already") { return nil }
+	if strings.Contains(string(respBody), "already") {
+		return nil
+	}
 	return fmt.Errorf("notion: provision status %d: %s", resp.StatusCode, string(respBody))
 }
 
@@ -260,38 +270,67 @@ func (c *NotionAccessConnector) RevokeAccess(ctx context.Context, configRaw, sec
 		return errors.New("notion: grant.UserExternalID and grant.ResourceExternalID are required")
 	}
 	secrets, err := c.decodeBoth(secretsRaw)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	body, _ := json.Marshal(map[string]interface{}{"permissions": []map[string]interface{}{}})
 	urlStr := fmt.Sprintf("%s/v1/pages/%s", c.baseURL(), url.PathEscape(grant.ResourceExternalID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, urlStr, bytes.NewReader(body))
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.APIToken))
 	req.Header.Set("Notion-Version", "2022-06-28")
 	resp, err := c.client().Do(req)
-	if err != nil { return fmt.Errorf("notion: revoke: %w", err) }
+	if err != nil {
+		return fmt.Errorf("notion: revoke: %w", err)
+	}
 	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNotFound { return nil }
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 	return fmt.Errorf("notion: revoke status %d: %s", resp.StatusCode, string(respBody))
 }
 
 func (c *NotionAccessConnector) ListEntitlements(ctx context.Context, configRaw, secretsRaw map[string]interface{}, userExternalID string) ([]access.Entitlement, error) {
-	if userExternalID == "" { return nil, errors.New("notion: user external id is required") }
+	if userExternalID == "" {
+		return nil, errors.New("notion: user external id is required")
+	}
 	secrets, err := c.decodeBoth(secretsRaw)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	path := fmt.Sprintf("/v1/users/%s", url.PathEscape(userExternalID))
 	req, err := c.newRequest(ctx, secrets, http.MethodGet, path)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	body, err := c.do(req)
-	if err != nil { return nil, nil }
-	var resp struct { Type string `json:"type"`; Name string `json:"name"` }
-	if json.Unmarshal(body, &resp) != nil { return nil, nil }
-	if resp.Type == "" { return nil, nil }
+	if err != nil {
+		return nil, nil
+	}
+	var resp struct {
+		Type string `json:"type"`
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(body, &resp) != nil {
+		return nil, nil
+	}
+	if resp.Type == "" {
+		return nil, nil
+	}
 	return []access.Entitlement{{ResourceExternalID: userExternalID, Role: resp.Type, Source: "direct"}}, nil
 }
-func (c *NotionAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+
+// GetSSOMetadata returns the operator-supplied SAML metadata URL if
+// configured. Notion Enterprise federates SSO via SAML 2.0 with
+// metadata hosted by the customer's IdP; when `sso_metadata_url` is
+// blank the helper returns (nil, nil) and the caller gracefully
+// downgrades.
+func (c *NotionAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *NotionAccessConnector) GetCredentialsMetadata(_ context.Context, _, secretsRaw map[string]interface{}) (map[string]interface{}, error) {
@@ -300,10 +339,10 @@ func (c *NotionAccessConnector) GetCredentialsMetadata(_ context.Context, _, sec
 		return nil, err
 	}
 	return map[string]interface{}{
-		"provider":     ProviderName,
-		"auth_type":    "internal_integration_token",
-		"api_version":  notionAPIVersion,
-		"token_short":  shortToken(secrets.APIToken),
+		"provider":    ProviderName,
+		"auth_type":   "internal_integration_token",
+		"api_version": notionAPIVersion,
+		"token_short": shortToken(secrets.APIToken),
 	}, nil
 }
 

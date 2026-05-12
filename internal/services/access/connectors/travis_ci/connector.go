@@ -22,7 +22,9 @@ const (
 	pageSize     = 100
 )
 
-var ErrNotImplemented = errors.New("travis_ci: capability not implemented in Phase 7")
+// ErrNotImplemented is retained as a public sentinel for backwards
+// compatibility; all access capabilities are now implemented.
+var ErrNotImplemented = errors.New("travis_ci: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -337,15 +339,6 @@ func (c *TravisCIAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *TravisCIAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *TravisCIAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *TravisCIAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 func (c *TravisCIAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil
 }

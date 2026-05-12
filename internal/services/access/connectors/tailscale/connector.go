@@ -36,8 +36,9 @@ type Secrets struct {
 }
 
 type TailscaleAccessConnector struct {
-	httpClient  func() httpDoer
-	urlOverride string
+	httpClient   func() httpDoer
+	urlOverride  string
+	timeOverride func() time.Time
 }
 
 func New() *TailscaleAccessConnector { return &TailscaleAccessConnector{} }

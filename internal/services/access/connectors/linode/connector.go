@@ -165,9 +165,9 @@ func (c *LinodeAccessConnector) VerifyPermissions(ctx context.Context, configRaw
 }
 
 type linodeUser struct {
-	Username string `json:"username"`
-	Email    string `json:"email"`
-	Restricted bool `json:"restricted"`
+	Username   string `json:"username"`
+	Email      string `json:"email"`
+	Restricted bool   `json:"restricted"`
 }
 
 type linodeUsersResponse struct {

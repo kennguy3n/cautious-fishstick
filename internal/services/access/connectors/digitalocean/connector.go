@@ -306,8 +306,8 @@ func (c *DigitalOceanAccessConnector) GetCredentialsMetadata(_ context.Context, 
 		return nil, err
 	}
 	return map[string]interface{}{
-		"provider":  ProviderName,
-		"auth_type": "api_token",
+		"provider":    ProviderName,
+		"auth_type":   "api_token",
 		"token_short": shortToken(secrets.APIToken),
 	}, nil
 }

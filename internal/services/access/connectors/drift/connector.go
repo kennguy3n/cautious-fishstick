@@ -17,7 +17,9 @@ import (
 
 const ProviderName = "drift"
 
-var ErrNotImplemented = errors.New("drift: capability not implemented in Phase 7")
+// ErrNotImplemented is retained as a public sentinel for backwards
+// compatibility; all access capabilities are now implemented.
+var ErrNotImplemented = errors.New("drift: capability not implemented")
 
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -224,15 +226,6 @@ func (c *DriftAccessConnector) SyncIdentities(
 	return handler(identities, "")
 }
 
-func (c *DriftAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *DriftAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *DriftAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 func (c *DriftAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil
 }

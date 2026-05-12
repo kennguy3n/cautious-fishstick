@@ -320,11 +320,11 @@ func (c *OVHcloudAccessConnector) GetCredentialsMetadata(_ context.Context, conf
 		return nil, err
 	}
 	return map[string]interface{}{
-		"provider":            ProviderName,
-		"endpoint":            cfg.Endpoint,
-		"auth_type":           "ovh_signature",
-		"application_key":     shortToken(secrets.ApplicationKey),
-		"consumer_key_short":  shortToken(secrets.ConsumerKey),
+		"provider":           ProviderName,
+		"endpoint":           cfg.Endpoint,
+		"auth_type":          "ovh_signature",
+		"application_key":    shortToken(secrets.ApplicationKey),
+		"consumer_key_short": shortToken(secrets.ConsumerKey),
 	}, nil
 }
 
