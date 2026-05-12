@@ -67,12 +67,13 @@ func (c *BigCommerceAccessConnector) FetchAccessAuditLogs(
 		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
 			return access.ErrAuditNotAvailable
 		case http.StatusNoContent:
-			break
+			// No more pages — stop pagination cleanly.
+			return emitBigCommerceAuditBatch(collected, since, handler)
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return fmt.Errorf("bigcommerce: audit: status %d: %s", resp.StatusCode, string(body))
 		}
-		if len(body) == 0 || resp.StatusCode == http.StatusNoContent {
+		if len(body) == 0 {
 			break
 		}
 		var entries []bcSystemLogEntry
@@ -85,6 +86,18 @@ func (c *BigCommerceAccessConnector) FetchAccessAuditLogs(
 		}
 	}
 
+	return emitBigCommerceAuditBatch(collected, since, handler)
+}
+
+// emitBigCommerceAuditBatch converts the collected systemlog rows into
+// access.AuditLogEntry batches and invokes the handler with the
+// high-watermark timestamp. Returns nil without invoking the handler
+// when there is nothing to emit.
+func emitBigCommerceAuditBatch(
+	collected []bcSystemLogEntry,
+	since time.Time,
+	handler func(batch []*access.AuditLogEntry, nextSince time.Time, partitionKey string) error,
+) error {
 	if len(collected) == 0 {
 		return nil
 	}

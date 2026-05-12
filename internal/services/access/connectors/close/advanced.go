@@ -16,13 +16,15 @@ import (
 
 // Phase 10 advanced-capability mapping for close.com:
 //
-//   - ProvisionAccess  -> POST   /api/v1/role_assignment/
-//   - RevokeAccess     -> DELETE /api/v1/role_assignment/{id}/
+//   - ProvisionAccess  -> POST   /api/v1/role_assignment/   (body: user_id, role_id)
+//   - RevokeAccess     -> GET    /api/v1/role_assignment/?user_id={userId} then
+//                         DELETE /api/v1/role_assignment/{resolved_assignment_id}/
 //   - ListEntitlements -> GET    /api/v1/role_assignment/?user_id={userId}
 //
 // AccessGrant maps:
 //   - grant.UserExternalID     -> Close user id
-//   - grant.ResourceExternalID -> role id (or assignment id on revoke)
+//   - grant.ResourceExternalID -> Close role id (consistent across all three
+//                                 methods so the (user, resource) pair round-trips).
 //
 // HTTP Basic auth with api_key:<blank> mirrors the existing
 // connector.newRequest helper. Idempotent on
@@ -106,7 +108,19 @@ func (c *CloseAccessConnector) RevokeAccess(ctx context.Context, configRaw, secr
 	if err != nil {
 		return err
 	}
-	endpoint := c.baseURL() + "/api/v1/role_assignment/" + url.PathEscape(strings.TrimSpace(grant.ResourceExternalID)) + "/"
+	userID := strings.TrimSpace(grant.UserExternalID)
+	roleID := strings.TrimSpace(grant.ResourceExternalID)
+
+	assignmentID, err := c.findRoleAssignmentID(ctx, secrets, userID, roleID)
+	if err != nil {
+		return err
+	}
+	if assignmentID == "" {
+		// No matching assignment found — already revoked. Idempotent per PROPOSAL §2.1.
+		return nil
+	}
+
+	endpoint := c.baseURL() + "/api/v1/role_assignment/" + url.PathEscape(assignmentID) + "/"
 	req, err := c.newJSONRequest(ctx, secrets, http.MethodDelete, endpoint, nil)
 	if err != nil {
 		return err
@@ -125,6 +139,45 @@ func (c *CloseAccessConnector) RevokeAccess(ctx context.Context, configRaw, secr
 	default:
 		return fmt.Errorf("close: revoke status %d: %s", status, string(body))
 	}
+}
+
+// findRoleAssignmentID resolves the assignment record id for a given
+// (userID, roleID) pair by querying the list endpoint. Returns an empty
+// string if no match is found — callers should treat that as already-revoked.
+func (c *CloseAccessConnector) findRoleAssignmentID(ctx context.Context, secrets Secrets, userID, roleID string) (string, error) {
+	q := url.Values{}
+	q.Set("user_id", userID)
+	endpoint := c.baseURL() + "/api/v1/role_assignment/?" + q.Encode()
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	status, body, err := c.doRaw(req)
+	if err != nil {
+		return "", err
+	}
+	if status == http.StatusNotFound {
+		return "", nil
+	}
+	if status < 200 || status >= 300 {
+		return "", fmt.Errorf("close: lookup role_assignment status %d: %s", status, string(body))
+	}
+	var envelope struct {
+		Data []struct {
+			ID     string `json:"id"`
+			UserID string `json:"user_id"`
+			RoleID string `json:"role_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return "", fmt.Errorf("close: decode role_assignment lookup: %w", err)
+	}
+	for _, d := range envelope.Data {
+		if strings.TrimSpace(d.UserID) == userID && strings.TrimSpace(d.RoleID) == roleID {
+			return strings.TrimSpace(d.ID), nil
+		}
+	}
+	return "", nil
 }
 
 func (c *CloseAccessConnector) ListEntitlements(ctx context.Context, configRaw, secretsRaw map[string]interface{}, userExternalID string) ([]access.Entitlement, error) {
@@ -169,7 +222,7 @@ func (c *CloseAccessConnector) ListEntitlements(ctx context.Context, configRaw, 
 			continue
 		}
 		out = append(out, access.Entitlement{
-			ResourceExternalID: strings.TrimSpace(d.ID),
+			ResourceExternalID: strings.TrimSpace(d.RoleID),
 			Role:               strings.TrimSpace(d.RoleID),
 			Source:             "direct",
 		})
