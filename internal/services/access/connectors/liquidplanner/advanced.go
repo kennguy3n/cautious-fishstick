@@ -22,8 +22,13 @@ import (
 //   - ListEntitlements -> GET    /api/v1/workspaces/{workspace_id}/members
 //
 // AccessGrant maps:
-//   - grant.UserExternalID     -> LiquidPlanner email address (preferred) or member id
+//   - grant.UserExternalID     -> LiquidPlanner email address (preferred) or numeric member id
 //   - grant.ResourceExternalID -> LiquidPlanner workspace id
+//
+// SyncIdentities sets each identity's ExternalID to the numeric member id, so a
+// synced identifier flowing into ProvisionAccess looks like "77" rather than an
+// email. The create-member endpoint requires an email, so when the identifier
+// is numeric we resolve it via the existing /members listing before POSTing.
 //
 // Bearer auth via LiquidPlannerAccessConnector.newRequest.
 
@@ -75,8 +80,12 @@ func (c *LiquidPlannerAccessConnector) ProvisionAccess(ctx context.Context, conf
 	if _, ok := c.findLiquidplannerMember(ctx, cfg, secrets, grant.UserExternalID); ok {
 		return nil
 	}
+	email, err := c.resolveLiquidplannerEmail(ctx, cfg, secrets, grant.UserExternalID)
+	if err != nil {
+		return err
+	}
 	payload, _ := json.Marshal(map[string]interface{}{
-		"email":        strings.TrimSpace(grant.UserExternalID),
+		"email":        email,
 		"access_level": "member",
 	})
 	endpoint := fmt.Sprintf("%s/api/v1/workspaces/%s/members",
@@ -203,4 +212,28 @@ func (c *LiquidPlannerAccessConnector) findLiquidplannerMember(ctx context.Conte
 		}
 	}
 	return "", false
+}
+
+// resolveLiquidplannerEmail returns the email to send in the create-member
+// POST body. An identifier containing "@" is treated as an email and used
+// verbatim; a numeric identifier is resolved by looking up the matching
+// member record. If no email can be resolved, an explicit error is returned
+// rather than letting a numeric id leak into the email field.
+func (c *LiquidPlannerAccessConnector) resolveLiquidplannerEmail(ctx context.Context, cfg Config, secrets Secrets, identifier string) (string, error) {
+	id := strings.TrimSpace(identifier)
+	if strings.Contains(id, "@") {
+		return id, nil
+	}
+	members, err := c.fetchLiquidplannerMembers(ctx, cfg, secrets)
+	if err != nil {
+		return "", err
+	}
+	for i := range members {
+		if fmt.Sprintf("%d", members[i].ID) == id {
+			if e := strings.TrimSpace(members[i].EmailAddr); e != "" {
+				return e, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("liquidplanner: provision requires an email; got non-email identifier %q with no matching workspace member", id)
 }

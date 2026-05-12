@@ -3,6 +3,7 @@ package liquidplanner
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -82,6 +83,89 @@ func TestConnectorFlow_FullLifecycle(t *testing.T) {
 	}
 	if len(ents) != 0 {
 		t.Fatalf("expected empty, got %#v", ents)
+	}
+}
+
+// TestConnectorFlow_ProvisionWithNumericExternalID guards against regressing
+// the bug where ProvisionAccess unconditionally dropped grant.UserExternalID
+// into the `email` JSON field. SyncIdentities sets ExternalID to the numeric
+// member id, so a numeric identifier for a user that is NOT yet a workspace
+// member must produce a clear error and NEVER POST `{"email":"77",...}` to
+// the create-member endpoint.
+func TestConnectorFlow_ProvisionWithNumericExternalID(t *testing.T) {
+	const workspaceID = "12345"
+	var postBodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/workspaces/"+workspaceID+"/members":
+			_, _ = w.Write([]byte(`[]`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/workspaces/"+workspaceID+"/members":
+			b, _ := io.ReadAll(r.Body)
+			postBodies = append(postBodies, string(b))
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	err := c.ProvisionAccess(context.Background(),
+		map[string]interface{}{"workspace_id": workspaceID},
+		map[string]interface{}{"token": "tok"},
+		access.AccessGrant{UserExternalID: "77", ResourceExternalID: workspaceID})
+	if err == nil {
+		t.Fatalf("expected error resolving numeric identifier with no matching member, got nil")
+	}
+	if !strings.Contains(err.Error(), "provision requires an email") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(postBodies) != 0 {
+		t.Fatalf("expected zero POSTs, got %d: %v", len(postBodies), postBodies)
+	}
+}
+
+// TestConnectorFlow_ProvisionResolvesNumericToEmail verifies that when the
+// numeric identifier DOES match an existing member with an email on record,
+// ProvisionAccess no-ops (idempotent path) rather than re-POSTing the numeric
+// id as an email. Together with the test above this proves the email field
+// can never carry a non-email value.
+func TestConnectorFlow_ProvisionResolvesNumericToEmail(t *testing.T) {
+	const workspaceID = "12345"
+	var postBodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/workspaces/"+workspaceID+"/members":
+			_ = json.NewEncoder(w).Encode([]map[string]interface{}{{
+				"id":           77,
+				"email":        "ada@example.com",
+				"access_level": "member",
+			}})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/workspaces/"+workspaceID+"/members":
+			b, _ := io.ReadAll(r.Body)
+			postBodies = append(postBodies, string(b))
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	if err := c.ProvisionAccess(context.Background(),
+		map[string]interface{}{"workspace_id": workspaceID},
+		map[string]interface{}{"token": "tok"},
+		access.AccessGrant{UserExternalID: "77", ResourceExternalID: workspaceID}); err != nil {
+		t.Fatalf("ProvisionAccess with numeric id of existing member: %v", err)
+	}
+	if len(postBodies) != 0 {
+		t.Fatalf("expected zero POSTs (idempotent on existing member), got %d: %v", len(postBodies), postBodies)
 	}
 }
 
