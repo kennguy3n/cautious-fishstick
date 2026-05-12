@@ -1467,6 +1467,91 @@ func TestSSOFederation_CourseraSAML(t *testing.T) {
 	}
 }
 
+func TestSSOFederation_DocuSignSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://account.docusign.com/sso/saml/metadata/acme",
+		EntityID:    "https://account.docusign.com/sso/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "docusign-1", "DocuSign", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_DocuSignCLMSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://apius.springcm.com/sso/saml/metadata/acme",
+		EntityID:    "https://apius.springcm.com/sso/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "docusign-clm-1", "DocuSign CLM", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_GeminiOIDC(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "oidc",
+		MetadataURL: "https://accounts.google.com/.well-known/openid-configuration",
+		EntityID:    "https://accounts.google.com",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "gemini-1", "Gemini", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "oidc" {
+		t.Errorf("ProviderID = %q; want oidc", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_GustoSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.gusto.com/sso/saml/metadata/acme",
+		EntityID:    "https://app.gusto.com/sso/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "gusto-1", "Gusto", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_HibobSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.hibob.com/sso/saml/metadata/acme",
+		EntityID:    "https://app.hibob.com/sso/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "hibob-1", "HiBob", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
 // contains is a substring helper that avoids pulling in `strings` for
 // just one use.
 func contains(haystack, needle string) bool {

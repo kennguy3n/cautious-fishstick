@@ -312,8 +312,15 @@ func (c *GeminiAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]
 func (c *GeminiAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
 	return nil, ErrNotImplemented
 }
-func (c *GeminiAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata surfaces operator-supplied OIDC discovery metadata
+// for Google Gemini. Google's identity surface supports OIDC via the
+// standard accounts.google.com issuer; the connector forwards the
+// operator-supplied URLs verbatim via access.SSOMetadataFromConfig so
+// the SSOFederationService can register a Keycloak OIDC broker.
+// Returns (nil, nil) when the operator has not supplied a metadata
+// URL so the caller gracefully downgrades.
+func (c *GeminiAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "oidc"), nil
 }
 
 func (c *GeminiAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {
