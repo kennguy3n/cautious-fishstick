@@ -224,7 +224,7 @@ func (c *ActiveCampaignAccessConnector) ListEntitlements(ctx context.Context, co
 		out = append(out, access.Entitlement{
 			ResourceExternalID: group,
 			Role:               group,
-			Source:             ProviderName,
+			Source:             "direct",
 		})
 	}
 	return out, nil

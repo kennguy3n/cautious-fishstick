@@ -174,7 +174,7 @@ func (c *MixpanelAccessConnector) ListEntitlements(ctx context.Context, configRa
 		out = append(out, access.Entitlement{
 			ResourceExternalID: role,
 			Role:               role,
-			Source:             ProviderName,
+			Source:             "direct",
 		})
 	}
 	return out, nil

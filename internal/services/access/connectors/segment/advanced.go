@@ -185,7 +185,7 @@ func (c *SegmentAccessConnector) ListEntitlements(ctx context.Context, configRaw
 		out = append(out, access.Entitlement{
 			ResourceExternalID: role,
 			Role:               role,
-			Source:             ProviderName,
+			Source:             "direct",
 		})
 	}
 	return out, nil

@@ -242,7 +242,7 @@ func (c *PayPalAccessConnector) ListEntitlements(ctx context.Context, configRaw,
 			out = append(out, access.Entitlement{
 				ResourceExternalID: name,
 				Role:               name,
-				Source:             ProviderName,
+				Source:             "direct",
 			})
 		}
 	}
