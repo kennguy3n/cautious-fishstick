@@ -255,15 +255,6 @@ func (c *MyCaseAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *MyCaseAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *MyCaseAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *MyCaseAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 func (c *MyCaseAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil
 }
