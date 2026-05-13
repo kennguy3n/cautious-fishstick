@@ -269,15 +269,6 @@ func (c *KeeperAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *KeeperAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *KeeperAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *KeeperAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 // GetSSOMetadata advertises Keeper SSO Connect SAML metadata when the
 // connector is configured with a saml_metadata_url. Keeper Enterprise
 // renders the metadata document per-customer; the operator wires the
