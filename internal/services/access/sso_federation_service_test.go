@@ -2323,6 +2323,78 @@ func TestSSOFederation_YardiSAML(t *testing.T) {
 	}
 }
 
+// TestSSOFederation_Batch24 (Phase 10 SSO batch 24) — verifies SAML metadata
+// flowing through ConfigureBroker for Checkpoint / Fortinet / Malwarebytes
+// / NordLayer admin consoles. ForgeRock IDM (OIDC discovery) covered in
+// TestSSOFederation_ForgeRockOIDC above.
+func TestSSOFederation_CheckPointSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://portal.checkpoint.com/sso/saml/metadata",
+		EntityID:    "https://portal.checkpoint.com/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "checkpoint-1", "CheckPoint", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_FortinetSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://forticloud.example.com/sso/saml/metadata",
+		EntityID:    "https://forticloud.example.com/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "fortinet-1", "Fortinet", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_MalwarebytesSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://cloud.malwarebytes.com/sso/saml/metadata",
+		EntityID:    "https://cloud.malwarebytes.com/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "malwarebytes-1", "Malwarebytes", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_NordLayerSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.nordlayer.com/sso/saml/metadata",
+		EntityID:    "https://app.nordlayer.com/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "nordlayer-1", "NordLayer", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
 // contains is a substring helper that avoids pulling in `strings` for
 // contains is a substring helper that avoids pulling in `strings` for
 // just one use.

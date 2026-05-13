@@ -327,15 +327,6 @@ func (c *ForgeRockAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *ForgeRockAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *ForgeRockAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *ForgeRockAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 // GetSSOMetadata advertises ForgeRock AM OIDC discovery metadata.
 // ForgeRock exposes the standard OIDC `.well-known/openid-configuration`
 // document at the configured endpoint, which Keycloak imports as an

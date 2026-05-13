@@ -255,17 +255,8 @@ func (c *FortinetAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *FortinetAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *FortinetAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *FortinetAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
-func (c *FortinetAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+func (c *FortinetAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *FortinetAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {
