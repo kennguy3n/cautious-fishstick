@@ -337,8 +337,12 @@ func (c *SnykAccessConnector) ListEntitlements(ctx context.Context, configRaw, s
 	if json.Unmarshal(body, &resp) != nil { return nil, nil }
 	return []access.Entitlement{{ResourceExternalID: cfg.OrgID, Role: resp.Data.Attributes.Role, Source: "direct"}}, nil
 }
-func (c *SnykAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata projects the connector's configured `sso_metadata_url` /
+// `sso_entity_id` into the shared SAML envelope used to broker Snyk SSO
+// federation. When `sso_metadata_url` is blank the helper returns
+// (nil, nil) and the caller gracefully downgrades.
+func (c *SnykAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *SnykAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {
