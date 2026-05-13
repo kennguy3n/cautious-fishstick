@@ -265,17 +265,15 @@ func (c *GA4AccessConnector) SyncIdentities(
 	}
 }
 
-func (c *GA4AccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *GA4AccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *GA4AccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
-func (c *GA4AccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata surfaces operator-supplied SAML metadata for the
+// Google Analytics 4 admin account. Google Analytics federates SSO via
+// Google Workspace / Cloud Identity SAML; the connector forwards
+// operator-supplied URLs verbatim via access.SSOMetadataFromConfig so the
+// SSOFederationService can register a Keycloak SAML broker. Returns
+// (nil, nil) when the operator has not supplied a metadata URL so the
+// caller downgrades gracefully.
+func (c *GA4AccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *GA4AccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {

@@ -248,15 +248,6 @@ func (c *SproutSocialAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *SproutSocialAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *SproutSocialAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *SproutSocialAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 // GetSSOMetadata surfaces operator-supplied SAML metadata for the
 // Sprout Social workspace. Sprout Social supports SAML 2.0 SSO via the platform
 // admin console for paid plans; the connector forwards

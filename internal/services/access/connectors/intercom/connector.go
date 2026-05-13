@@ -434,8 +434,15 @@ func (c *IntercomAccessConnector) ListEntitlements(
 	}
 	return out, nil
 }
-func (c *IntercomAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata surfaces operator-supplied SAML metadata for the
+// Intercom workspace. Intercom supports SAML 2.0 SSO for Premium plans
+// via the admin Authentication settings; the connector forwards
+// operator-supplied URLs verbatim via access.SSOMetadataFromConfig so the
+// SSOFederationService can register a Keycloak SAML broker. Returns
+// (nil, nil) when the operator has not supplied a metadata URL so the
+// caller downgrades gracefully.
+func (c *IntercomAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *IntercomAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {

@@ -252,17 +252,14 @@ func (c *PracticeFusionAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *PracticeFusionAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *PracticeFusionAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *PracticeFusionAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
-func (c *PracticeFusionAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata surfaces operator-supplied SAML metadata for the
+// Practice Fusion EHR tenant. Practice Fusion supports SAML 2.0 federation
+// via its identity / admin console; the connector forwards operator-supplied
+// URLs verbatim via access.SSOMetadataFromConfig so the SSOFederationService
+// can register a Keycloak SAML broker. Returns (nil, nil) when the operator
+// has not supplied a metadata URL so the caller downgrades gracefully.
+func (c *PracticeFusionAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *PracticeFusionAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {

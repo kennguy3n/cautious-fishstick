@@ -43,6 +43,15 @@ func TestQualysConnectorFlow_FullLifecycle(t *testing.T) {
 			if got := r.PostForm.Get("user_role"); got != role {
 				t.Errorf("add form user_role=%q, want %q", got, role)
 			}
+			if got := r.PostForm.Get("first_name"); got == userLogin {
+				t.Errorf("add form first_name must not echo user_login %q", got)
+			}
+			if got := r.PostForm.Get("email"); got == userLogin {
+				t.Errorf("add form email must not echo user_login %q", got)
+			}
+			if got := r.PostForm.Get("email"); !strings.Contains(got, "@") {
+				t.Errorf("add form email=%q must be an addr-spec", got)
+			}
 			if state != "" {
 				w.WriteHeader(http.StatusConflict)
 				_, _ = w.Write([]byte(`<RESPONSE><CODE>1905</CODE><TEXT>already_exists</TEXT></RESPONSE>`))
@@ -105,6 +114,63 @@ func TestQualysConnectorFlow_FullLifecycle(t *testing.T) {
 	}
 	if len(ents) != 0 {
 		t.Fatalf("expected empty, got %#v", ents)
+	}
+}
+
+func TestQualysProvisionAccess_HonoursScopeIdentityFields(t *testing.T) {
+	got := struct {
+		first, last, email string
+	}{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("action") != "add" {
+			t.Fatalf("unexpected action=%q", r.URL.Query().Get("action"))
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("ParseForm: %v", err)
+		}
+		got.first = r.PostForm.Get("first_name")
+		got.last = r.PostForm.Get("last_name")
+		got.email = r.PostForm.Get("email")
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	grant := access.AccessGrant{
+		UserExternalID:     "alice",
+		ResourceExternalID: "Manager",
+		Scope: map[string]interface{}{
+			"first_name": "Alice",
+			"last_name":  "Liddell",
+			"email":      "alice@example.com",
+		},
+	}
+	if err := c.ProvisionAccess(context.Background(), qualysFlowValidConfig(), qualysFlowValidSecrets(), grant); err != nil {
+		t.Fatalf("ProvisionAccess: %v", err)
+	}
+	if got.first != "Alice" || got.last != "Liddell" || got.email != "alice@example.com" {
+		t.Fatalf("scope override not honoured: %#v", got)
+	}
+}
+
+func TestQualysProvisionAccess_FallsBackToInvalidTLD(t *testing.T) {
+	var capturedEmail string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		capturedEmail = r.PostForm.Get("email")
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	grant := access.AccessGrant{UserExternalID: "alice", ResourceExternalID: "Manager"}
+	if err := c.ProvisionAccess(context.Background(), qualysFlowValidConfig(), qualysFlowValidSecrets(), grant); err != nil {
+		t.Fatalf("ProvisionAccess: %v", err)
+	}
+	if capturedEmail != "alice@user.invalid" {
+		t.Fatalf("expected fallback email alice@user.invalid, got %q", capturedEmail)
 	}
 }
 

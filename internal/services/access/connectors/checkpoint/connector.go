@@ -3,13 +3,13 @@
 package checkpoint
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -107,6 +107,24 @@ func (c *CheckPointAccessConnector) newRequest(ctx context.Context, secrets Secr
 	return req, nil
 }
 
+// newPostJSON builds a Check Point Management API call. The /web_api/*
+// endpoints are POST-only and accept their parameters in a JSON body,
+// not as URL query params.
+func (c *CheckPointAccessConnector) newPostJSON(ctx context.Context, secrets Secrets, fullURL string, body []byte) (*http.Request, error) {
+	var rdr io.Reader
+	if len(body) > 0 {
+		rdr = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, rdr)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-chkp-sid", strings.TrimSpace(secrets.Token))
+	return req, nil
+}
+
 func (c *CheckPointAccessConnector) do(req *http.Request) ([]byte, error) {
 	resp, err := c.client().Do(req)
 	if err != nil {
@@ -143,9 +161,12 @@ func (c *CheckPointAccessConnector) Connect(ctx context.Context, configRaw, secr
 	if err != nil {
 		return err
 	}
-	q := url.Values{"page": []string{"1"}, "per_page": []string{"1"}}
-	probe := c.baseURL() + "/web_api/show-administrators?" + q.Encode()
-	req, err := c.newRequest(ctx, secrets, http.MethodGet, probe)
+	body, _ := json.Marshal(map[string]interface{}{
+		"details-level": "standard",
+		"offset":        0,
+		"limit":         1,
+	})
+	req, err := c.newPostJSON(ctx, secrets, c.baseURL()+"/web_api/show-administrators", body)
 	if err != nil {
 		return err
 	}
@@ -200,21 +221,21 @@ func (c *CheckPointAccessConnector) SyncIdentities(
 	if err != nil {
 		return err
 	}
-	page := 1
+	offset := 0
 	if checkpoint != "" {
-		fmt.Sscanf(checkpoint, "%d", &page)
-		if page < 1 {
-			page = 1
+		fmt.Sscanf(checkpoint, "%d", &offset)
+		if offset < 0 {
+			offset = 0
 		}
 	}
 	base := c.baseURL()
 	for {
-		q := url.Values{
-			"page":     []string{fmt.Sprintf("%d", page)},
-			"per_page": []string{fmt.Sprintf("%d", pageSize)},
-		}
-		path := base + "/web_api/show-administrators?" + q.Encode()
-		req, err := c.newRequest(ctx, secrets, http.MethodGet, path)
+		reqBody, _ := json.Marshal(map[string]interface{}{
+			"details-level": "standard",
+			"offset":        offset,
+			"limit":         pageSize,
+		})
+		req, err := c.newPostJSON(ctx, secrets, base+"/web_api/show-administrators", reqBody)
 		if err != nil {
 			return err
 		}
@@ -232,17 +253,31 @@ func (c *CheckPointAccessConnector) SyncIdentities(
 			if display == "" {
 				display = u.Email
 			}
+			// Check Point's add/delete/show-administrator verbs accept
+			// the administrator by `name`, so the canonical ExternalID
+			// used by Provision/Revoke/ListEntitlements must be `name`,
+			// not the opaque `uid`. The uid is preserved in RawData for
+			// downstream consumers that need it.
+			external := strings.TrimSpace(u.Name)
+			if external == "" {
+				external = strings.TrimSpace(u.ID)
+			}
+			raw := map[string]interface{}{}
+			if v := strings.TrimSpace(u.ID); v != "" {
+				raw["uid"] = v
+			}
 			identities = append(identities, &access.Identity{
-				ExternalID:  u.ID,
+				ExternalID:  external,
 				Type:        access.IdentityTypeUser,
 				DisplayName: display,
 				Email:       u.Email,
 				Status:      "active",
+				RawData:     raw,
 			})
 		}
 		next := ""
 		if len(resp.Items) == pageSize {
-			next = fmt.Sprintf("%d", page+1)
+			next = fmt.Sprintf("%d", offset+pageSize)
 		}
 		if err := handler(identities, next); err != nil {
 			return err
@@ -250,7 +285,7 @@ func (c *CheckPointAccessConnector) SyncIdentities(
 		if next == "" {
 			return nil
 		}
-		page++
+		offset += pageSize
 	}
 }
 

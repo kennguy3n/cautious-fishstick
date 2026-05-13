@@ -2395,6 +2395,97 @@ func TestSSOFederation_NordLayerSAML(t *testing.T) {
 	}
 }
 
+// TestSSOFederation_Batch25 (Phase 10 SSO batch 25) — verifies SAML metadata
+// flowing through ConfigureBroker for Wufoo / Sophos XG / Practice Fusion /
+// GA4 / Intercom admin consoles. The 5th wire (Intercom) is selected from
+// outside the batch-25 advanced-cap set because only 4 of those 9 still
+// returned nil from GetSSOMetadata; Intercom shipped real ProvisionAccess in
+// an earlier batch but kept a stub GetSSOMetadata until this batch.
+func TestSSOFederation_WufooSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://acme.wufoo.com/sso/saml/metadata",
+		EntityID:    "https://acme.wufoo.com/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "wufoo-1", "Wufoo", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_SophosXGSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://firewall.example.com/sso/saml/metadata",
+		EntityID:    "https://firewall.example.com/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "sophos-xg-1", "SophosXG", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_PracticeFusionSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://static.practicefusion.com/sso/saml/metadata",
+		EntityID:    "https://static.practicefusion.com/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "practice-fusion-1", "PracticeFusion", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_GA4SAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://accounts.google.com/sso/saml/metadata",
+		EntityID:    "https://analytics.google.com/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "ga4-1", "GA4", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_IntercomSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.intercom.com/sso/saml/metadata",
+		EntityID:    "https://app.intercom.com/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "intercom-1", "Intercom", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
 // contains is a substring helper that avoids pulling in `strings` for
 // contains is a substring helper that avoids pulling in `strings` for
 // just one use.
