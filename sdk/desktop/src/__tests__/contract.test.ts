@@ -32,6 +32,7 @@ function fakeRequest(state: AccessRequest['state'], id = 'req_test'): AccessRequ
     id,
     workspaceId: 'ws_test',
     requesterUserId: 'user_test',
+    connectorId: 'conn_test',
     resourceExternalId: 'res_test',
     state,
     createdAt: new Date(0).toISOString(),
@@ -104,6 +105,9 @@ async function exerciseContract(client: AccessIPC): Promise<void> {
   });
   if (created.request.state !== 'requested') {
     throw new Error('expected requested');
+  }
+  if (created.request.connectorId !== 'conn_test') {
+    throw new Error('expected connectorId to be propagated on AccessRequest');
   }
 
   const list = await client.requestAccess.list();

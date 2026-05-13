@@ -33,18 +33,39 @@ import java.time.Instant
  * Lifecycle state of an `AccessRequest`. Values mirror the Go-side
  * `access.RequestState` constants in
  * `internal/services/access/request_state_machine.go`.
+ *
+ * Each constant carries the lowercase wire string the server emits (e.g.
+ * `"requested"`, `"provision_failed"`). The [fromWire] factory parses
+ * server JSON without depending on any external serialization library —
+ * the SDK is deliberately library-free so host apps can pick their own
+ * (Moshi / kotlinx.serialization / Gson) and adapt via [value].
  */
-enum class AccessRequestState {
-    REQUESTED,
-    APPROVED,
-    DENIED,
-    CANCELLED,
-    PROVISIONING,
-    PROVISIONED,
-    PROVISION_FAILED,
-    ACTIVE,
-    REVOKED,
-    EXPIRED,
+enum class AccessRequestState(val value: String) {
+    REQUESTED("requested"),
+    APPROVED("approved"),
+    DENIED("denied"),
+    CANCELLED("cancelled"),
+    PROVISIONING("provisioning"),
+    PROVISIONED("provisioned"),
+    PROVISION_FAILED("provision_failed"),
+    ACTIVE("active"),
+    REVOKED("revoked"),
+    EXPIRED("expired");
+
+    companion object {
+        /**
+         * Parse a server-supplied wire string (e.g. from `state` in the
+         * `AccessRequest` JSON payload) into an [AccessRequestState].
+         * Throws [IllegalArgumentException] if the value is not one of
+         * the ten recognised states.
+         */
+        @JvmStatic
+        fun fromWire(value: String): AccessRequestState =
+            entries.firstOrNull { it.value == value }
+                ?: throw IllegalArgumentException(
+                    "unknown AccessRequestState wire value: $value",
+                )
+    }
 }
 
 /**
@@ -53,11 +74,28 @@ enum class AccessRequestState {
  * constants in `internal/models/access_request.go`. The server stores
  * risk as a string bucket; finer-grained numeric scoring is a Phase 4
  * AI-agent concern.
+ *
+ * Each constant carries the lowercase wire string the server emits
+ * (`"low"` / `"medium"` / `"high"`); use [fromWire] to parse JSON.
  */
-enum class AccessRequestRiskScore {
-    LOW,
-    MEDIUM,
-    HIGH,
+enum class AccessRequestRiskScore(val value: String) {
+    LOW("low"),
+    MEDIUM("medium"),
+    HIGH("high");
+
+    companion object {
+        /**
+         * Parse a server-supplied wire string into an
+         * [AccessRequestRiskScore]. Throws [IllegalArgumentException]
+         * if the value is not one of the three recognised buckets.
+         */
+        @JvmStatic
+        fun fromWire(value: String): AccessRequestRiskScore =
+            entries.firstOrNull { it.value == value }
+                ?: throw IllegalArgumentException(
+                    "unknown AccessRequestRiskScore wire value: $value",
+                )
+    }
 }
 
 /**
@@ -70,6 +108,7 @@ data class AccessRequest(
     val workspaceId: String,
     val requesterUserId: String,
     val targetUserId: String? = null,
+    val connectorId: String,
     val resourceExternalId: String,
     val role: String? = null,
     val justification: String? = null,

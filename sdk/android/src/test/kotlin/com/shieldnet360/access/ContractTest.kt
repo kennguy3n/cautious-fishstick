@@ -25,6 +25,7 @@ private class MockAccessSDKClient : AccessSDKClient {
         id = "req_test",
         workspaceId = "ws_test",
         requesterUserId = "user_test",
+        connectorId = "conn_test",
         resourceExternalId = resource,
         role = role,
         justification = justification,
@@ -42,6 +43,7 @@ private class MockAccessSDKClient : AccessSDKClient {
         id = id,
         workspaceId = "ws_test",
         requesterUserId = "user_test",
+        connectorId = "conn_test",
         resourceExternalId = "res_test",
         state = AccessRequestState.APPROVED,
         createdAt = Instant.EPOCH,
@@ -51,6 +53,7 @@ private class MockAccessSDKClient : AccessSDKClient {
         id = id,
         workspaceId = "ws_test",
         requesterUserId = "user_test",
+        connectorId = "conn_test",
         resourceExternalId = "res_test",
         state = AccessRequestState.DENIED,
         createdAt = Instant.EPOCH,
@@ -60,6 +63,7 @@ private class MockAccessSDKClient : AccessSDKClient {
         id = id,
         workspaceId = "ws_test",
         requesterUserId = "user_test",
+        connectorId = "conn_test",
         resourceExternalId = "res_test",
         state = AccessRequestState.CANCELLED,
         createdAt = Instant.EPOCH,
@@ -85,6 +89,7 @@ class ContractTest {
         )
         assertEquals(AccessRequestState.REQUESTED, created.state)
         assertEquals("res_test", created.resourceExternalId)
+        assertEquals("conn_test", created.connectorId)
 
         val list = client.listRequests()
         assertTrue(list.isEmpty())
@@ -113,5 +118,38 @@ class ContractTest {
         val ex = AccessSDKException.Http(statusCode = 401, body = "{\"error\":{\"code\":\"unauthorized\"}}")
         assertEquals(401, ex.statusCode)
         assertTrue(ex.message!!.contains("HTTP 401"))
+    }
+
+    @Test
+    fun `AccessRequestState maps to and from lowercase wire values`() {
+        // Wire values match the Go-side constants in
+        // internal/services/access/request_state_machine.go.
+        assertEquals("requested", AccessRequestState.REQUESTED.value)
+        assertEquals("provision_failed", AccessRequestState.PROVISION_FAILED.value)
+        assertEquals("expired", AccessRequestState.EXPIRED.value)
+
+        assertEquals(AccessRequestState.APPROVED, AccessRequestState.fromWire("approved"))
+        assertEquals(AccessRequestState.PROVISION_FAILED, AccessRequestState.fromWire("provision_failed"))
+        assertEquals(AccessRequestState.EXPIRED, AccessRequestState.fromWire("expired"))
+
+        val unknown = try {
+            AccessRequestState.fromWire("unknown_state")
+            null
+        } catch (e: IllegalArgumentException) {
+            e
+        }
+        assertTrue(unknown != null, "fromWire must throw on unknown values")
+    }
+
+    @Test
+    fun `AccessRequestRiskScore maps to and from lowercase wire values`() {
+        // Wire values match the Go-side RequestRiskLow / Medium / High
+        // constants in internal/models/access_request.go.
+        assertEquals("low", AccessRequestRiskScore.LOW.value)
+        assertEquals("medium", AccessRequestRiskScore.MEDIUM.value)
+        assertEquals("high", AccessRequestRiskScore.HIGH.value)
+
+        assertEquals(AccessRequestRiskScore.LOW, AccessRequestRiskScore.fromWire("low"))
+        assertEquals(AccessRequestRiskScore.HIGH, AccessRequestRiskScore.fromWire("high"))
     }
 }

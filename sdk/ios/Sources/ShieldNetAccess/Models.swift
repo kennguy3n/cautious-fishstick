@@ -61,6 +61,7 @@ public struct AccessRequest: Codable, Identifiable, Sendable, Equatable {
     public let workspaceID: String
     public let requesterUserID: String
     public let targetUserID: String?
+    public let connectorID: String
     public let resourceExternalID: String
     public let role: String?
     public let justification: String?
@@ -76,6 +77,7 @@ public struct AccessRequest: Codable, Identifiable, Sendable, Equatable {
         workspaceID: String,
         requesterUserID: String,
         targetUserID: String? = nil,
+        connectorID: String,
         resourceExternalID: String,
         role: String? = nil,
         justification: String? = nil,
@@ -90,6 +92,7 @@ public struct AccessRequest: Codable, Identifiable, Sendable, Equatable {
         self.workspaceID = workspaceID
         self.requesterUserID = requesterUserID
         self.targetUserID = targetUserID
+        self.connectorID = connectorID
         self.resourceExternalID = resourceExternalID
         self.role = role
         self.justification = justification
@@ -106,6 +109,7 @@ public struct AccessRequest: Codable, Identifiable, Sendable, Equatable {
         case workspaceID = "workspace_id"
         case requesterUserID = "requester_user_id"
         case targetUserID = "target_user_id"
+        case connectorID = "connector_id"
         case resourceExternalID = "resource_external_id"
         case role
         case justification

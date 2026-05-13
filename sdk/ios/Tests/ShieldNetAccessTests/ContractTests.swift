@@ -23,6 +23,7 @@ private final class MockAccessSDKClient: AccessSDKClient {
             id: "req_test",
             workspaceID: "ws_test",
             requesterUserID: "user_test",
+            connectorID: "conn_test",
             resourceExternalID: resource,
             role: role,
             justification: justification,
@@ -44,6 +45,7 @@ private final class MockAccessSDKClient: AccessSDKClient {
             id: id,
             workspaceID: "ws_test",
             requesterUserID: "user_test",
+            connectorID: "conn_test",
             resourceExternalID: "res_test",
             state: .approved,
             createdAt: Date(timeIntervalSince1970: 0)
@@ -55,6 +57,7 @@ private final class MockAccessSDKClient: AccessSDKClient {
             id: id,
             workspaceID: "ws_test",
             requesterUserID: "user_test",
+            connectorID: "conn_test",
             resourceExternalID: "res_test",
             state: .denied,
             createdAt: Date(timeIntervalSince1970: 0)
@@ -66,6 +69,7 @@ private final class MockAccessSDKClient: AccessSDKClient {
             id: id,
             workspaceID: "ws_test",
             requesterUserID: "user_test",
+            connectorID: "conn_test",
             resourceExternalID: "res_test",
             state: .cancelled,
             createdAt: Date(timeIntervalSince1970: 0)
@@ -99,6 +103,7 @@ final class ContractTests: XCTestCase {
         )
         XCTAssertEqual(created.state, .requested)
         XCTAssertEqual(created.resourceExternalID, "res_test")
+        XCTAssertEqual(created.connectorID, "conn_test")
 
         let list = try await client.listRequests(state: nil, requester: nil, resource: nil)
         XCTAssertEqual(list.count, 0)

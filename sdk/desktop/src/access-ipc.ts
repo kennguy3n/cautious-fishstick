@@ -81,6 +81,12 @@ export interface AccessRequest {
   readonly workspaceId: string;
   readonly requesterUserId: string;
   readonly targetUserId?: string | null;
+  /**
+   * Identifier of the connector (upstream SaaS / IdP / cloud account) the
+   * request targets. Non-null on the wire — `ConnectorID` is declared
+   * `not null` in `internal/models/access_request.go`.
+   */
+  readonly connectorId: string;
   readonly resourceExternalId: string;
   readonly role?: string | null;
   readonly justification?: string | null;
