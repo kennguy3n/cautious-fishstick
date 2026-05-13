@@ -236,23 +236,35 @@ func (c *GA4AccessConnector) SyncIdentities(
 		}
 		identities := make([]*access.Identity, 0, len(resp.UserLinks))
 		for _, u := range resp.UserLinks {
-			// Resource name is e.g. "accounts/123/userLinks/456".
-			// Use it as the stable external ID and surface the email
-			// as display + email so downstream resolution works.
-			id := strings.TrimSpace(u.Name)
-			if id == "" {
-				id = u.EmailAddress
+			// GA4 admin users are identified by emailAddress (the field
+			// accepted by accounts.userLinks.create). The advanced-cap
+			// methods accept the same value via grant.UserExternalID and
+			// resolve it to the auto-generated resource name client-side
+			// (see findUserLinkByExternalID in advanced.go). The opaque
+			// resource name is preserved in RawData under "name" for
+			// callers that already have it and want to address the
+			// userLink directly.
+			email := strings.TrimSpace(u.EmailAddress)
+			name := strings.TrimSpace(u.Name)
+			external := email
+			if external == "" {
+				external = name
 			}
-			display := strings.TrimSpace(u.EmailAddress)
+			display := email
 			if display == "" {
-				display = id
+				display = name
+			}
+			raw := map[string]interface{}{}
+			if name != "" {
+				raw["name"] = name
 			}
 			identities = append(identities, &access.Identity{
-				ExternalID:  id,
+				ExternalID:  external,
 				Type:        access.IdentityTypeUser,
 				DisplayName: display,
 				Email:       u.EmailAddress,
 				Status:      "active",
+				RawData:     raw,
 			})
 		}
 		if err := handler(identities, resp.NextPageToken); err != nil {

@@ -101,6 +101,12 @@ func TestSync_PaginatesUsers(t *testing.T) {
 	if len(got) != pageSize+1 || calls != 2 {
 		t.Fatalf("got=%d calls=%d", len(got), calls)
 	}
+	if got[0].ExternalID != "u0@x.com" {
+		t.Errorf("ExternalID must be emailAddress (matches advanced-cap UserExternalID contract), got %q", got[0].ExternalID)
+	}
+	if name, _ := got[0].RawData["name"].(string); name != "accounts/12345/userLinks/1" {
+		t.Errorf("RawData[name] = %q, want resource name", name)
+	}
 }
 
 func TestConnect_Failure(t *testing.T) {

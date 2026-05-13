@@ -19,8 +19,9 @@ import (
 //   - ListEntitlements -> POST /web_api/show-administrator    {name}
 //
 // All /web_api/* verbs are POSTs carrying a JSON body and authenticate via
-// the X-chkp-sid session header. Idempotent on (UserExternalID,
-// ResourceExternalID) per PROPOSAL §2.1.
+// the X-chkp-sid session header (shared helper `newPostJSON` in
+// connector.go). Idempotent on (UserExternalID, ResourceExternalID) per
+// PROPOSAL §2.1.
 
 func checkpointValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {
@@ -34,17 +35,6 @@ func checkpointValidateGrant(g access.AccessGrant) error {
 
 func (c *CheckPointAccessConnector) verbURL(verb string) string {
 	return c.baseURL() + "/web_api/" + verb
-}
-
-func (c *CheckPointAccessConnector) newJSONRequest(ctx context.Context, secrets Secrets, fullURL string, body []byte) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, strings.NewReader(string(body)))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-chkp-sid", strings.TrimSpace(secrets.Token))
-	return req, nil
 }
 
 func (c *CheckPointAccessConnector) doRaw(req *http.Request) (int, []byte, error) {
@@ -69,7 +59,7 @@ func (c *CheckPointAccessConnector) ProvisionAccess(ctx context.Context, configR
 		"name":                 strings.TrimSpace(grant.UserExternalID),
 		"permissions-profile": strings.TrimSpace(grant.ResourceExternalID),
 	})
-	req, err := c.newJSONRequest(ctx, secrets, c.verbURL("add-administrator"), payload)
+	req, err := c.newPostJSON(ctx, secrets, c.verbURL("add-administrator"), payload)
 	if err != nil {
 		return err
 	}
@@ -100,7 +90,7 @@ func (c *CheckPointAccessConnector) RevokeAccess(ctx context.Context, configRaw,
 	payload, _ := json.Marshal(map[string]interface{}{
 		"name": strings.TrimSpace(grant.UserExternalID),
 	})
-	req, err := c.newJSONRequest(ctx, secrets, c.verbURL("delete-administrator"), payload)
+	req, err := c.newPostJSON(ctx, secrets, c.verbURL("delete-administrator"), payload)
 	if err != nil {
 		return err
 	}
@@ -130,7 +120,7 @@ func (c *CheckPointAccessConnector) ListEntitlements(ctx context.Context, config
 		return nil, err
 	}
 	payload, _ := json.Marshal(map[string]interface{}{"name": user})
-	req, err := c.newJSONRequest(ctx, secrets, c.verbURL("show-administrator"), payload)
+	req, err := c.newPostJSON(ctx, secrets, c.verbURL("show-administrator"), payload)
 	if err != nil {
 		return nil, err
 	}
