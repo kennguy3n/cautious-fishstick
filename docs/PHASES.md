@@ -213,7 +213,7 @@ A phase is **shippable** only when *all* of its exit criteria are demonstrably m
 
 ---
 
-## Phase 10 — Connector scale-out (200 connectors)  🟡 partial — advanced caps ✅ 196/50, audit logs ✅ 200/200 (50/50 of top-50 ✅)
+## Phase 10 — Connector scale-out (200 connectors)  🟡 partial — advanced caps ✅ 197/50, audit logs ✅ 200/200 (50/50 of top-50 ✅)
 
 **Scope.** Complete the full 200-provider catalogue.
 
@@ -243,4 +243,4 @@ Independent of which phase a PR contributes to, the following must hold before m
 - [ ] Translation keys added for any new operator-facing message.
 - [x] **SN360 language alignment verified** — no jargon (`policy`, `entitlement`, `connector`, `IdP`) in user-facing strings. Use the SN360-language column from `PROPOSAL.md` §8 instead. *(Enforced by `scripts/check_sn360_language.sh` — greps quoted strings under `internal/handlers/` + `docs/swagger.{json,yaml}` for forbidden phrases (`ZTNA policy`, `Service policy`, `Identity provider`, `SCIM provisioning`, `Access review campaign`, `Entitlement`, `Separation of duties`, `Federated SSO`, `Access certification`) and exits non-zero on hit. `scripts/check_sn360_language_test.go` drives the script under `go test` so CI failures surface alongside the rest of the test suite.)*
 - [x] Swagger regenerated when the public API surface changes (`./generate-swagger.sh` or equivalent). *(`scripts/generate-swagger.sh` regenerates `docs/swagger.json` + `docs/swagger.yaml` (and supports a `--check` drift-detection mode for CI). Spec is served at `/swagger`, `/swagger.json`, `/swagger.yaml` via `internal/handlers/swagger_handler.go` which embeds the file at build time with `//go:embed`. Covers every handler in `internal/handlers/` (access requests, grants, reviews, policy, AI explain / suggest, SCIM).)*
-- [ ] **Client-side AI rule.** No model file (`.mlmodel`, `.tflite`, `.onnx`, `.gguf`) is committed under any mobile / desktop SDK directory. AI calls must be REST.
+- [x] **Client-side AI rule.** No model file (`.mlmodel`, `.tflite`, `.onnx`, `.gguf`) is committed under any mobile / desktop SDK directory. AI calls must be REST. *(Enforced by `scripts/check_no_model_files.sh` — wired into `.github/workflows/ci.yml` (PR #64). The script recursively searches `sdk/` for `.mlmodel`, `.tflite`, `.onnx`, and `.gguf` files and fails the build on any hit. Driven from `go test` via `scripts/check_no_model_files_test.go`.)*
