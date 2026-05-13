@@ -41,8 +41,23 @@ enum class AccessRequestState {
     CANCELLED,
     PROVISIONING,
     PROVISIONED,
+    PROVISION_FAILED,
     ACTIVE,
     REVOKED,
+    EXPIRED,
+}
+
+/**
+ * Coarse risk bucket for an [AccessRequest]. Values mirror the Go-side
+ * `models.RequestRiskLow` / `RequestRiskMedium` / `RequestRiskHigh`
+ * constants in `internal/models/access_request.go`. The server stores
+ * risk as a string bucket; finer-grained numeric scoring is a Phase 4
+ * AI-agent concern.
+ */
+enum class AccessRequestRiskScore {
+    LOW,
+    MEDIUM,
+    HIGH,
 }
 
 /**
@@ -59,7 +74,7 @@ data class AccessRequest(
     val role: String? = null,
     val justification: String? = null,
     val state: AccessRequestState,
-    val riskScore: Double? = null,
+    val riskScore: AccessRequestRiskScore? = null,
     val riskFactors: List<String>? = null,
     val workflowId: String? = null,
     val createdAt: Instant,

@@ -61,8 +61,19 @@ export type AccessRequestState =
   | 'cancelled'
   | 'provisioning'
   | 'provisioned'
+  | 'provision_failed'
   | 'active'
-  | 'revoked';
+  | 'revoked'
+  | 'expired';
+
+/**
+ * Coarse risk bucket for an access request. Values mirror the Go-side
+ * `models.RequestRiskLow` / `RequestRiskMedium` / `RequestRiskHigh`
+ * constants in `internal/models/access_request.go`. The server stores
+ * risk as a string bucket; finer-grained numeric scoring is a Phase 4
+ * AI-agent concern.
+ */
+export type AccessRequestRiskScore = 'low' | 'medium' | 'high';
 
 /** Persisted access request row (mirrors the `access_requests` table). */
 export interface AccessRequest {
@@ -74,7 +85,7 @@ export interface AccessRequest {
   readonly role?: string | null;
   readonly justification?: string | null;
   readonly state: AccessRequestState;
-  readonly riskScore?: number | null;
+  readonly riskScore?: AccessRequestRiskScore | null;
   readonly riskFactors?: readonly string[] | null;
   readonly workflowId?: string | null;
   /** ISO-8601 timestamp (RFC 3339). */

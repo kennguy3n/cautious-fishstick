@@ -35,8 +35,21 @@ public enum AccessRequestState: String, Codable, CaseIterable, Sendable {
     case cancelled
     case provisioning
     case provisioned
+    case provisionFailed = "provision_failed"
     case active
     case revoked
+    case expired
+}
+
+/// Coarse risk bucket for an `AccessRequest`. Values mirror the Go-side
+/// `models.RequestRiskLow` / `RequestRiskMedium` / `RequestRiskHigh`
+/// constants in `internal/models/access_request.go`. The server stores
+/// risk as a string bucket; finer-grained numeric scoring is a Phase 4
+/// AI-agent concern.
+public enum AccessRequestRiskScore: String, Codable, CaseIterable, Sendable {
+    case low
+    case medium
+    case high
 }
 
 /// Persisted access request row.
@@ -52,7 +65,7 @@ public struct AccessRequest: Codable, Identifiable, Sendable, Equatable {
     public let role: String?
     public let justification: String?
     public let state: AccessRequestState
-    public let riskScore: Double?
+    public let riskScore: AccessRequestRiskScore?
     public let riskFactors: [String]?
     public let workflowID: String?
     public let createdAt: Date
@@ -67,7 +80,7 @@ public struct AccessRequest: Codable, Identifiable, Sendable, Equatable {
         role: String? = nil,
         justification: String? = nil,
         state: AccessRequestState,
-        riskScore: Double? = nil,
+        riskScore: AccessRequestRiskScore? = nil,
         riskFactors: [String]? = nil,
         workflowID: String? = nil,
         createdAt: Date,
