@@ -2751,6 +2751,159 @@ func TestSSOFederation_GorgiasSAML(t *testing.T) {
 	}
 }
 
+func TestSSOFederation_BillDotComSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://login.bill.com/saml/acme/metadata",
+		EntityID:    "https://login.bill.com/saml/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "billdotcom-1", "BillDotCom", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_KlaviyoSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.klaviyo.com/sso/saml/acme/metadata",
+		EntityID:    "https://app.klaviyo.com/sso/saml/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "klaviyo-1", "Klaviyo", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_MailchimpSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://login.mailchimp.com/saml/acme/metadata",
+		EntityID:    "https://login.mailchimp.com/saml/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "mailchimp-1", "Mailchimp", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_MixpanelSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://mixpanel.com/sso/saml/acme/metadata",
+		EntityID:    "https://mixpanel.com/sso/saml/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "mixpanel-1", "Mixpanel", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_PandaDocSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.pandadoc.com/sso/saml/acme/metadata",
+		EntityID:    "https://app.pandadoc.com/sso/saml/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "pandadoc-1", "PandaDoc", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_SegmentSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.segment.com/sso/saml/acme/metadata",
+		EntityID:    "https://app.segment.com/sso/saml/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "segment-1", "Segment", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_StripeSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://dashboard.stripe.com/sso/saml/acme/metadata",
+		EntityID:    "https://dashboard.stripe.com/sso/saml/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "stripe-1", "Stripe", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_SalesloftSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.salesloft.com/sso/saml/acme/metadata",
+		EntityID:    "https://app.salesloft.com/sso/saml/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "salesloft-1", "Salesloft", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_PipedriveSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.pipedrive.com/sso/saml/acme/metadata",
+		EntityID:    "https://app.pipedrive.com/sso/saml/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "pipedrive-1", "Pipedrive", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
 // contains is a substring helper that avoids pulling in `strings` for
 // just one use.
 func contains(haystack, needle string) bool {
