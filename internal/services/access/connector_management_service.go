@@ -180,6 +180,15 @@ func (s *ConnectorManagementService) Connect(ctx context.Context, in ConnectInpu
 	if err != nil {
 		return nil, fmt.Errorf("access: connector verify_permissions failed: %w", err)
 	}
+	// docs/ARCHITECTURE.md §2: when VerifyPermissions reports
+	// non-empty missing capabilities, short-circuit with 400 and the
+	// surface list — do NOT persist the connector. Downstream
+	// provisioning / sync would otherwise fail mid-flight against a
+	// half-authorized credential, leaving stale rows and orphaned
+	// jobs.
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("%w: missing capabilities: %v", ErrValidation, missing)
+	}
 
 	credMeta, err := connector.GetCredentialsMetadata(ctx, in.Config, in.Secrets)
 	if err != nil {

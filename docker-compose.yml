@@ -54,6 +54,14 @@ services:
       ZTNA_API_LISTEN_ADDR: ":8080"
       ACCESS_DATABASE_URL: postgres://access:access@postgres:5432/access?sslmode=disable
       ACCESS_REDIS_URL: redis://redis:6379/0
+      # Wires ztna-api to the in-compose access-ai-agent so
+      # /access/explain and /access/suggest work out of the box.
+      # AssessRiskWithFallback / DetectAnomaliesWithFallback still
+      # degrade gracefully if the agent is unreachable, so leaving
+      # the API key empty keeps the dev-stack auth open per
+      # docs/PROPOSAL.md §10.3 (rotate before any non-local use).
+      ACCESS_AI_AGENT_BASE_URL: http://access-ai-agent:8090
+      ACCESS_AI_AGENT_API_KEY: ""
     healthcheck:
       test: ["CMD", "/ztna-api", "--healthcheck"]
       interval: 10s
