@@ -16,3 +16,7 @@ venv/
 
 # OS
 .DS_Store
+
+# Node (sdk/desktop is a TypeScript SDK contract; deps install locally only)
+node_modules/
+
