@@ -110,6 +110,18 @@ func TestAccessRequestHandler_Approve_HappyPath(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s; want 200", w.Code, w.Body.String())
 	}
+	// The verb endpoints return the full updated AccessRequest so the
+	// iOS / Android / Desktop SDK contracts (which all declare
+	// `approveRequest -> AccessRequest`) can decode the response
+	// directly. Confirm we got back the same row with the new state.
+	var got models.AccessRequest
+	decodeJSON(t, w, &got)
+	if got.ID != created.ID {
+		t.Fatalf("response id = %q; want %q", got.ID, created.ID)
+	}
+	if got.State != models.RequestStateApproved {
+		t.Fatalf("response state = %q; want %q", got.State, models.RequestStateApproved)
+	}
 }
 
 func TestAccessRequestHandler_Approve_NotFoundReturns404(t *testing.T) {
@@ -135,6 +147,11 @@ func TestAccessRequestHandler_Deny_HappyPath(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 	}
+	var got models.AccessRequest
+	decodeJSON(t, w, &got)
+	if got.State != models.RequestStateDenied {
+		t.Fatalf("response state = %q; want %q", got.State, models.RequestStateDenied)
+	}
 }
 
 func TestAccessRequestHandler_Cancel_HappyPath(t *testing.T) {
@@ -148,6 +165,11 @@ func TestAccessRequestHandler_Cancel_HappyPath(t *testing.T) {
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	var got models.AccessRequest
+	decodeJSON(t, w, &got)
+	if got.State != models.RequestStateCancelled {
+		t.Fatalf("response state = %q; want %q", got.State, models.RequestStateCancelled)
 	}
 }
 

@@ -188,5 +188,16 @@ func (h *AccessRequestHandler) transitionVerb(c *gin.Context, verb string) {
 		writeError(c, http.StatusInternalServerError, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"id": id, "verb": verb})
+	// Re-read the updated row so the response matches the SDK contract:
+	// AccessSDKProtocol.swift / AccessSDKClient.kt / access-ipc.ts all
+	// declare approveRequest / denyRequest / cancelRequest return the
+	// full AccessRequest. Returning the post-transition state here lets
+	// concrete SDK implementations decode the response directly without
+	// a follow-up GET /access/requests/:id round-trip.
+	detail, err := h.requestService.GetRequest(ctx, id)
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, err)
+		return
+	}
+	c.JSON(http.StatusOK, detail.Request)
 }
