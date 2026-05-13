@@ -34,6 +34,44 @@ func qualysValidateGrant(g access.AccessGrant) error {
 	return nil
 }
 
+func qualysScopeString(g access.AccessGrant, key string) string {
+	if g.Scope == nil {
+		return ""
+	}
+	if v, ok := g.Scope[key].(string); ok {
+		return strings.TrimSpace(v)
+	}
+	return ""
+}
+
+// qualysProvisionFields resolves the first_name / last_name / email fields
+// required by `/api/2.0/fo/user/?action=add`. Provisioners SHOULD set these
+// via grant.Scope["first_name"] / ["last_name"] / ["email"]; the helper
+// derives sensible fallbacks so the call never echoes UserExternalID into
+// every identity field. For email specifically the fallback uses RFC 6761's
+// reserved `.invalid` TLD when the login is not already an addr-spec, which
+// guarantees the placeholder cannot route real mail.
+func qualysProvisionFields(g access.AccessGrant) (firstName, lastName, email string) {
+	login := strings.TrimSpace(g.UserExternalID)
+	firstName = qualysScopeString(g, "first_name")
+	if firstName == "" {
+		firstName = "Provisioned"
+	}
+	lastName = qualysScopeString(g, "last_name")
+	if lastName == "" {
+		lastName = login
+	}
+	email = qualysScopeString(g, "email")
+	if email == "" {
+		if strings.Contains(login, "@") {
+			email = login
+		} else {
+			email = login + "@user.invalid"
+		}
+	}
+	return
+}
+
 func (c *QualysAccessConnector) userActionURL(cfg Config, q url.Values) string {
 	return c.baseURL(cfg) + "/api/2.0/fo/user/?" + q.Encode()
 }
@@ -75,12 +113,13 @@ func (c *QualysAccessConnector) ProvisionAccess(ctx context.Context, configRaw, 
 	if err != nil {
 		return err
 	}
+	firstName, lastName, email := qualysProvisionFields(grant)
 	form := url.Values{
 		"user_login":    []string{strings.TrimSpace(grant.UserExternalID)},
 		"user_role":     []string{strings.TrimSpace(grant.ResourceExternalID)},
-		"first_name":    []string{strings.TrimSpace(grant.UserExternalID)},
-		"last_name":     []string{strings.TrimSpace(grant.UserExternalID)},
-		"email":         []string{strings.TrimSpace(grant.UserExternalID)},
+		"first_name":    []string{firstName},
+		"last_name":     []string{lastName},
+		"email":         []string{email},
 		"business_unit": []string{"Unassigned"},
 		"send_email":    []string{"0"},
 	}

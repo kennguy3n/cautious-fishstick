@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -59,22 +60,30 @@ func TestSync_PaginatesUsers(t *testing.T) {
 		if r.Header.Get("X-chkp-sid") == "" {
 			t.Errorf("expected X-chkp-sid header")
 		}
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
 		if r.URL.Path != "/web_api/show-administrators" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		page := r.URL.Query().Get("page")
+		raw, _ := io.ReadAll(r.Body)
+		var reqBody map[string]interface{}
+		if err := json.Unmarshal(raw, &reqBody); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		offset, _ := reqBody["offset"].(float64)
 		body := map[string]interface{}{}
 		var arr []map[string]interface{}
 		if calls == 1 {
-			if page != "1" {
-				t.Errorf("page = %q", page)
+			if int(offset) != 0 {
+				t.Errorf("offset = %v, want 0", offset)
 			}
 			for i := 0; i < pageSize; i++ {
-				arr = append(arr, map[string]interface{}{ "uid": fmt.Sprintf("u%d", i), "email": fmt.Sprintf("u%d@x.com", i), "name": fmt.Sprintf("U%d", i) })
+				arr = append(arr, map[string]interface{}{"uid": fmt.Sprintf("u%d", i), "email": fmt.Sprintf("u%d@x.com", i), "name": fmt.Sprintf("U%d", i)})
 			}
 		} else {
-			if page != "2" {
-				t.Errorf("page = %q", page)
+			if int(offset) != pageSize {
+				t.Errorf("offset = %v, want %d", offset, pageSize)
 			}
 			arr = []map[string]interface{}{{"uid": "ulast", "email": "last@x.com", "name": "Last"}}
 		}
@@ -96,6 +105,12 @@ func TestSync_PaginatesUsers(t *testing.T) {
 	}
 	if len(got) != pageSize+1 || calls != 2 {
 		t.Fatalf("got=%d calls=%d", len(got), calls)
+	}
+	if got[0].ExternalID != "U0" {
+		t.Errorf("ExternalID must be the administrator name (matching Provision/Revoke contract), got %q", got[0].ExternalID)
+	}
+	if uid, _ := got[0].RawData["uid"].(string); uid != "u0" {
+		t.Errorf("RawData[uid] = %q, want u0", uid)
 	}
 }
 
