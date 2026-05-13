@@ -2486,6 +2486,117 @@ func TestSSOFederation_IntercomSAML(t *testing.T) {
 	}
 }
 
+// --- batch 26 SSO federation wires ---------------------------------------
+// Six more connectors (ActiveCampaign, Brex, Close, Drift, Gong,
+// HelpScout) flipped from `return nil, nil` to
+// access.SSOMetadataFromConfig(configRaw, "saml") in this batch. The
+// underlying advanced caps (Provision/Revoke/List) already shipped in
+// earlier batches; this batch only widens the SSOFederationService
+// coverage so operator-supplied SAML metadata flows through
+// ConfigureBroker for these workspaces too.
+
+func TestSSOFederation_ActiveCampaignSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://acme.activehosted.com/sso/saml/metadata",
+		EntityID:    "https://acme.activehosted.com/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "activecampaign-1", "ActiveCampaign", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_BrexSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://dashboard.brex.com/sso/saml/metadata",
+		EntityID:    "https://dashboard.brex.com/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "brex-1", "Brex", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_CloseSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.close.com/sso/saml/metadata",
+		EntityID:    "https://app.close.com/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "close-1", "Close", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_DriftSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.drift.com/sso/saml/metadata",
+		EntityID:    "https://app.drift.com/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "drift-1", "Drift", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_GongSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.gong.io/sso/saml/metadata",
+		EntityID:    "https://app.gong.io/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "gong-1", "Gong", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_HelpScoutSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://secure.helpscout.net/sso/saml/metadata",
+		EntityID:    "https://secure.helpscout.net/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "helpscout-1", "HelpScout", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
 // contains is a substring helper that avoids pulling in `strings` for
 // contains is a substring helper that avoids pulling in `strings` for
 // just one use.
