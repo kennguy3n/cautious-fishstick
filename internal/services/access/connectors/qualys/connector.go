@@ -304,6 +304,7 @@ type qualysUserList struct {
 type qualysUser struct {
 	UserLogin string `xml:"USER_LOGIN"`
 	UserID    string `xml:"USER_ID"`
+	UserRole  string `xml:"USER_ROLE"`
 	FirstName string `xml:"FIRST_NAME"`
 	LastName  string `xml:"LAST_NAME"`
 	Email     string `xml:"EMAIL"`
@@ -407,15 +408,6 @@ func (c *QualysAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *QualysAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *QualysAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *QualysAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 func (c *QualysAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
 	return nil, nil
 }
