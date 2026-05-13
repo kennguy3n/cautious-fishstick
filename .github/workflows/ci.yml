@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   go:
-    name: go (build / vet / test / swagger / sn360-language)
+    name: go (build / vet / test / swagger / sn360-language / sdk-no-model-files)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -42,3 +42,6 @@ jobs:
 
       - name: Verify SN360 user-facing language
         run: bash scripts/check_sn360_language.sh
+
+      - name: Verify no on-device model files under sdk/
+        run: bash scripts/check_no_model_files.sh
