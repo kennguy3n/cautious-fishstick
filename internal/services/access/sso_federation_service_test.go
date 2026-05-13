@@ -3363,6 +3363,159 @@ func TestSSOFederation_NamelySAML(t *testing.T) {
 	}
 }
 
+func TestSSOFederation_QualysSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://qualysguard.qualys.com/saml/acme/metadata",
+		EntityID:    "https://qualysguard.qualys.com/saml/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "qualys-1", "Qualys", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_VultrSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://my.vultr.com/saml/acme/metadata",
+		EntityID:    "https://my.vultr.com/saml/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "vultr-1", "Vultr", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_TravisCISAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://travis-ci.example.com/saml/acme/metadata",
+		EntityID:    "https://travis-ci.example.com/saml/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "travis-ci-1", "Travis CI", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_OVHcloudSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://eu.api.ovh.com/saml/acme/metadata",
+		EntityID:    "https://eu.api.ovh.com/saml/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "ovhcloud-1", "OVHcloud", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_QuipSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://platform.quip.com/saml/acme/metadata",
+		EntityID:    "https://platform.quip.com/saml/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "quip-1", "Quip", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_MyCaseSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.mycase.com/saml/acme/metadata",
+		EntityID:    "https://app.mycase.com/saml/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "mycase-1", "MyCase", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_SurveysparrowSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://api.surveysparrow.com/saml/acme/metadata",
+		EntityID:    "https://api.surveysparrow.com/saml/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "surveysparrow-1", "SurveySparrow", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_PandaDocCLMSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://api.pandadoc.com/saml/acme/metadata",
+		EntityID:    "https://api.pandadoc.com/saml/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "pandadoc-clm-1", "PandaDoc CLM", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_WazuhSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://wazuh.example.com/saml/acme/metadata",
+		EntityID:    "https://wazuh.example.com/saml/acme",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "wazuh-1", "Wazuh", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
 // contains is a substring helper that avoids pulling in `strings` for
 // just one use.
 func contains(haystack, needle string) bool {
