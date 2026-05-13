@@ -253,11 +253,17 @@ func (c *CheckPointAccessConnector) SyncIdentities(
 			if display == "" {
 				display = u.Email
 			}
-			// Check Point's add/delete/show-administrator verbs accept
-			// the administrator by `name`, so the canonical ExternalID
-			// used by Provision/Revoke/ListEntitlements must be `name`,
-			// not the opaque `uid`. The uid is preserved in RawData for
-			// downstream consumers that need it.
+			// Identity.ExternalID is intentionally the administrator
+			// `name` (the only field the Check Point Management API
+			// /web_api/{add,delete,show}-administrator verbs accept as
+			// the addressable key for an administrator). The opaque
+			// session-scoped `uid` is preserved in RawData["uid"] for
+			// downstream consumers that index by it. This is a
+			// deliberate contract decision rather than a regression:
+			// surfacing `uid` here would make Identity.ExternalID
+			// values unusable as AccessGrant.UserExternalID, breaking
+			// the Provision/Revoke/ListEntitlements contract documented
+			// in advanced.go.
 			external := strings.TrimSpace(u.Name)
 			if external == "" {
 				external = strings.TrimSpace(u.ID)

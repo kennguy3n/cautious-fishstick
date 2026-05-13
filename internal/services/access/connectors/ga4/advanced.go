@@ -14,16 +14,22 @@ import (
 )
 
 // Phase 10 advanced-capability mapping for Google Analytics 4 Admin API
-// /v1beta/accounts/{account}/userLinks:
+// /v1beta/accounts/{account}/userLinks.
 //
-//   - ProvisionAccess  -> POST   /v1beta/accounts/{account}/userLinks           (create userLink)
-//   - RevokeAccess     -> DELETE /v1beta/accounts/{account}/userLinks/{userId}  (delete userLink)
-//   - ListEntitlements -> GET    /v1beta/accounts/{account}/userLinks/{userId}  (current directRoles)
+// GA4 identifies user links via the auto-generated resource name
+// `accounts/{account}/userLinks/{userLinkId}` and exposes no per-email
+// lookup endpoint, so the connector canonicalises AccessGrant.UserExternalID
+// on the user's email address — the same value that the
+// `accounts.userLinks.create` payload accepts as `emailAddress` and that
+// SyncIdentities surfaces as Identity.ExternalID. RevokeAccess and
+// ListEntitlements paginate /userLinks and filter client-side to resolve
+// email → resource name before issuing the per-resource DELETE / GET. A
+// full resource name (`accounts/{account}/userLinks/{userLinkId}`) is also
+// accepted in case the caller already has it from SyncIdentities.RawData.
 //
-// AccessGrant maps:
-//   - grant.UserExternalID     -> GA4 userLink id or email
-//   - grant.ResourceExternalID -> direct role
-//     ("predefinedRoles/admin" | "predefinedRoles/editor" | "predefinedRoles/analyst" | "predefinedRoles/viewer")
+//   - ProvisionAccess  -> POST   /v1beta/accounts/{account}/userLinks
+//   - RevokeAccess     -> list+filter, then DELETE /v1beta/{name}
+//   - ListEntitlements -> list+filter, then expose directRoles from the match
 //
 // Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
 
@@ -51,8 +57,13 @@ func (c *GA4AccessConnector) userLinksURL(cfg Config) string {
 	return c.baseURL() + c.userLinksPath(cfg)
 }
 
-func (c *GA4AccessConnector) userLinkURL(cfg Config, userID string) string {
-	return c.userLinksURL(cfg) + "/" + url.PathEscape(strings.TrimSpace(userID))
+// userLinkResourceURL builds the absolute URL for an individual userLink
+// addressed by its full GA4 resource name (e.g.
+// "accounts/123/userLinks/abc"). Per the GA4 Admin v1beta REST contract the
+// slashes inside `{name=accounts/*/userLinks/*}` are part of the path and
+// must NOT be percent-encoded.
+func (c *GA4AccessConnector) userLinkResourceURL(name string) string {
+	return c.baseURL() + "/v1beta/" + strings.TrimSpace(name)
 }
 
 func (c *GA4AccessConnector) newJSONRequest(ctx context.Context, secrets Secrets, method, fullURL string, body []byte) (*http.Request, error) {
@@ -70,6 +81,54 @@ func (c *GA4AccessConnector) newJSONRequest(ctx context.Context, secrets Secrets
 	}
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(secrets.Token))
 	return req, nil
+}
+
+// findUserLinkByExternalID paginates /userLinks and returns the resource
+// name plus the current directRoles for the entry whose emailAddress
+// matches userExternalID case-insensitively, or whose full `name` matches
+// exactly. Returns ("", nil, nil) when no match is found so RevokeAccess
+// can treat repeated revokes as idempotent and ListEntitlements can return
+// an empty slice without raising an error.
+func (c *GA4AccessConnector) findUserLinkByExternalID(
+	ctx context.Context, secrets Secrets, cfg Config, userExternalID string,
+) (string, []string, error) {
+	want := strings.TrimSpace(userExternalID)
+	if want == "" {
+		return "", nil, errors.New("ga4: user external id is required")
+	}
+	base := c.baseURL()
+	path := c.userLinksPath(cfg)
+	token := ""
+	for {
+		q := url.Values{"pageSize": []string{fmt.Sprintf("%d", pageSize)}}
+		if token != "" {
+			q.Set("pageToken", token)
+		}
+		fullURL := base + path + "?" + q.Encode()
+		req, err := c.newRequest(ctx, secrets, http.MethodGet, fullURL)
+		if err != nil {
+			return "", nil, err
+		}
+		body, err := c.do(req)
+		if err != nil {
+			return "", nil, err
+		}
+		var resp ga4ListResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return "", nil, fmt.Errorf("ga4: decode userLinks: %w", err)
+		}
+		for _, u := range resp.UserLinks {
+			email := strings.TrimSpace(u.EmailAddress)
+			name := strings.TrimSpace(u.Name)
+			if strings.EqualFold(email, want) || name == want {
+				return name, u.DirectRoles, nil
+			}
+		}
+		if strings.TrimSpace(resp.NextPageToken) == "" {
+			return "", nil, nil
+		}
+		token = resp.NextPageToken
+	}
 }
 
 func (c *GA4AccessConnector) ProvisionAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
@@ -112,7 +171,15 @@ func (c *GA4AccessConnector) RevokeAccess(ctx context.Context, configRaw, secret
 	if err != nil {
 		return err
 	}
-	req, err := c.newJSONRequest(ctx, secrets, http.MethodDelete, c.userLinkURL(cfg, grant.UserExternalID), nil)
+	name, _, err := c.findUserLinkByExternalID(ctx, secrets, cfg, grant.UserExternalID)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		// Already absent — idempotent revoke per PROPOSAL §2.1.
+		return nil
+	}
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodDelete, c.userLinkResourceURL(name), nil)
 	if err != nil {
 		return err
 	}
@@ -141,30 +208,12 @@ func (c *GA4AccessConnector) ListEntitlements(ctx context.Context, configRaw, se
 	if err != nil {
 		return nil, err
 	}
-	req, err := c.newJSONRequest(ctx, secrets, http.MethodGet, c.userLinkURL(cfg, user), nil)
+	_, roles, err := c.findUserLinkByExternalID(ctx, secrets, cfg, user)
 	if err != nil {
 		return nil, err
 	}
-	status, body, err := c.doRaw(req)
-	if err != nil {
-		return nil, err
-	}
-	if status == http.StatusNotFound {
-		return nil, nil
-	}
-	if status < 200 || status >= 300 {
-		return nil, fmt.Errorf("ga4: list entitlements status %d: %s", status, string(body))
-	}
-	var resp struct {
-		Name         string   `json:"name"`
-		EmailAddress string   `json:"emailAddress"`
-		DirectRoles  []string `json:"directRoles"`
-	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("ga4: decode entitlements: %w", err)
-	}
-	out := make([]access.Entitlement, 0, len(resp.DirectRoles))
-	for _, role := range resp.DirectRoles {
+	out := make([]access.Entitlement, 0, len(roles))
+	for _, role := range roles {
 		role = strings.TrimSpace(role)
 		if role == "" {
 			continue
