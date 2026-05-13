@@ -27,8 +27,6 @@ const (
 	pageSize     = 100
 )
 
-var ErrNotImplemented = errors.New("gemini: capability not implemented in Phase 7")
-
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
@@ -303,15 +301,6 @@ func (c *GeminiAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *GeminiAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *GeminiAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *GeminiAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 // GetSSOMetadata surfaces operator-supplied OIDC discovery metadata
 // for Google Gemini. Google's identity surface supports OIDC via the
 // standard accounts.google.com issuer; the connector forwards the
