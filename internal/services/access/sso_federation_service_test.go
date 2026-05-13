@@ -2750,7 +2750,7 @@ func TestSSOFederation_GorgiasSAML(t *testing.T) {
 		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
 	}
 }
-// contains is a substring helper that avoids pulling in `strings` for
+
 // contains is a substring helper that avoids pulling in `strings` for
 // just one use.
 func contains(haystack, needle string) bool {
