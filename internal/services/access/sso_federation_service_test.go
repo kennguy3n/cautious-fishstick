@@ -2148,6 +2148,96 @@ func TestSSOFederation_FullstorySAML(t *testing.T) {
 	}
 }
 
+// TestSSOFederation_Batch22 (Phase 10 SSO batch 22) — verifies SAML metadata
+// from CopyAI / Jasper / Jotform / Mistral / Make connectors brokers cleanly
+// through Keycloak. Each connector returns access.SSOMetadataFromConfig with
+// the `sso_metadata_url` and `sso_entity_id` config fields when present.
+
+func TestSSOFederation_CopyAISAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.copy.ai/sso/saml/metadata",
+		EntityID:    "https://app.copy.ai/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "copyai-1", "Copy.ai", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_JasperSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://app.jasper.ai/sso/saml/metadata",
+		EntityID:    "https://app.jasper.ai/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "jasper-1", "Jasper", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_JotformSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://www.jotform.com/sso/saml/metadata",
+		EntityID:    "https://www.jotform.com/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "jotform-1", "Jotform", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_MistralSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://console.mistral.ai/sso/saml/metadata",
+		EntityID:    "https://console.mistral.ai/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "mistral-1", "Mistral", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_MakeSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://eu1.make.com/sso/saml/metadata",
+		EntityID:    "https://eu1.make.com/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "make-1", "Make", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
 // contains is a substring helper that avoids pulling in `strings` for
 // contains is a substring helper that avoids pulling in `strings` for
 // just one use.
