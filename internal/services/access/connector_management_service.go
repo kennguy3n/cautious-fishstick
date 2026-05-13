@@ -33,9 +33,11 @@ import (
 // through the package-global registry (GetAccessConnector).
 //
 // Errors are surfaced as wrapped sentinels from the access package
-// (ErrValidation, ErrConnectorNotFound, ErrConnectorAlreadyExists,
+// (ErrValidation, ErrConnectorRowNotFound, ErrConnectorAlreadyExists,
 // ErrUnknownProvider) so handlers can map them onto HTTP status
-// codes via internal/handlers/errors.go.
+// codes via internal/handlers/errors.go. ErrConnectorRowNotFound
+// (404) is distinct from ErrConnectorNotFound (503), which signals
+// the provider package was not blank-imported into the binary.
 type ConnectorManagementService struct {
 	db           *gorm.DB
 	encryptor    CredentialEncryptor
@@ -297,7 +299,7 @@ func (s *ConnectorManagementService) Disconnect(ctx context.Context, connectorID
 	var conn models.AccessConnector
 	if err := s.db.WithContext(ctx).Where("id = ?", connectorID).First(&conn).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("%w: %s", ErrConnectorNotFound, connectorID)
+			return fmt.Errorf("%w: %s", ErrConnectorRowNotFound, connectorID)
 		}
 		return fmt.Errorf("access: load connector: %w", err)
 	}
@@ -366,7 +368,7 @@ func (s *ConnectorManagementService) RotateCredentials(
 	var conn models.AccessConnector
 	if err := s.db.WithContext(ctx).Where("id = ?", connectorID).First(&conn).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("%w: %s", ErrConnectorNotFound, connectorID)
+			return fmt.Errorf("%w: %s", ErrConnectorRowNotFound, connectorID)
 		}
 		return fmt.Errorf("access: load connector: %w", err)
 	}
@@ -419,7 +421,7 @@ func (s *ConnectorManagementService) RotateCredentials(
 		return fmt.Errorf("access: update access_connector: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("%w: %s", ErrConnectorNotFound, connectorID)
+		return fmt.Errorf("%w: %s", ErrConnectorRowNotFound, connectorID)
 	}
 	return nil
 }
@@ -435,7 +437,7 @@ func (s *ConnectorManagementService) TriggerSync(ctx context.Context, connectorI
 	var conn models.AccessConnector
 	if err := s.db.WithContext(ctx).Where("id = ?", connectorID).First(&conn).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", fmt.Errorf("%w: %s", ErrConnectorNotFound, connectorID)
+			return "", fmt.Errorf("%w: %s", ErrConnectorRowNotFound, connectorID)
 		}
 		return "", fmt.Errorf("access: load connector: %w", err)
 	}

@@ -228,10 +228,14 @@ func TestProvision_UnknownProviderReturnsConnectorNotFound(t *testing.T) {
 	}
 }
 
-// TestProvision_ConnectorRowMissingReturnsConnectorNotFound covers the
-// "the access_connectors row was deleted between approval and
-// provisioning" race.
-func TestProvision_ConnectorRowMissingReturnsConnectorNotFound(t *testing.T) {
+// TestProvision_ConnectorRowMissingReturnsConnectorRowNotFound covers
+// the "the access_connectors row was deleted between approval and
+// provisioning" race. This case is distinct from the factory-miss
+// case (TestProvision_UnknownProviderReturnsConnectorNotFound above):
+// here the DB row does not exist, so we surface ErrConnectorRowNotFound
+// (HTTP 404) rather than the deployment-misconfiguration sentinel
+// ErrConnectorNotFound (HTTP 503).
+func TestProvision_ConnectorRowMissingReturnsConnectorRowNotFound(t *testing.T) {
 	db := newProvisioningTestDB(t)
 	// No seedConnector — request points at a nonexistent connector ID.
 	req := &models.AccessRequest{
@@ -251,10 +255,10 @@ func TestProvision_ConnectorRowMissingReturnsConnectorNotFound(t *testing.T) {
 	svc := NewAccessProvisioningService(db)
 	err := svc.Provision(context.Background(), req, nil, nil)
 	if err == nil {
-		t.Fatal("Provision returned nil; want ErrConnectorNotFound")
+		t.Fatal("Provision returned nil; want ErrConnectorRowNotFound")
 	}
-	if !errors.Is(err, ErrConnectorNotFound) {
-		t.Errorf("err = %v; want ErrConnectorNotFound", err)
+	if !errors.Is(err, ErrConnectorRowNotFound) {
+		t.Errorf("err = %v; want ErrConnectorRowNotFound", err)
 	}
 }
 

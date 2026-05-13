@@ -38,8 +38,19 @@ var (
 	// ErrConnectorNotFound is returned by GetAccessConnector when the
 	// requested provider key is not registered. Process-global registry
 	// hits this when a connector package was not blank-imported by the
-	// running binary.
+	// running binary. Handlers map this onto HTTP 503 because a missing
+	// blank-import is a deployment misconfiguration (the platform binary
+	// is incomplete), not a missing user-facing resource.
 	ErrConnectorNotFound = errors.New("access: connector not registered for provider")
+
+	// ErrConnectorRowNotFound is returned by services that load a
+	// specific access_connectors row by ID (Disconnect, RotateCredentials,
+	// TriggerSync, provisioning lookups) when no row matches. This is
+	// distinct from ErrConnectorNotFound — that one means the provider
+	// implementation is missing from the binary; this one means the
+	// row never existed or was already soft-deleted. Handlers map this
+	// onto HTTP 404.
+	ErrConnectorRowNotFound = errors.New("access: connector row not found by id")
 
 	// ErrAuditNotAvailable is returned by AccessAuditor implementations
 	// when the connected tenant/plan does not expose an audit log API
