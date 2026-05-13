@@ -314,11 +314,14 @@ type lastpassFolderMember struct {
 
 // ---------- Metadata ----------
 
-// GetSSOMetadata returns nil — LastPass is a password vault, not an SSO
-// provider. SSO federation through LastPass goes via Keycloak's SAML
-// connector instead.
-func (c *LastPassAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata projects the connector's configured `sso_metadata_url` /
+// `sso_entity_id` into the shared SAML envelope used to broker LastPass
+// Business federated-login SAML 2.0 SP federation (LastPass Business / Teams
+// supports SAML SSO via the operator-supplied IdP metadata URL). When
+// `sso_metadata_url` is blank the helper returns (nil, nil) and the caller
+// gracefully downgrades.
+func (c *LastPassAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *LastPassAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, _ map[string]interface{}) (map[string]interface{}, error) {
