@@ -272,8 +272,10 @@ func (c *FreshBooksAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *FreshBooksAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// FreshBooks SSO federation. When `sso_metadata_url` is blank the helper returns
+// (nil, nil) and the caller gracefully downgrades.
+func (c *FreshBooksAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *FreshBooksAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {

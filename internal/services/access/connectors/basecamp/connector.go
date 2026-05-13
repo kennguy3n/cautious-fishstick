@@ -244,8 +244,10 @@ func (c *BasecampAccessConnector) SyncIdentities(
 	return handler(identities, "")
 }
 
-func (c *BasecampAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// Basecamp SSO federation. When `sso_metadata_url` is blank the helper returns
+// (nil, nil) and the caller gracefully downgrades.
+func (c *BasecampAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *BasecampAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {
