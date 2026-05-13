@@ -2,6 +2,7 @@ package notion
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,23 +35,17 @@ func TestNotionConnectorFlow_FullLifecycle(t *testing.T) {
 		defer mu.Unlock()
 		switch {
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/pages/"+pageID:
-			// Both Provision (with permissions) and Revoke (empty permissions)
-			// land here — the body distinguishes them.
-			if state == "" {
-				state = "editor"
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`{"object":"page","id":"` + pageID + `"}`))
-				return
-			}
-			// State is already "editor" — second Provision is idempotent
-			// (Notion returns the page; the connector's `already`
-			// heuristic does not trigger for happy-path responses, but
-			// the 2xx itself is treated as success). The Revoke clears
-			// state via the empty-permissions PATCH body.
-			body := make([]byte, r.ContentLength)
-			_, _ = r.Body.Read(body)
+			// Both Provision (with `permissions` populated) and Revoke
+			// (with `"permissions":[]`) hit the same PATCH endpoint —
+			// always inspect the body to decide which side-effect to
+			// apply, regardless of the current `state`. This keeps the
+			// mock idempotent across repeated Provision/Revoke calls.
+			body, _ := io.ReadAll(r.Body)
+			_ = r.Body.Close()
 			if strings.Contains(string(body), `"permissions":[]`) {
 				state = ""
+			} else {
+				state = "editor"
 			}
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"object":"page","id":"` + pageID + `"}`))
@@ -79,6 +74,11 @@ func TestNotionConnectorFlow_FullLifecycle(t *testing.T) {
 			t.Fatalf("ProvisionAccess[%d]: %v", i, err)
 		}
 	}
+	mu.Lock()
+	if state != "editor" {
+		t.Fatalf("after Provision×2, mock state = %q, want %q", state, "editor")
+	}
+	mu.Unlock()
 	ents, err := c.ListEntitlements(context.Background(), cfg, secrets, userID)
 	if err != nil {
 		t.Fatalf("ListEntitlements after provision: %v", err)
@@ -91,6 +91,11 @@ func TestNotionConnectorFlow_FullLifecycle(t *testing.T) {
 			t.Fatalf("RevokeAccess[%d]: %v", i, err)
 		}
 	}
+	mu.Lock()
+	if state != "" {
+		t.Fatalf("after Revoke×2, mock state = %q, want empty", state)
+	}
+	mu.Unlock()
 }
 
 func TestNotionConnectorFlow_ProvisionForbiddenFailure(t *testing.T) {
