@@ -34,6 +34,15 @@ func TestQualysConnectorFlow_FullLifecycle(t *testing.T) {
 		defer mu.Unlock()
 		switch action {
 		case "add":
+			if err := r.ParseForm(); err != nil {
+				t.Errorf("ParseForm: %v", err)
+			}
+			if got := r.PostForm.Get("user_login"); got != userLogin {
+				t.Errorf("add form user_login=%q, want %q", got, userLogin)
+			}
+			if got := r.PostForm.Get("user_role"); got != role {
+				t.Errorf("add form user_role=%q, want %q", got, role)
+			}
 			if state != "" {
 				w.WriteHeader(http.StatusConflict)
 				_, _ = w.Write([]byte(`<RESPONSE><CODE>1905</CODE><TEXT>already_exists</TEXT></RESPONSE>`))

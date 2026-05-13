@@ -76,6 +76,7 @@ func (c *QualysAccessConnector) ProvisionAccess(ctx context.Context, configRaw, 
 		return err
 	}
 	form := url.Values{
+		"user_login":    []string{strings.TrimSpace(grant.UserExternalID)},
 		"user_role":     []string{strings.TrimSpace(grant.ResourceExternalID)},
 		"first_name":    []string{strings.TrimSpace(grant.UserExternalID)},
 		"last_name":     []string{strings.TrimSpace(grant.UserExternalID)},
