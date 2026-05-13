@@ -146,6 +146,12 @@ async function exerciseContract(client: AccessIPC): Promise<void> {
     throw new Error('expected http kind / 403');
   }
 
+  const inner = new Error('underlying transport failure');
+  const wrapped = new AccessIPCError('transport', 'unreachable', { cause: inner });
+  if (wrapped.cause !== inner) {
+    throw new Error('expected `cause` to be forwarded to Error.cause');
+  }
+
   void _channelCheck;
 }
 

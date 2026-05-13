@@ -252,7 +252,15 @@ export class AccessIPCError extends Error {
     message: string,
     options: { statusCode?: number; body?: string; cause?: unknown } = {},
   ) {
-    super(message);
+    // Forward `cause` to `Error`'s ES2022 constructor so `error.cause`
+    // is set by the built-in (no manual assignment needed). When the
+    // caller did not supply a cause we pass `undefined` to avoid
+    // creating an enumerable `cause: undefined` own-property on the
+    // error instance.
+    super(
+      message,
+      options.cause !== undefined ? { cause: options.cause } : undefined,
+    );
     this.name = 'AccessIPCError';
     this.kind = kind;
     if (options.statusCode !== undefined) {
