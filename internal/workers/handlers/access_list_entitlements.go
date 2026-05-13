@@ -2,13 +2,12 @@ package handlers
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/oklog/ulid/v2"
 	"gorm.io/gorm"
-	"math/rand"
 
 	"github.com/kennguy3n/cautious-fishstick/internal/models"
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
@@ -93,8 +92,11 @@ func AccessListEntitlements(ctx context.Context, jc JobContext, jobID string) er
 // inserts into access_grant_entitlements. The handler must not
 // depend on the services/access newULID symbol (cyclic import); we
 // keep a private duplicate here.
-var entitlementRng = rand.New(rand.NewSource(time.Now().UnixNano()))
-
+//
+// We use crypto/rand.Reader as the entropy source because
+// AccessListEntitlements runs concurrently across worker goroutines
+// and math/rand.Rand is not safe for concurrent use. rand.Reader is
+// process-global and goroutine-safe.
 func newEntitlementID() string {
-	return ulid.MustNew(ulid.Now(), entitlementRng).String()
+	return ulid.MustNew(ulid.Now(), rand.Reader).String()
 }

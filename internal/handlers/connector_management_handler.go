@@ -130,8 +130,10 @@ func (h *ConnectorManagementHandler) RotateSecret(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"connector_id": id, "status": "rotated"})
 }
 
-// TriggerSync handles POST /access/connectors/:id/sync. Returns 200
-// with the new job ID so callers can poll the sync's progress.
+// TriggerSync handles POST /access/connectors/:id/sync. Returns 202
+// Accepted because the operation enqueues an asynchronous
+// sync_identities job; the response carries the job ID so callers
+// can poll its progress.
 func (h *ConnectorManagementHandler) TriggerSync(c *gin.Context) {
 	id := GetStringParam(c, "id")
 	if id == "" {
@@ -147,5 +149,5 @@ func (h *ConnectorManagementHandler) TriggerSync(c *gin.Context) {
 		writeError(c, http.StatusInternalServerError, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"connector_id": id, "job_id": jobID})
+	c.JSON(http.StatusAccepted, gin.H{"connector_id": id, "job_id": jobID})
 }

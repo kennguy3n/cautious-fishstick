@@ -183,8 +183,8 @@ func TestConnectorManagementHandler_TriggerSync_HappyPath(t *testing.T) {
 	decodeJSON(t, createW, &created)
 
 	w := doJSON(t, r, http.MethodPost, "/access/connectors/"+created.ConnectorID+"/sync", nil)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s; want 200", w.Code, w.Body.String())
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body=%s; want 202", w.Code, w.Body.String())
 	}
 	var got map[string]string
 	decodeJSON(t, w, &got)
