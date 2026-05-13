@@ -244,6 +244,19 @@ func (c *GA4AccessConnector) SyncIdentities(
 			// resource name is preserved in RawData under "name" for
 			// callers that already have it and want to address the
 			// userLink directly.
+			//
+			// BREAKING CHANGE (PR #52): prior versions of this connector
+			// returned Identity.ExternalID = u.Name (the resource name).
+			// The change canonicalises ExternalID on the email so it is
+			// stable across SyncIdentities / Provision / Revoke / List —
+			// previously the same admin user surfaced under two distinct
+			// identifiers depending on the API path that produced it.
+			// Consumers that cached the prior resource-name ExternalID
+			// can keep passing it through grant.UserExternalID: the
+			// advanced-cap helpers detect the `accounts/*/userLinks/*`
+			// shape and take a direct-GET fast path
+			// (advanced.go:findUserLinkByExternalID), preserving wire
+			// compatibility at the API layer.
 			email := strings.TrimSpace(u.EmailAddress)
 			name := strings.TrimSpace(u.Name)
 			external := email

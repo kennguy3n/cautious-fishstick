@@ -115,10 +115,12 @@ func TestGA4ConnectorFlow_FullLifecycle(t *testing.T) {
 	}
 }
 
-// TestGA4ConnectorFlow_RevokeAcceptsResourceName confirms that callers
-// addressing the userLink by its full resource name (as exposed by
-// SyncIdentities via Identity.RawData["name"]) still resolve correctly
-// through the same list+filter helper.
+// TestGA4ConnectorFlow_RevokeAcceptsResourceName confirms the resource-name
+// fast path: when grant.UserExternalID is already a full GA4 userLink
+// resource name (`accounts/{account}/userLinks/{id}` — the shape exposed by
+// SyncIdentities via Identity.RawData["name"]) the connector issues a
+// single GET /v1beta/{name} instead of paginating /userLinks, and never
+// touches the list endpoint at all.
 func TestGA4ConnectorFlow_RevokeAcceptsResourceName(t *testing.T) {
 	const email = "bob@example.com"
 	const userLinkID = "u_bob"
@@ -127,16 +129,22 @@ func TestGA4ConnectorFlow_RevokeAcceptsResourceName(t *testing.T) {
 
 	var mu sync.Mutex
 	present := true
+	var listCalls, getCalls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1beta/accounts/1234567/userLinks":
+			listCalls++
+			t.Errorf("fast path should not hit list endpoint: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1beta/"+resourceName:
+			getCalls++
 			if !present {
-				_, _ = w.Write([]byte(`{"userLinks":[]}`))
+				w.WriteHeader(http.StatusNotFound)
 				return
 			}
-			_, _ = w.Write([]byte(`{"userLinks":[{"name":"` + resourceName + `","emailAddress":"` + email + `","directRoles":["` + role + `"]}]}`))
+			_, _ = w.Write([]byte(`{"name":"` + resourceName + `","emailAddress":"` + email + `","directRoles":["` + role + `"]}`))
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1beta/"+resourceName:
 			present = false
 			w.WriteHeader(http.StatusNoContent)
@@ -155,6 +163,76 @@ func TestGA4ConnectorFlow_RevokeAcceptsResourceName(t *testing.T) {
 	}
 	if present {
 		t.Fatalf("expected DELETE to clear state")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if listCalls != 0 {
+		t.Fatalf("listCalls = %d, want 0 (fast path)", listCalls)
+	}
+	if getCalls != 1 {
+		t.Fatalf("getCalls = %d, want 1", getCalls)
+	}
+}
+
+// TestGA4ConnectorFlow_RevokeRolePresenceGuard locks in the
+// `grant.ResourceExternalID` presence guard added alongside finding #4:
+// when the userLink exists but its directRoles do NOT include the
+// requested role, RevokeAccess must return nil without issuing a DELETE
+// (otherwise GA4's per-userLink DELETE would silently wipe unrelated
+// directRoles attached to the same admin).
+func TestGA4ConnectorFlow_RevokeRolePresenceGuard(t *testing.T) {
+	const email = "carol@example.com"
+	const resourceName = "accounts/1234567/userLinks/u_carol"
+
+	var deleteCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1beta/accounts/1234567/userLinks":
+			_, _ = w.Write([]byte(`{"userLinks":[{"name":"` + resourceName + `","emailAddress":"` + email + `","directRoles":["predefinedRoles/admin","predefinedRoles/editor"]}]}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1beta/"+resourceName:
+			deleteCalls++
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	// User has [admin, editor]; revoke "viewer" — not present, so DELETE
+	// must be skipped to preserve admin + editor.
+	grant := access.AccessGrant{UserExternalID: email, ResourceExternalID: "predefinedRoles/viewer"}
+	if err := c.RevokeAccess(context.Background(), ga4ValidConfig(), ga4ValidSecrets(), grant); err != nil {
+		t.Fatalf("RevokeAccess: %v", err)
+	}
+	if deleteCalls != 0 {
+		t.Fatalf("deleteCalls = %d, want 0 (role absent → idempotent)", deleteCalls)
+	}
+}
+
+// TestGA4ConnectorFlow_RevokeNotFoundIdempotent verifies that the
+// errGA4UserLinkNotFound sentinel from findUserLinkByExternalID is
+// translated by RevokeAccess into a nil return (idempotent) rather than
+// propagated as an error.
+func TestGA4ConnectorFlow_RevokeNotFoundIdempotent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1beta/accounts/1234567/userLinks":
+			_, _ = w.Write([]byte(`{"userLinks":[]}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	grant := access.AccessGrant{UserExternalID: "ghost@example.com", ResourceExternalID: "predefinedRoles/admin"}
+	if err := c.RevokeAccess(context.Background(), ga4ValidConfig(), ga4ValidSecrets(), grant); err != nil {
+		t.Fatalf("RevokeAccess: %v", err)
 	}
 }
 

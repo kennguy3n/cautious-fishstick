@@ -21,17 +21,47 @@ import (
 // lookup endpoint, so the connector canonicalises AccessGrant.UserExternalID
 // on the user's email address — the same value that the
 // `accounts.userLinks.create` payload accepts as `emailAddress` and that
-// SyncIdentities surfaces as Identity.ExternalID. RevokeAccess and
-// ListEntitlements paginate /userLinks and filter client-side to resolve
-// email → resource name before issuing the per-resource DELETE / GET. A
-// full resource name (`accounts/{account}/userLinks/{userLinkId}`) is also
-// accepted in case the caller already has it from SyncIdentities.RawData.
+// SyncIdentities surfaces as Identity.ExternalID.
+//
+// When the caller already has the full resource name (e.g. cached from
+// SyncIdentities.RawData["name"] or from a prior ProvisionAccess result)
+// it can pass it verbatim as grant.UserExternalID — findUserLinkByExternalID
+// detects the resource-name shape and issues a direct
+// `GET /v1beta/{name=accounts/*/userLinks/*}` instead of paginating the
+// /userLinks list. The slow path (paginate + filter by emailAddress) is
+// the fallback for plain-email callers, since GA4 has no per-email lookup.
 //
 //   - ProvisionAccess  -> POST   /v1beta/accounts/{account}/userLinks
-//   - RevokeAccess     -> list+filter, then DELETE /v1beta/{name}
-//   - ListEntitlements -> list+filter, then expose directRoles from the match
+//   - RevokeAccess     -> resolve (fast: GET name; slow: list+filter),
+//                         skip if role not present, else DELETE /v1beta/{name}
+//   - ListEntitlements -> same resolve, then expose directRoles from the match
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1:
+// repeated Provision returns nil on ALREADY_EXISTS, repeated Revoke returns
+// nil when the userLink is absent OR when its directRoles already exclude
+// the requested grant.ResourceExternalID.
+
+// errGA4UserLinkNotFound is returned by findUserLinkByExternalID when the
+// list / GET resolution finishes without locating a matching userLink.
+// Callers (RevokeAccess, ListEntitlements) translate it into the idempotent
+// no-op / empty-result they need, while other transport / decode errors
+// propagate as-is so the caller can distinguish "absent" from "unknown".
+var errGA4UserLinkNotFound = errors.New("ga4: userLink not found")
+
+// isGA4UserLinkResourceName reports whether s matches the shape
+// `accounts/{account}/userLinks/{userLinkId}` so the connector can take
+// the direct-GET fast path instead of paginating /userLinks.
+func isGA4UserLinkResourceName(s string) bool {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "accounts/") {
+		return false
+	}
+	parts := strings.Split(s, "/")
+	if len(parts) != 4 || parts[2] != "userLinks" {
+		return false
+	}
+	return parts[1] != "" && parts[3] != ""
+}
 
 func ga4ValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {
@@ -83,18 +113,35 @@ func (c *GA4AccessConnector) newJSONRequest(ctx context.Context, secrets Secrets
 	return req, nil
 }
 
-// findUserLinkByExternalID paginates /userLinks and returns the resource
-// name plus the current directRoles for the entry whose emailAddress
-// matches userExternalID case-insensitively, or whose full `name` matches
-// exactly. Returns ("", nil, nil) when no match is found so RevokeAccess
-// can treat repeated revokes as idempotent and ListEntitlements can return
-// an empty slice without raising an error.
+// findUserLinkByExternalID resolves a GA4 admin grant's UserExternalID to
+// the canonical resource name plus current directRoles, taking either of
+// two paths depending on the input shape:
+//
+//   - Fast path: when userExternalID matches `accounts/*/userLinks/*` the
+//     connector issues a single GET /v1beta/{name} and returns the entry
+//     verbatim. A 404 → errGA4UserLinkNotFound; other non-2xx → transport
+//     / decode error.
+//   - Slow path: otherwise the connector paginates /userLinks and matches
+//     on emailAddress case-insensitively. The slow path is O(N) in the
+//     account's userLink count because GA4's v1beta surface exposes no
+//     per-email lookup; callers that hold the resource name from a prior
+//     SyncIdentities (Identity.RawData["name"]) or ProvisionAccess result
+//     should pass it through to take the fast path.
+//
+// Both paths return errGA4UserLinkNotFound when no match is located. This
+// sentinel disambiguates "absent" from other transport / decode failures
+// so RevokeAccess can treat repeated revokes as idempotent and
+// ListEntitlements can return an empty slice while still surfacing genuine
+// API errors.
 func (c *GA4AccessConnector) findUserLinkByExternalID(
 	ctx context.Context, secrets Secrets, cfg Config, userExternalID string,
 ) (string, []string, error) {
 	want := strings.TrimSpace(userExternalID)
 	if want == "" {
 		return "", nil, errors.New("ga4: user external id is required")
+	}
+	if isGA4UserLinkResourceName(want) {
+		return c.getUserLinkByName(ctx, secrets, want)
 	}
 	base := c.baseURL()
 	path := c.userLinksPath(cfg)
@@ -125,10 +172,43 @@ func (c *GA4AccessConnector) findUserLinkByExternalID(
 			}
 		}
 		if strings.TrimSpace(resp.NextPageToken) == "" {
-			return "", nil, nil
+			return "", nil, errGA4UserLinkNotFound
 		}
 		token = resp.NextPageToken
 	}
+}
+
+// getUserLinkByName implements the resource-name fast path: it issues a
+// single GET /v1beta/{name=accounts/*/userLinks/*} and parses the response
+// into (name, directRoles). A 404 surfaces as errGA4UserLinkNotFound; other
+// non-2xx is returned as a transport error so the caller can distinguish
+// "absent" from "unknown".
+func (c *GA4AccessConnector) getUserLinkByName(
+	ctx context.Context, secrets Secrets, name string,
+) (string, []string, error) {
+	req, err := c.newJSONRequest(ctx, secrets, http.MethodGet, c.userLinkResourceURL(name), nil)
+	if err != nil {
+		return "", nil, err
+	}
+	status, body, err := c.doRaw(req)
+	if err != nil {
+		return "", nil, err
+	}
+	switch {
+	case status == http.StatusNotFound:
+		return "", nil, errGA4UserLinkNotFound
+	case status < 200 || status >= 300:
+		return "", nil, fmt.Errorf("ga4: get userLink %s status %d: %s", name, status, string(body))
+	}
+	var link ga4UserLink
+	if err := json.Unmarshal(body, &link); err != nil {
+		return "", nil, fmt.Errorf("ga4: decode userLink: %w", err)
+	}
+	got := strings.TrimSpace(link.Name)
+	if got == "" {
+		got = name
+	}
+	return got, link.DirectRoles, nil
 }
 
 func (c *GA4AccessConnector) ProvisionAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
@@ -171,12 +251,22 @@ func (c *GA4AccessConnector) RevokeAccess(ctx context.Context, configRaw, secret
 	if err != nil {
 		return err
 	}
-	name, _, err := c.findUserLinkByExternalID(ctx, secrets, cfg, grant.UserExternalID)
+	name, roles, err := c.findUserLinkByExternalID(ctx, secrets, cfg, grant.UserExternalID)
 	if err != nil {
+		if errors.Is(err, errGA4UserLinkNotFound) {
+			// Already absent — idempotent revoke per PROPOSAL §2.1.
+			return nil
+		}
 		return err
 	}
-	if name == "" {
-		// Already absent — idempotent revoke per PROPOSAL §2.1.
+	// Use grant.ResourceExternalID as a presence guard: if the userLink
+	// exists but does NOT currently carry the requested role, the revoke is
+	// a semantic no-op (someone already removed it). GA4's v1beta DELETE
+	// drops the entire userLink (and therefore every directRole on it), so
+	// proceeding regardless would clobber unrelated grants for the same
+	// user. Repeated revokes are idempotent through this branch as well.
+	wantRole := strings.TrimSpace(grant.ResourceExternalID)
+	if !containsRole(roles, wantRole) {
 		return nil
 	}
 	req, err := c.newJSONRequest(ctx, secrets, http.MethodDelete, c.userLinkResourceURL(name), nil)
@@ -199,6 +289,24 @@ func (c *GA4AccessConnector) RevokeAccess(ctx context.Context, configRaw, secret
 	}
 }
 
+// containsRole reports whether want appears in roles after trimming
+// surrounding whitespace on each side. Used as the revoke presence guard
+// so that revoking a role the userLink does not currently hold becomes an
+// idempotent no-op (rather than wiping unrelated directRoles on the same
+// userLink via DELETE).
+func containsRole(roles []string, want string) bool {
+	w := strings.TrimSpace(want)
+	if w == "" {
+		return false
+	}
+	for _, r := range roles {
+		if strings.TrimSpace(r) == w {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *GA4AccessConnector) ListEntitlements(ctx context.Context, configRaw, secretsRaw map[string]interface{}, userExternalID string) ([]access.Entitlement, error) {
 	user := strings.TrimSpace(userExternalID)
 	if user == "" {
@@ -210,6 +318,9 @@ func (c *GA4AccessConnector) ListEntitlements(ctx context.Context, configRaw, se
 	}
 	_, roles, err := c.findUserLinkByExternalID(ctx, secrets, cfg, user)
 	if err != nil {
+		if errors.Is(err, errGA4UserLinkNotFound) {
+			return []access.Entitlement{}, nil
+		}
 		return nil, err
 	}
 	out := make([]access.Entitlement, 0, len(roles))
