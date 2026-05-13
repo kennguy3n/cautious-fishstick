@@ -230,15 +230,6 @@ func (c *BufferAccessConnector) SyncIdentities(
 	return handler(identities, "")
 }
 
-func (c *BufferAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *BufferAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *BufferAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
 // GetSSOMetadata surfaces operator-supplied SAML metadata for the
 // Buffer workspace. Buffer supports SAML 2.0 SSO via the platform
 // admin console for paid plans; the connector forwards

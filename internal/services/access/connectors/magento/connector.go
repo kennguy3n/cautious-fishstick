@@ -278,15 +278,7 @@ func (c *MagentoAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *MagentoAccessConnector) ProvisionAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *MagentoAccessConnector) RevokeAccess(_ context.Context, _, _ map[string]interface{}, _ access.AccessGrant) error {
-	return ErrNotImplemented
-}
-func (c *MagentoAccessConnector) ListEntitlements(_ context.Context, _, _ map[string]interface{}, _ string) ([]access.Entitlement, error) {
-	return nil, ErrNotImplemented
-}
+
 // GetSSOMetadata surfaces operator-supplied SAML metadata for the
 // Magento workspace. Magento supports SAML 2.0 SSO via the platform
 // admin console for paid plans; the connector forwards

@@ -2063,6 +2063,91 @@ func TestSSOFederation_PaloAltoSAML(t *testing.T) {
 	}
 }
 
+func TestSSOFederation_GhostSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://api.ghost.org/sso/saml/metadata",
+		EntityID:    "https://api.ghost.org/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "ghost-1", "Ghost", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_BigCommerceSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://api.bigcommerce.com/sso/saml/metadata",
+		EntityID:    "https://api.bigcommerce.com/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "bigcommerce-1", "BigCommerce", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_WooCommerceSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://shop.example.com/wp-json/wc/v3/sso/saml/metadata",
+		EntityID:    "https://shop.example.com/wp-json/wc/v3/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "woocommerce-1", "WooCommerce", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_WixSAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://www.wixapis.com/sso/saml/metadata",
+		EntityID:    "https://www.wixapis.com/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "wix-1", "Wix", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
+func TestSSOFederation_FullstorySAML(t *testing.T) {
+	mc := newMockKeycloak()
+	svc := NewSSOFederationService(mc)
+	meta := &SSOMetadata{
+		Protocol:    "saml",
+		MetadataURL: "https://www.fullstory.com/sso/saml/metadata",
+		EntityID:    "https://www.fullstory.com/sso/saml",
+	}
+	if _, _, err := svc.ConfigureBroker(context.Background(), "shieldnet", "fullstory-1", "Fullstory", meta); err != nil {
+		t.Fatalf("ConfigureBroker: %v", err)
+	}
+	got := mc.created[0]
+	if got.ProviderID != "saml" {
+		t.Errorf("ProviderID = %q; want saml", got.ProviderID)
+	}
+}
+
 // contains is a substring helper that avoids pulling in `strings` for
 // contains is a substring helper that avoids pulling in `strings` for
 // just one use.
