@@ -472,8 +472,15 @@ func (c *HelpScoutAccessConnector) userInTeam(ctx context.Context, secrets Secre
 }
 
 var _ = helpscoutTeamMember{}
-func (c *HelpScoutAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata surfaces operator-supplied SAML metadata for the
+// HelpScout workspace. HelpScout Plus supports SAML 2.0 SSO with
+// metadata hosted by the customer's IdP; the connector forwards
+// operator-supplied URLs verbatim via access.SSOMetadataFromConfig so
+// the SSOFederationService can register a Keycloak SAML broker. Returns
+// (nil, nil) when the operator has not supplied a metadata URL so the
+// caller downgrades gracefully.
+func (c *HelpScoutAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *HelpScoutAccessConnector) GetCredentialsMetadata(_ context.Context, _, secretsRaw map[string]interface{}) (map[string]interface{}, error) {
