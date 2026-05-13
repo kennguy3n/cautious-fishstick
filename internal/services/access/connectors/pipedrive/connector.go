@@ -246,8 +246,12 @@ func (c *PipedriveAccessConnector) SyncIdentities(
 	}
 }
 
-func (c *PipedriveAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata projects the connector's configured `sso_metadata_url` /
+// `sso_entity_id` into the shared SAML envelope used to broker Pipedrive SSO
+// federation. When `sso_metadata_url` is blank the helper returns (nil, nil)
+// and the caller gracefully downgrades.
+func (c *PipedriveAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *PipedriveAccessConnector) GetCredentialsMetadata(_ context.Context, _, secretsRaw map[string]interface{}) (map[string]interface{}, error) {
