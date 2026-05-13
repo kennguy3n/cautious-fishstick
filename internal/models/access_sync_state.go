@@ -34,12 +34,18 @@ import (
 // criteria); referential integrity to access_connectors is enforced
 // at the service layer.
 type AccessSyncState struct {
-	ID          string    `gorm:"primaryKey;type:varchar(26)" json:"id"`
-	ConnectorID string    `gorm:"type:varchar(26);not null;uniqueIndex:idx_access_sync_state_connector_kind,priority:1" json:"connector_id"`
-	Kind        string    `gorm:"type:varchar(32);not null;uniqueIndex:idx_access_sync_state_connector_kind,priority:2" json:"kind"`
-	DeltaLink   string    `gorm:"type:text" json:"delta_link"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          string `gorm:"primaryKey;type:varchar(26)" json:"id"`
+	ConnectorID string `gorm:"type:varchar(26);not null;uniqueIndex:idx_access_sync_state_connector_kind,priority:1" json:"connector_id"`
+	Kind        string `gorm:"type:varchar(32);not null;uniqueIndex:idx_access_sync_state_connector_kind,priority:2" json:"kind"`
+	DeltaLink   string `gorm:"type:text" json:"delta_link"`
+	// IdentityCount records the number of identities observed by the
+	// last successful sync. Used by the tombstone safety threshold —
+	// a fresh sync whose total identity count is below 70% of the
+	// previously observed count aborts to protect against a runaway
+	// directory-side deletion (per docs/PHASES.md Phase 6 sync rules).
+	IdentityCount int       `gorm:"not null;default:0" json:"identity_count"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // TableName overrides the default plural so the table name matches

@@ -36,6 +36,9 @@ func newTestDB(t *testing.T) *gorm.DB {
 		&models.AccessReview{},
 		&models.AccessReviewDecision{},
 		&models.AccessConnector{},
+		&models.AccessJob{},
+		&models.AccessSyncState{},
+		&models.AccessGrantEntitlement{},
 	); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}

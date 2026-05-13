@@ -6,6 +6,20 @@
   "private": true,
   "main": "dist/access-ipc.js",
   "types": "dist/access-ipc.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/access-ipc.d.ts",
+      "default": "./dist/access-ipc.js"
+    },
+    "./main-handler": {
+      "types": "./dist/main-handler.d.ts",
+      "default": "./dist/main-handler.js"
+    },
+    "./preload": {
+      "types": "./dist/preload.d.ts",
+      "default": "./dist/preload.js"
+    }
+  },
   "files": [
     "dist",
     "src"
@@ -13,13 +27,14 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsc -p tsconfig.json --noEmit && echo \"contract.test.ts compiled successfully\""
+    "test": "tsc -p tsconfig.json --noEmit && echo \"sdk/desktop: typecheck passed\""
   },
   "engines": {
     "node": ">=18"
   },
   "devDependencies": {
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "@types/node": "^20.11.0"
   },
   "publishConfig": {
     "registry": "https://registry.internal.shieldnet360.example/"

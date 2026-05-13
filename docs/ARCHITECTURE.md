@@ -478,6 +478,12 @@ A separate fan-out path applies for group membership when the connector implemen
 
 Tombstone safety threshold (default 30 %) is preserved from SN360: a single sync that would tombstone ≥ threshold % of rows aborts the tombstone pass and surfaces `tombstone_safety_skipped: true` in the report.
 
+### Phase 0/1 reference points (current backend implementation)
+
+- **Connector Management API.** `internal/services/access/connector_management_service.go::ConnectorManagementService` orchestrates the full connect lifecycle (registry lookup → `Validate` → `Connect` → `VerifyPermissions` → `GetCredentialsMetadata` → uniqueness → real `CredentialEncryptor` (AES-GCM in prod, `PassthroughEncryptor` in tests, in `internal/services/access/credential_encryptor.go`) → atomic INSERT of `access_connectors` + initial `access_jobs.sync_identities` row → optional Keycloak SSO broker). Companion handlers in `internal/handlers/connector_management_handler.go` wire `POST /access/connectors`, `DELETE /access/connectors/:id`, `PUT /access/connectors/:id/secret`, `POST /access/connectors/:id/sync`.
+- **Upgraded worker handlers.** `internal/workers/handlers/access_sync_identities.go` performs real `teams` / `team_members` upsert with manager-link resolution and a 70 %-tombstone-safety threshold; `access_sync_state` row persisted per `(connector_id, kind=identity)` (model in `internal/models/access_sync_state.go`). `internal/workers/handlers/access_list_entitlements.go` persists `access_grant_entitlements` rows (model in `internal/models/access_grant_entitlement.go`) via transactional delete-then-insert. `internal/workers/handlers/handlers.go::DefaultLoadConnector` accepts an optional `CredentialDecryptor` hook so production wires AES-GCM while tests wire `PassthroughEncryptor`.
+- **Real cron jobs.** `internal/cron/identity_sync_scheduler.go::IdentitySyncScheduler` walks every active connector and enqueues `sync_identities` jobs when the last `access_sync_state.updated_at` is older than `ACCESS_FULL_RESYNC_INTERVAL`. `internal/cron/draft_staleness_checker.go::DraftPolicyStalenessChecker` marks `policies.stale=true` once a draft passes `ACCESS_DRAFT_POLICY_STALE_AFTER`. `internal/cron/grant_expiry_enforcer.go::GrantExpiryEnforcer` walks `access_grants` whose `expires_at <= now()` and revokes via the real `AccessProvisioningService`.
+
 ---
 
 ## 4. Access request lifecycle flow

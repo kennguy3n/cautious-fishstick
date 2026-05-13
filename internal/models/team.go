@@ -29,9 +29,19 @@ import (
 //   - DeletedAt is the GORM soft-delete column. Tombstoned teams stay
 //     readable so audit reports and historical impact diffs can render.
 type Team struct {
-	ID          string         `gorm:"primaryKey;type:varchar(26)" json:"id"`
-	WorkspaceID string         `gorm:"type:varchar(26);not null;index" json:"workspace_id"`
-	Name        string         `gorm:"type:varchar(255);not null" json:"name"`
+	ID          string `gorm:"primaryKey;type:varchar(26)" json:"id"`
+	WorkspaceID string `gorm:"type:varchar(26);not null;index" json:"workspace_id"`
+	Name        string `gorm:"type:varchar(255);not null" json:"name"`
+	// ExternalID is the upstream provider-side group identifier the
+	// connector sync pipeline uses to map directory groups onto
+	// teams rows. Optional for legacy rows; populated by the
+	// identity-sync worker for connectors that yield
+	// IdentityTypeGroup records.
+	ExternalID string `gorm:"type:varchar(255);index" json:"external_id,omitempty"`
+	// ConnectorID is the access_connectors.ID that produced this
+	// row's external mapping. Empty for legacy rows; populated by
+	// the identity-sync worker.
+	ConnectorID string         `gorm:"type:varchar(26);index" json:"connector_id,omitempty"`
 	Attributes  datatypes.JSON `gorm:"type:jsonb" json:"attributes,omitempty"`
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 	CreatedAt   time.Time      `json:"created_at"`
@@ -55,12 +65,30 @@ func (Team) TableName() string {
 //     indexed strings, application code enforces referential integrity.
 //   - DeletedAt is the GORM soft-delete column.
 type TeamMember struct {
-	ID        string         `gorm:"primaryKey;type:varchar(26)" json:"id"`
-	TeamID    string         `gorm:"type:varchar(26);not null;index" json:"team_id"`
-	UserID    string         `gorm:"type:varchar(26);not null;index" json:"user_id"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	ID     string `gorm:"primaryKey;type:varchar(26)" json:"id"`
+	TeamID string `gorm:"type:varchar(26);not null;index" json:"team_id"`
+	UserID string `gorm:"type:varchar(26);not null;index" json:"user_id"`
+	// ExternalID is the upstream provider-side user identifier the
+	// connector sync pipeline uses to map directory users onto
+	// team_members rows (e.g. Okta `sub`, Microsoft Graph `oid`).
+	// Optional for legacy rows; populated by the identity-sync
+	// worker.
+	ExternalID string `gorm:"type:varchar(255);index" json:"external_id,omitempty"`
+	// ConnectorID is the access_connectors.ID that produced this
+	// row's external mapping. Empty for legacy rows; populated by
+	// the identity-sync worker so the manager-link resolution pass
+	// can scope its lookup correctly.
+	ConnectorID string `gorm:"type:varchar(26);index" json:"connector_id,omitempty"`
+	// ManagerID is the team_members.ID of the user's manager.
+	// Populated by the identity-sync worker's manager-link
+	// resolution pass after the full identity batch is upserted.
+	ManagerID   string         `gorm:"type:varchar(26);index" json:"manager_id,omitempty"`
+	DisplayName string         `gorm:"type:varchar(255)" json:"display_name,omitempty"`
+	Email       string         `gorm:"type:varchar(255)" json:"email,omitempty"`
+	Status      string         `gorm:"type:varchar(50)" json:"status,omitempty"`
+	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
 }
 
 // TableName overrides the default plural so the table name is exactly

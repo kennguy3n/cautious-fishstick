@@ -22,7 +22,14 @@ func newHandlerDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&models.AccessJob{}, &models.AccessConnector{}); err != nil {
+	if err := db.AutoMigrate(
+		&models.AccessJob{},
+		&models.AccessConnector{},
+		&models.AccessSyncState{},
+		&models.AccessGrantEntitlement{},
+		&models.Team{},
+		&models.TeamMember{},
+	); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 	return db

@@ -53,9 +53,14 @@ type Policy struct {
 	PromotedAt         *time.Time     `json:"promoted_at,omitempty"`
 	PromotedBy         *string        `gorm:"type:varchar(26)" json:"promoted_by,omitempty"`
 	IsActive           bool           `gorm:"not null;default:true;index:idx_policies_workspace_active,priority:2" json:"is_active"`
-	DeletedAt          gorm.DeletedAt `gorm:"index" json:"-"`
-	CreatedAt          time.Time      `json:"created_at"`
-	UpdatedAt          time.Time      `json:"updated_at"`
+	// Stale is flipped to true by cron.DraftPolicyStalenessChecker
+	// when a draft policy's CreatedAt is older than the configured
+	// staleness threshold. Surfaced to the operator admin UI so
+	// authors know to promote / delete / refresh the draft.
+	Stale     bool           `gorm:"not null;default:false;index" json:"stale"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }
 
 // TableName overrides the default plural so the table name is exactly

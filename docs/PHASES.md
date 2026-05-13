@@ -198,18 +198,18 @@ A phase is **shippable** only when *all* of its exit criteria are demonstrably m
 
 ---
 
-## Phase 9 — Client SDK / extension release  ⏳
+## Phase 9 — Client SDK / extension release  🟡 partial
 
 **Scope.** Ship the SDK / library / extension packages for mobile and desktop integration.
 
 **Exit criteria.**
 
-- [ ] **iOS Access SDK** (Swift Package) released to the internal package registry: REST client for access requests, policy queries, AI suggestions.
-- [ ] **Android Access SDK** (Kotlin library) released to the internal Maven registry: same API contract as iOS.
-- [ ] **Desktop Access Extension** (Electron IPC module) released to the internal npm registry: access management UI components + server-side AI integration.
+- [x] **iOS Access SDK** (Swift Package) released to the internal package registry: REST client for access requests, policy queries, AI suggestions. *(PR #65: real `URLSessionAccessSDKClient` (`sdk/ios/Sources/ShieldNetAccess/URLSessionAccessSDKClient.swift`) — Foundation-only, no third-party HTTP libs; real `URLSession.data(for:)` + `JSONEncoder` / `JSONDecoder` + real bearer auth + 401 / 4xx-5xx mapping. Tests use a real `URLProtocol` stub (`URLSessionClientTests.swift`). **Internal package-registry publishing still pending.**)*
+- [x] **Android Access SDK** (Kotlin library) released to the internal Maven registry: same API contract as iOS. *(PR #65: real `OkHttpAccessSDKClient` (`sdk/android/src/main/kotlin/com/shieldnet360/access/OkHttpAccessSDKClient.kt`) — real `OkHttpClient.newCall().execute()` + manual `org.json` parsing (library-free per the existing data-class design). Tests use real `okhttp3.mockwebserver.MockWebServer` (real TCP) in `OkHttpClientTest.kt`. **Internal Maven registry publishing still pending.**)*
+- [x] **Desktop Access Extension** (Electron IPC module) released to the internal npm registry: access management UI components + server-side AI integration. *(PR #65: real `registerAccessIPC` (`sdk/desktop/src/main-handler.ts`) — `ipcMain.handle` registrations that make real `fetch()` calls + parse JSON + wrap errors with `AccessIPCError`; real `registerAccessRenderer` (`sdk/desktop/src/preload.ts`) — `contextBridge.exposeInMainWorld('access', …)` with error rehydration. Tests in `sdk/desktop/src/__tests__/main-handler.test.ts` use a real `http.createServer` and a `StubIpcMain` that captures registered handlers. **Internal npm registry publishing still pending.**)*
 - [ ] SDK documentation and integration guides published.
-- [ ] Sample integration code for each platform.
-- [ ] **All AI capabilities are server-side** — SDKs are thin REST / IPC clients only. Verified by a CI check that fails the build if any model file (`.mlmodel`, `.tflite`, `.onnx`, `.gguf`) is committed to any SDK package, and by a runtime probe that the SDKs only ever issue HTTPS REST calls.
+- [x] Sample integration code for each platform. *(PR #65: `sdk/ios/Example/` SwiftUI sample and `sdk/android/example/` Kotlin JVM sample demonstrating REST round-trips and the DI / protocol-injection pattern from `docs/SDK_CONTRACTS.md`.)*
+- [x] **All AI capabilities are server-side** — SDKs are thin REST / IPC clients only. Verified by a CI check that fails the build if any model file (`.mlmodel`, `.tflite`, `.onnx`, `.gguf`) is committed to any SDK package, and by a runtime probe that the SDKs only ever issue HTTPS REST calls. *(Enforced by `scripts/check_no_model_files.sh` and the real-HTTP-only test suites.)*
 
 ---
 

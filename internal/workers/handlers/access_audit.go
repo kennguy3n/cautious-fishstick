@@ -65,7 +65,7 @@ func AccessAudit(ctx context.Context, jc JobContext, jobID string) error {
 		return fmt.Errorf("handlers: mark running: %w", err)
 	}
 
-	provider, cfg, secrets, err := jc.LoadConn(ctx, jc.DB, job.ConnectorID)
+	provider, cfg, secrets, err := jc.LoadConn(ctx, jc.DB, job.ConnectorID, jc.Decrypt)
 	if err != nil {
 		return finalize(ctx, jc, jobID, err)
 	}

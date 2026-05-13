@@ -1,0 +1,117 @@
+# docker-compose.yml — local development stack for the ShieldNet
+# Access platform. Brings up:
+#
+#   - Postgres (system of record)
+#   - Redis (job queue + idempotency cache)
+#   - ztna-api (HTTP API on :8080)
+#   - access-connector-worker (queue consumer; no port)
+#   - access-workflow-engine (HTTP webhooks on :8082)
+#   - access-ai-agent (A2A skill server on :8090)
+#
+# Env vars and ports follow docs/PROPOSAL.md §10.2. Every service has
+# a real healthcheck so `docker compose up --wait` only returns once
+# the dependency graph is healthy.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: access
+      POSTGRES_PASSWORD: access
+      POSTGRES_DB: access
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U access -d access"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "5432:5432"
+    networks: [access]
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "6379:6379"
+    networks: [access]
+
+  ztna-api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ztna-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ZTNA_API_LISTEN_ADDR: ":8080"
+      ACCESS_DATABASE_URL: postgres://access:access@postgres:5432/access?sslmode=disable
+      ACCESS_REDIS_URL: redis://redis:6379/0
+    healthcheck:
+      test: ["CMD", "/ztna-api", "--healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    ports:
+      - "8080:8080"
+    networks: [access]
+
+  access-connector-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.access-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ACCESS_DATABASE_URL: postgres://access:access@postgres:5432/access?sslmode=disable
+      ACCESS_REDIS_URL: redis://redis:6379/0
+    networks: [access]
+
+  access-workflow-engine:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.access-workflow
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ACCESS_WORKFLOW_ENGINE_LISTEN_ADDR: ":8082"
+      ACCESS_DATABASE_URL: postgres://access:access@postgres:5432/access?sslmode=disable
+      ACCESS_REDIS_URL: redis://redis:6379/0
+    healthcheck:
+      test: ["CMD", "/access-workflow", "--healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    ports:
+      - "8082:8082"
+    networks: [access]
+
+  access-ai-agent:
+    build:
+      context: ./cmd/access-ai-agent
+      dockerfile: Dockerfile
+    environment:
+      ACCESS_AI_AGENT_LISTEN_ADDR: "0.0.0.0:8090"
+    ports:
+      - "8090:8090"
+    networks: [access]
+
+volumes:
+  postgres-data:
+
+networks:
+  access:
+    driver: bridge

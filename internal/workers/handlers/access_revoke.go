@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/kennguy3n/cautious-fishstick/internal/models"
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
@@ -23,7 +24,8 @@ type revokeAccessPayload struct {
 // AccessConnector.RevokeAccess. Connector-level idempotency is
 // required (per docs/PROPOSAL §5.4).
 func AccessRevoke(ctx context.Context, jc JobContext, jobID string) error {
-	return runJob(ctx, jc, jobID, func(ctx context.Context, conn access.AccessConnector, cfg, secrets map[string]interface{}, payload []byte) error {
+	return runJob(ctx, jc, jobID, func(ctx context.Context, conn access.AccessConnector, job *models.AccessJob, cfg, secrets map[string]interface{}) error {
+		payload := []byte(job.Payload)
 		if len(payload) == 0 {
 			return fmt.Errorf("handlers: revoke_access: payload is required")
 		}
