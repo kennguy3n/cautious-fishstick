@@ -493,8 +493,13 @@ func (c *QuickBooksAccessConnector) ListEntitlements(
 		Source:             "direct",
 	}}, nil
 }
-func (c *QuickBooksAccessConnector) GetSSOMetadata(_ context.Context, _, _ map[string]interface{}) (*access.SSOMetadata, error) {
-	return nil, nil
+// GetSSOMetadata projects the connector's configured `sso_metadata_url` /
+// `sso_entity_id` into the shared SAML envelope used to broker QuickBooks
+// Online (Intuit Identity) SAML 2.0 SP federation. When `sso_metadata_url`
+// is blank the helper returns (nil, nil) and the caller gracefully
+// downgrades.
+func (c *QuickBooksAccessConnector) GetSSOMetadata(_ context.Context, configRaw, _ map[string]interface{}) (*access.SSOMetadata, error) {
+	return access.SSOMetadataFromConfig(configRaw, "saml"), nil
 }
 
 func (c *QuickBooksAccessConnector) GetCredentialsMetadata(_ context.Context, configRaw, secretsRaw map[string]interface{}) (map[string]interface{}, error) {
