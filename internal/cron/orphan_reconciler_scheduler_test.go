@@ -45,6 +45,40 @@ func (s *stubOrphanReconciler) ReconcileWorkspace(_ context.Context, workspaceID
 	return nil, nil
 }
 
+// statsStubReconciler combines stubOrphanReconciler with the
+// reconcilerStatsReader contract so the scheduler test can assert
+// the scheduler pulls per-run scanned/failed counts from the
+// reconciler instead of falling back to the workspace's DB COUNT.
+// The stub's WorkspaceConnectorStats reports whatever the test
+// seeds in workspaceStats, and tracks the call order via
+// statsCallBefore/statsCallAfter so the test can assert the
+// scheduler only reads stats AFTER ReconcileWorkspace returns.
+type statsStubReconciler struct {
+	stubOrphanReconciler
+	statsMu         sync.Mutex
+	workspaceStats  map[string]struct{ scanned, failed int }
+	reconcileOrder  []string
+	statsCallOrder  []string
+}
+
+func (s *statsStubReconciler) ReconcileWorkspace(ctx context.Context, workspaceID string) ([]models.AccessOrphanAccount, error) {
+	s.statsMu.Lock()
+	s.reconcileOrder = append(s.reconcileOrder, workspaceID)
+	s.statsMu.Unlock()
+	return s.stubOrphanReconciler.ReconcileWorkspace(ctx, workspaceID)
+}
+
+func (s *statsStubReconciler) WorkspaceConnectorStats(_ context.Context, workspaceID string) (int, int, error) {
+	s.statsMu.Lock()
+	s.statsCallOrder = append(s.statsCallOrder, workspaceID)
+	stats, ok := s.workspaceStats[workspaceID]
+	s.statsMu.Unlock()
+	if !ok {
+		return 0, 0, nil
+	}
+	return stats.scanned, stats.failed, nil
+}
+
 type stubOrphanNotifier struct {
 	mu      sync.Mutex
 	calls   atomic.Int64
@@ -219,5 +253,91 @@ func TestOrphanReconcilerScheduler_PerWorkspaceErrorIsLogged(t *testing.T) {
 	}
 	if got := rec.calls.Load(); got != 2 {
 		t.Errorf("ReconcileWorkspace calls = %d; want 2", got)
+	}
+}
+
+// TestOrphanReconcilerScheduler_EmitsPerRunScannedFailedFromReconciler
+// asserts that when the reconciler implements reconcilerStatsReader
+// (the production *access.OrphanReconciler does), connectors_scanned
+// and connectors_failed in the structured log envelope come from
+// the per-run stats the reconciler records — NOT from the DB COUNT
+// fallback. Seeding 5 access_connectors but having the stub report
+// scanned=3 / failed=1 proves the scheduler is reading the per-run
+// stats and not over-reporting from the workspace's DB total.
+func TestOrphanReconcilerScheduler_EmitsPerRunScannedFailedFromReconciler(t *testing.T) {
+	db := newReconcilerSchedDB(t)
+	// 5 connectors in ws-partial. The DB COUNT fallback would
+	// report scanned=5 / failed=1 on the error branch, but the
+	// per-run stats from the reconciler should report 3/1 instead.
+	for i, id := range []string{
+		"01HCONN0SCHEDSTATS00000001",
+		"01HCONN0SCHEDSTATS00000002",
+		"01HCONN0SCHEDSTATS00000003",
+		"01HCONN0SCHEDSTATS00000004",
+		"01HCONN0SCHEDSTATS00000005",
+	} {
+		seedConnectorForWS(t, db, id, "ws-partial", []string{"okta", "google_workspace", "microsoft", "auth0", "jumpcloud"}[i])
+	}
+
+	rec := &statsStubReconciler{
+		workspaceStats: map[string]struct{ scanned, failed int }{
+			"ws-partial": {scanned: 3, failed: 1},
+		},
+	}
+	rec.err = map[string]error{"ws-partial": errors.New("connector C3 boom")}
+
+	sched := NewOrphanReconcilerScheduler(db, rec)
+
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	if err := sched.Run(context.Background()); err == nil {
+		t.Fatalf("Run returned nil; want propagated error from ws-partial")
+	}
+
+	// Stats reader must be called AFTER ReconcileWorkspace so the
+	// reconciler has stamped per-run counts. The old code called
+	// it BEFORE which produced the over-report bug.
+	rec.statsMu.Lock()
+	defer rec.statsMu.Unlock()
+	if len(rec.reconcileOrder) == 0 || len(rec.statsCallOrder) == 0 {
+		t.Fatalf("expected both reconcile (%v) and stats-reader (%v) to fire", rec.reconcileOrder, rec.statsCallOrder)
+	}
+	if rec.statsCallOrder[0] != "ws-partial" {
+		t.Errorf("WorkspaceConnectorStats call order = %v; want ws-partial first", rec.statsCallOrder)
+	}
+
+	logged := buf.String()
+	var found bool
+	for _, line := range strings.Split(logged, "\n") {
+		idx := strings.Index(line, "{")
+		if idx < 0 {
+			continue
+		}
+		payload := line[idx:]
+		var entry struct {
+			Event             string `json:"event"`
+			WorkspaceID       string `json:"workspace_id"`
+			ConnectorsScanned int    `json:"connectors_scanned"`
+			ConnectorsFailed  int    `json:"connectors_failed"`
+		}
+		if err := json.Unmarshal([]byte(payload), &entry); err != nil {
+			continue
+		}
+		if entry.Event != "orphan_reconcile_summary" || entry.WorkspaceID != "ws-partial" {
+			continue
+		}
+		found = true
+		if entry.ConnectorsScanned != 3 {
+			t.Errorf("connectors_scanned = %d; want 3 (per-run stat, not DB COUNT of 5)", entry.ConnectorsScanned)
+		}
+		if entry.ConnectorsFailed != 1 {
+			t.Errorf("connectors_failed = %d; want 1 (per-run stat, not blanket +1 on error path)", entry.ConnectorsFailed)
+		}
+	}
+	if !found {
+		t.Errorf("no orphan_reconcile_summary entry for ws-partial in:\n%s", logged)
 	}
 }

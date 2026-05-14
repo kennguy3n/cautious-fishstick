@@ -532,28 +532,13 @@ func main() {
 	// The current scaffold runs without a DB so both are nil — the
 	// GrantExpiryEnforcer is omitted by WireCronJobs in that case
 	// and the binary still boots.
-	// Phase 11 batch 6: the orphan reconciler is constructed via
-	// BuildOrphanReconciler (rather than passing nil inline) so the
-	// ACCESS_ORPHAN_RECONCILE_DELAY_PER_CONNECTOR knob is applied
-	// to the concrete pointer before the value is handed to
-	// WireCronJobs as the WorkspaceOrphanReconciler interface.
-	// The helper returns nil in the scaffold path (db / provisioning
-	// service / credentials loader are all nil here) so the orphan
-	// cron is still omitted by WireCronJobs.
-	//
-	// Phase 11 batch 6 round-8: the helper returns a concrete
-	// *access.OrphanReconciler. Assigning a nil typed pointer
-	// directly to a cron.WorkspaceOrphanReconciler-typed variable
-	// would produce a non-nil interface value carrying a nil
-	// dynamic pointer, defeating WireCronJobs' `orphanReconciler !=
-	// nil` guard (the classic Go nil-interface trap). The branch
-	// is currently masked by the parallel `db != nil` guard, but
-	// fixing the wiring at the source means any future caller that
-	// passes a real db with a nil reconciler still skips the orphan
-	// cron rather than panicking on a nil-pointer deref. We assign
-	// to the interface variable only when the concrete pointer is
-	// non-nil so the interface stays a properly-nil interface in
-	// the scaffold path.
+	// BuildOrphanReconciler returns a concrete *access.OrphanReconciler
+	// (nil in the scaffold path). Assigning a typed-nil pointer
+	// directly to the interface variable would yield a non-nil
+	// interface wrapping a nil pointer (classic Go nil-interface
+	// trap) and defeat WireCronJobs' nil-check. Assigning only when
+	// the concrete pointer is non-nil keeps the interface properly
+	// nil so WireCronJobs correctly omits the orphan cron.
 	orphanReconcilerImpl := BuildOrphanReconciler(nil, nil, nil, *cfg)
 	var orphanReconciler cron.WorkspaceOrphanReconciler
 	if orphanReconcilerImpl != nil {

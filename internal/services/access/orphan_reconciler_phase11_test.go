@@ -2,6 +2,8 @@ package access
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -182,5 +184,84 @@ func TestOrphanReconciler_DryRunIsolatedFromWet(t *testing.T) {
 	}
 	if len(rows) != 1 {
 		t.Errorf("persisted orphans after dry+wet+dry = %d; want 1 (the wet sweep)", len(rows))
+	}
+}
+
+// TestOrphanReconciler_BestEffortAcrossConnectors_FailingConnectorDoesNotBlockOthers
+// asserts that when one of N connectors in a workspace fails, the
+// reconciler continues iterating the remaining connectors instead
+// of short-circuiting on the first error (per docs/ARCHITECTURE.md
+// §12.2 the reconciler is best-effort across connectors). The
+// failure surfaces as an aggregated error so the cron can still
+// log it.
+func TestOrphanReconciler_BestEffortAcrossConnectors_FailingConnectorDoesNotBlockOthers(t *testing.T) {
+	const providerFail = "mock_orphan_best_effort_fail"
+	const providerB = "mock_orphan_best_effort_b"
+	const providerC = "mock_orphan_best_effort_c"
+	db := newJMLTestDB(t)
+	if err := db.AutoMigrate(&models.AccessOrphanAccount{}); err != nil {
+		t.Fatalf("automigrate orphan: %v", err)
+	}
+	// Seed three connectors. The first one's mock returns an
+	// error; the next two emit a distinct upstream identity each.
+	// All three must run; rows from B + C must persist.
+	_ = seedConnectorWithSecrets(t, db, "01HCONN0BESTEFFORT00000A001", providerFail)
+	_ = seedConnectorWithSecrets(t, db, "01HCONN0BESTEFFORT00000B001", providerB)
+	_ = seedConnectorWithSecrets(t, db, "01HCONN0BESTEFFORT00000C001", providerC)
+
+	SwapConnector(t, providerFail, &MockAccessConnector{
+		FuncSyncIdentities: func(_ context.Context, _, _ map[string]interface{}, _ string, _ func([]*Identity, string) error) error {
+			return errors.New("upstream boom")
+		},
+	})
+	SwapConnector(t, providerB, &MockAccessConnector{
+		FuncSyncIdentities: func(_ context.Context, _, _ map[string]interface{}, _ string, h func([]*Identity, string) error) error {
+			return h([]*Identity{{ExternalID: "u-best-effort-b", Email: "b@example.com"}}, "")
+		},
+	})
+	SwapConnector(t, providerC, &MockAccessConnector{
+		FuncSyncIdentities: func(_ context.Context, _, _ map[string]interface{}, _ string, h func([]*Identity, string) error) error {
+			return h([]*Identity{{ExternalID: "u-best-effort-c", Email: "c@example.com"}}, "")
+		},
+	})
+
+	rec := NewOrphanReconciler(db, NewAccessProvisioningService(db), NewConnectorCredentialsLoader(db, PassthroughEncryptor{}))
+	rec.SetPerConnectorDelay(0)
+
+	got, err := rec.ReconcileWorkspace(context.Background(), "01H000000000000000WORKSPACE")
+	if err == nil {
+		t.Fatalf("ReconcileWorkspace returned nil error; want aggregated error from failing connector")
+	}
+	if !strings.Contains(err.Error(), "upstream boom") {
+		t.Errorf("aggregated error %q; want it to contain failing connector's message", err.Error())
+	}
+	if len(got) != 2 {
+		t.Fatalf("orphan rows returned = %d; want 2 (one each from connector B and C)", len(got))
+	}
+	externals := map[string]bool{}
+	for _, r := range got {
+		externals[r.UserExternalID] = true
+	}
+	if !externals["u-best-effort-b"] || !externals["u-best-effort-c"] {
+		t.Errorf("orphans returned = %v; want both u-best-effort-b and u-best-effort-c", externals)
+	}
+
+	var persisted []models.AccessOrphanAccount
+	if err := db.Find(&persisted).Error; err != nil {
+		t.Fatalf("list orphans: %v", err)
+	}
+	if len(persisted) != 2 {
+		t.Errorf("persisted orphans = %d; want 2 (failing connector's pass left no rows, B + C each landed one)", len(persisted))
+	}
+
+	scanned, failed, serr := rec.WorkspaceConnectorStats(context.Background(), "01H000000000000000WORKSPACE")
+	if serr != nil {
+		t.Fatalf("WorkspaceConnectorStats: %v", serr)
+	}
+	if scanned != 3 {
+		t.Errorf("scanned = %d; want 3 (all connectors attempted under best-effort)", scanned)
+	}
+	if failed != 1 {
+		t.Errorf("failed = %d; want 1 (only the first connector raised)", failed)
 	}
 }
