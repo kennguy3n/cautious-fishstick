@@ -144,6 +144,19 @@ func (e *GrantExpiryEnforcer) SetWarningHours(h int) {
 	e.warningHours = h
 }
 
+// WarningHours returns the currently configured look-ahead window
+// (in hours) used by RunWarning. Exposed so the worker binary and
+// its tests can assert the SetWarningHours wiring landed on the
+// enforcer with the operator-supplied
+// ACCESS_GRANT_EXPIRY_WARNING_HOURS value rather than the
+// constructor's 24h default.
+func (e *GrantExpiryEnforcer) WarningHours() int {
+	if e == nil {
+		return 0
+	}
+	return e.warningHours
+}
+
 // Run scans the access_grants table for unrevoked rows with
 // expires_at <= now and calls revoker.Revoke on each with the
 // decrypted credentials of the corresponding connector. Returns

@@ -285,6 +285,12 @@ func WireCronJobs(
 	}
 	if db != nil && revoker != nil && loader != nil {
 		jobs.GrantExpiryEnforcer = cron.NewGrantExpiryEnforcer(db, revoker, loader, 0)
+		// Apply the configured warning-window override here so the
+		// ACCESS_GRANT_EXPIRY_WARNING_HOURS env var actually reaches
+		// the enforcer in production. Without this call the
+		// constructor's 24h default wins and operator overrides are
+		// silently dropped. Phase 11 batch 6.
+		jobs.GrantExpiryEnforcer.SetWarningHours(cfg.GrantExpiryWarningHours)
 		jobs.GrantExpiryInterval = cfg.GrantExpiryCheckInterval
 		if jobs.GrantExpiryInterval <= 0 {
 			jobs.GrantExpiryInterval = config.DefaultGrantExpiryCheckInterval
@@ -321,6 +327,35 @@ func runCron(ctx context.Context, name string, interval time.Duration, run func(
 			}
 		}
 	}
+}
+
+// BuildOrphanReconciler constructs the Phase 11 orphan reconciler
+// and applies the configured per-connector throttle. The setter
+// call is hoisted out of WireCronJobs so the concrete
+// *access.OrphanReconciler is the pointer the throttle lands on —
+// WireCronJobs only sees the narrower WorkspaceOrphanReconciler
+// interface and cannot reach SetPerConnectorDelay. Returns nil
+// when any required dependency is nil (the scaffold path) so
+// callers can still hand the value straight to WireCronJobs,
+// which simply omits the orphan cron in that case.
+//
+// The env-driven knob ACCESS_ORPHAN_RECONCILE_DELAY_PER_CONNECTOR
+// (decoded into cfg.OrphanReconcileDelayPerConnector by
+// internal/config/access.go) is applied here; without this call
+// the constructor's 1s default would win and operator overrides
+// would be silently dropped.
+func BuildOrphanReconciler(
+	db *gorm.DB,
+	provisioningSvc *access.AccessProvisioningService,
+	credLoader *access.ConnectorCredentialsLoader,
+	cfg config.Access,
+) *access.OrphanReconciler {
+	if db == nil || provisioningSvc == nil || credLoader == nil {
+		return nil
+	}
+	r := access.NewOrphanReconciler(db, provisioningSvc, credLoader)
+	r.SetPerConnectorDelay(cfg.OrphanReconcileDelayPerConnector)
+	return r
 }
 
 // BuildAuditProducer constructs the audit producer for the worker
@@ -408,7 +443,16 @@ func main() {
 	// The current scaffold runs without a DB so both are nil — the
 	// GrantExpiryEnforcer is omitted by WireCronJobs in that case
 	// and the binary still boots.
-	jobs := WireCronJobs(nil, nil, credNotifier, nil, nil, nil, *cfg)
+	// Phase 11 batch 6: the orphan reconciler is constructed via
+	// BuildOrphanReconciler (rather than passing nil inline) so the
+	// ACCESS_ORPHAN_RECONCILE_DELAY_PER_CONNECTOR knob is applied
+	// to the concrete pointer before the value is handed to
+	// WireCronJobs as the WorkspaceOrphanReconciler interface.
+	// The helper returns nil in the scaffold path (db / provisioning
+	// service / credentials loader are all nil here) so the orphan
+	// cron is still omitted by WireCronJobs.
+	orphanReconciler := BuildOrphanReconciler(nil, nil, nil, *cfg)
+	jobs := WireCronJobs(nil, nil, credNotifier, nil, nil, orphanReconciler, *cfg)
 	auditProducer := BuildAuditProducer(*cfg)
 	// T28 — connector health webhook dispatcher. The dispatcher
 	// short-circuits to a no-op when the URL is unset so dev

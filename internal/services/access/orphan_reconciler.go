@@ -76,6 +76,18 @@ func (r *OrphanReconciler) SetPerConnectorDelay(d time.Duration) {
 	r.perConnectorDelay = d
 }
 
+// PerConnectorDelay returns the currently configured per-connector
+// throttle. Exposed so the worker binary and its tests can assert
+// that BuildOrphanReconciler applied the operator-supplied
+// ACCESS_ORPHAN_RECONCILE_DELAY_PER_CONNECTOR value rather than
+// the constructor's 1s default.
+func (r *OrphanReconciler) PerConnectorDelay() time.Duration {
+	if r == nil {
+		return 0
+	}
+	return r.perConnectorDelay
+}
+
 // SetClock overrides the default time source for deterministic
 // reconciliation tests.
 func (r *OrphanReconciler) SetClock(now func() time.Time) {
