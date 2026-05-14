@@ -6,10 +6,24 @@
  * Android Gradle Plugin so it can be built / tested on a plain JDK
  * in CI without the Android SDK installed. Host apps that want an
  * AAR can re-publish through their own Android module.
+ *
+ * Publishing — see sdk/android/PUBLISHING.md for the release flow.
+ * Coordinates are `com.shieldnet360.access:access-sdk:<version>`.
+ * The artifact is published to the internal Maven registry via the
+ * `maven-publish` plugin; the registry URL and credentials come from
+ * Gradle properties so CI can override them without changing this
+ * file. The default repository targets GitHub Packages for
+ * `kennguy3n/cautious-fishstick`, which is the internal mirror used
+ * across the SN360 monorepo.
  */
 plugins {
     kotlin("jvm") version "1.9.22"
+    `maven-publish`
+    `java-library`
 }
+
+group = "com.shieldnet360.access"
+version = (findProperty("sdk.android.version") as String?) ?: "0.1.0"
 
 repositories {
     mavenCentral()
@@ -34,6 +48,10 @@ kotlin {
     jvmToolchain(17)
 }
 
+java {
+    withSourcesJar()
+}
+
 tasks.test {
     useJUnitPlatform()
 }
@@ -44,5 +62,52 @@ sourceSets {
     }
     test {
         kotlin.srcDirs("src/test/kotlin")
+    }
+}
+
+publishing {
+    publications {
+        create<MavenPublication>("library") {
+            from(components["java"])
+            artifactId = "access-sdk"
+            pom {
+                name.set("ShieldNet 360 Access SDK (Android)")
+                description.set(
+                    "Kotlin / JVM REST client for the ShieldNet 360 Access Platform. " +
+                        "Thin client — no on-device inference."
+                )
+                url.set("https://github.com/kennguy3n/cautious-fishstick")
+                licenses {
+                    license {
+                        name.set("UNLICENSED — internal use only")
+                    }
+                }
+                scm {
+                    url.set("https://github.com/kennguy3n/cautious-fishstick")
+                    connection.set("scm:git:https://github.com/kennguy3n/cautious-fishstick.git")
+                    developerConnection.set(
+                        "scm:git:ssh://git@github.com/kennguy3n/cautious-fishstick.git"
+                    )
+                }
+            }
+        }
+    }
+
+    repositories {
+        maven {
+            name = "GitHubPackages"
+            url = uri(
+                (findProperty("sdk.android.maven.url") as String?)
+                    ?: "https://maven.pkg.github.com/kennguy3n/cautious-fishstick"
+            )
+            credentials {
+                username = (findProperty("sdk.android.maven.user") as String?)
+                    ?: System.getenv("MAVEN_USERNAME")
+                            ?: System.getenv("GITHUB_ACTOR")
+                password = (findProperty("sdk.android.maven.token") as String?)
+                    ?: System.getenv("MAVEN_PASSWORD")
+                            ?: System.getenv("GITHUB_TOKEN")
+            }
+        }
     }
 }

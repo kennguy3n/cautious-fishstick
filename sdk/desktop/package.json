@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "ShieldNet 360 Access Platform — Electron IPC contract for desktop host apps. REST-only; no on-device inference.",
   "license": "UNLICENSED",
-  "private": true,
+  "private": false,
   "main": "dist/access-ipc.js",
   "types": "dist/access-ipc.d.ts",
   "exports": {
@@ -22,12 +22,24 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "CHANGELOG.md",
+    "PUBLISHING.md"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kennguy3n/cautious-fishstick.git",
+    "directory": "sdk/desktop"
+  },
+  "homepage": "https://github.com/kennguy3n/cautious-fishstick/tree/main/sdk/desktop",
+  "bugs": {
+    "url": "https://github.com/kennguy3n/cautious-fishstick/issues"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsc -p tsconfig.json --noEmit && echo \"sdk/desktop: typecheck passed\""
+    "test": "tsc -p tsconfig.json --noEmit && echo \"sdk/desktop: typecheck passed\"",
+    "prepublishOnly": "tsc -p tsconfig.json"
   },
   "engines": {
     "node": ">=18"
@@ -37,6 +49,7 @@
     "@types/node": "^20.11.0"
   },
   "publishConfig": {
-    "registry": "https://registry.internal.shieldnet360.example/"
+    "registry": "https://npm.pkg.github.com/",
+    "access": "restricted"
   }
 }
