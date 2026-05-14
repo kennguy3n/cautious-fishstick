@@ -306,19 +306,36 @@ func (s *AccessRequestService) ListRequests(ctx context.Context, q ListAccessReq
 }
 
 // AccessRequestDetail bundles a request row with its full state-history
-// audit trail. Returned by GetRequest so the GET /access/requests/:id
-// endpoint can serve the canonical "request + audit log" view that an
-// operator needs when triaging a stuck request.
+// audit trail and, when the request has been provisioned, the
+// resulting access_grants row. Returned by GetRequest so the
+// GET /access/requests/:id endpoint can serve the canonical
+// "request + audit log + grant" view the Admin UI's triage page
+// needs without a second round-trip.
+//
+// Grant is nil when no access_grants row references this request.
+// That covers two cases: (a) the request is still pre-provision
+// (state=requested / approved without provisioning yet); (b) the
+// request was denied / cancelled and no grant was ever created.
 type AccessRequestDetail struct {
 Request models.AccessRequest                `json:"request"`
 History []models.AccessRequestStateHistory  `json:"history"`
+Grant   *models.AccessGrant                 `json:"grant,omitempty"`
 }
 
 // GetRequest loads a single request by ULID and returns it alongside
-// its state-history rows ordered oldest-first. Returns ErrRequestNotFound
-// (wrapped) when the row does not exist; the state-history fetch is a
-// best-effort SELECT — a DB error there is bubbled up rather than masked
-// as "not found" because that would hide reconcilable corruption.
+// its state-history rows ordered oldest-first plus the associated
+// access_grants row (when provisioned). Returns ErrRequestNotFound
+// (wrapped) when the request row does not exist; the state-history
+// + grant fetches are best-effort SELECTs — DB errors there are
+// bubbled up rather than masked as "not found" because that would
+// hide reconcilable corruption.
+//
+// A request can have at most one access_grants row referencing it
+// today (Provision is one-shot per request). The lookup is via the
+// indexed access_grants.request_id column. If a future workflow
+// creates multiple grants per request we return the most-recent
+// one — the Admin UI's per-grant timeline lives on a separate
+// endpoint.
 func (s *AccessRequestService) GetRequest(ctx context.Context, requestID string) (*AccessRequestDetail, error) {
 if requestID == "" {
 return nil, fmt.Errorf("%w: request id is required", ErrValidation)
@@ -338,7 +355,25 @@ Order("created_at asc").
 Find(&history).Error; err != nil {
 return nil, fmt.Errorf("access: list access_request_state_history: %w", err)
 }
-return &AccessRequestDetail{Request: req, History: history}, nil
+
+detail := &AccessRequestDetail{Request: req, History: history}
+
+var grant models.AccessGrant
+err = s.db.WithContext(ctx).
+Where("request_id = ?", requestID).
+Order("created_at desc").
+First(&grant).Error
+switch {
+case err == nil:
+detail.Grant = &grant
+case errors.Is(err, gorm.ErrRecordNotFound):
+// No grant yet — leave detail.Grant nil. Common for
+// requested / denied / cancelled requests.
+default:
+return nil, fmt.Errorf("access: get access_grant for request: %w", err)
+}
+
+return detail, nil
 }
 
 // transitionRequest is the shared implementation behind Approve / Deny /

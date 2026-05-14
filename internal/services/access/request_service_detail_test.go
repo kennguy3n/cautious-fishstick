@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
+
+	"github.com/kennguy3n/cautious-fishstick/internal/models"
 )
 
 // TestAccessRequestService_GetRequest_HappyPath: create a request,
@@ -67,5 +70,77 @@ func TestAccessRequestService_GetRequest_EmptyIDValidation(t *testing.T) {
 	_, err := svc.GetRequest(context.Background(), "")
 	if !errors.Is(err, ErrValidation) {
 		t.Fatalf("err = %v; want ErrValidation", err)
+	}
+}
+
+// TestAccessRequestService_GetRequest_IncludesGrant asserts the
+// detail surface returns the access_grants row referencing the
+// request when one exists. The Admin UI uses Grant to render
+// "active grant: <user> → <resource> until <expires_at>" on the
+// triage page without a second round-trip.
+func TestAccessRequestService_GetRequest_IncludesGrant(t *testing.T) {
+	db := newTestDB(t)
+	svc := NewAccessRequestService(db)
+	ctx := context.Background()
+
+	created, err := svc.CreateRequest(ctx, validInput())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	requestID := created.ID
+	expiresAt := time.Now().Add(7 * 24 * time.Hour).UTC()
+	seedGrant := &models.AccessGrant{
+		ID:                 "01H00000000000000GRANT001",
+		RequestID:          &requestID,
+		WorkspaceID:        created.WorkspaceID,
+		UserID:             created.TargetUserID,
+		ConnectorID:        created.ConnectorID,
+		ResourceExternalID: created.ResourceExternalID,
+		Role:               created.Role,
+		GrantedAt:          time.Now().UTC(),
+		ExpiresAt:          &expiresAt,
+		CreatedAt:          time.Now().UTC(),
+		UpdatedAt:          time.Now().UTC(),
+	}
+	if err := db.Create(seedGrant).Error; err != nil {
+		t.Fatalf("seed grant: %v", err)
+	}
+
+	got, err := svc.GetRequest(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Grant == nil {
+		t.Fatal("Grant = nil; want non-nil after seeding access_grants row")
+	}
+	if got.Grant.ID != seedGrant.ID {
+		t.Fatalf("Grant.ID = %q; want %q", got.Grant.ID, seedGrant.ID)
+	}
+}
+
+// TestAccessRequestService_GetRequest_NoGrantStillReturnsDetail asserts
+// the absence of a grant does not cause the endpoint to fail — the
+// Admin UI needs to render the request + history even for requests
+// that were never provisioned (denied, cancelled, still pending).
+func TestAccessRequestService_GetRequest_NoGrantStillReturnsDetail(t *testing.T) {
+	db := newTestDB(t)
+	svc := NewAccessRequestService(db)
+	ctx := context.Background()
+
+	created, err := svc.CreateRequest(ctx, validInput())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	got, err := svc.GetRequest(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Grant != nil {
+		t.Fatalf("Grant = %+v; want nil for a request with no provisioned grant", got.Grant)
+	}
+	if got.Request.ID != created.ID {
+		t.Fatalf("Request.ID = %q; want %q", got.Request.ID, created.ID)
 	}
 }

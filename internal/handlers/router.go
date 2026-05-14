@@ -61,6 +61,11 @@ type Dependencies struct {
 	// registered when wired.
 	ConnectorListReader ConnectorListReader
 
+	// ConnectorCatalogueReader backs GET /access/connectors/catalogue
+	// (Admin UI marketplace tile grid). May be nil; the route is only
+	// registered when wired so dev binaries without a DB stay healthy.
+	ConnectorCatalogueReader ConnectorCatalogueReader
+
 	// ConnectorManagementService backs POST /access/connectors, DELETE
 	// /access/connectors/:id, PUT /access/connectors/:id/secret and
 	// POST /access/connectors/:id/sync (per docs/ARCHITECTURE.md §2).
@@ -132,6 +137,17 @@ func Router(deps Dependencies) *gin.Engine {
 	if deps.ConnectorListReader != nil {
 		clh := NewConnectorListHandler(deps.ConnectorListReader)
 		clh.Register(r)
+	}
+
+	// Register the catalogue route BEFORE the management service so the
+	// /access/connectors/catalogue path is matched against the literal
+	// "catalogue" segment rather than the /access/connectors/:id route
+	// that POST/DELETE handlers install. (Gin's tree handles this
+	// regardless of registration order, but ordering matters when
+	// reasoning about overlapping routes.)
+	if deps.ConnectorCatalogueReader != nil {
+		cch := NewConnectorCatalogueHandler(deps.ConnectorCatalogueReader)
+		cch.Register(r)
 	}
 
 	if deps.ConnectorManagementService != nil {

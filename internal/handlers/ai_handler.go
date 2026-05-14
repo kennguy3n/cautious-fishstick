@@ -29,6 +29,7 @@ func NewAIHandler(invoker AIInvoker) *AIHandler {
 func (h *AIHandler) Register(r *gin.Engine) {
 	r.POST("/access/explain", h.Explain)
 	r.POST("/access/suggest", h.Suggest)
+	r.POST("/access/assistant", h.Assistant)
 }
 
 // explainRequest matches the docs/PROPOSAL.md §11 description: the
