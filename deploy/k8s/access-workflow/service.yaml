@@ -1,0 +1,30 @@
+# Cluster-internal Service for access-workflow-engine. Not exposed
+# publicly; only ztna-api dials it (over the in-cluster DNS name
+# referenced by ACCESS_WORKFLOW_ENGINE_BASE_URL).
+apiVersion: v1
+kind: Service
+metadata:
+  name: access-workflow
+  namespace: shieldnet-access
+  labels:
+    app.kubernetes.io/name: access-workflow
+    app.kubernetes.io/part-of: shieldnet-access
+    app.kubernetes.io/component: workflow-engine
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: access-workflow
+  ports:
+    - name: http
+      port: 8082
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: access-workflow
+  namespace: shieldnet-access
+  labels:
+    app.kubernetes.io/name: access-workflow
+    app.kubernetes.io/part-of: shieldnet-access

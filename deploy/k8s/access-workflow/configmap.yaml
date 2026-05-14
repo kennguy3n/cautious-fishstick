@@ -1,0 +1,31 @@
+# Non-sensitive runtime configuration for access-workflow-engine.
+# SMTP credentials and Slack webhook URLs live in the companion
+# Secret (access-workflow-secrets).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: access-workflow-config
+  namespace: shieldnet-access
+  labels:
+    app.kubernetes.io/name: access-workflow
+    app.kubernetes.io/part-of: shieldnet-access
+data:
+  smtp-host: ""
+  smtp-port: "587"
+  smtp-from: "noreply@shieldnet.example"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: access-workflow-secrets
+  namespace: shieldnet-access
+  labels:
+    app.kubernetes.io/name: access-workflow
+    app.kubernetes.io/part-of: shieldnet-access
+type: Opaque
+stringData:
+  database-url: "postgres://access:CHANGE_ME@postgres:5432/access?sslmode=require"
+  redis-url: "redis://redis:6379/0"
+  smtp-username: ""
+  smtp-password: ""
+  slack-webhook-url: ""

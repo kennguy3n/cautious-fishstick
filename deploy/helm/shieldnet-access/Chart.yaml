@@ -1,0 +1,28 @@
+apiVersion: v2
+name: shieldnet-access
+description: |
+  ShieldNet Access — multi-tenant ZTNA control plane (4 services):
+    * ztna-api (public HTTP surface)
+    * access-connector-worker (Redis-queue consumer)
+    * access-workflow-engine (cluster-internal webhook engine)
+    * access-ai-agent (Python A2A skill server)
+
+  The chart packages the manifests under deploy/k8s/<service>/ as
+  Helm templates so operators can override image tags, replica
+  counts, resource limits, and every ACCESS_* env var per
+  environment. Reference patterns: uneycom/ztna-k8s-assets and
+  uneycom/shieldnet-agents-k8s-helm.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - ztna
+  - access-management
+  - shieldnet
+  - zero-trust
+home: https://github.com/kennguy3n/cautious-fishstick
+sources:
+  - https://github.com/kennguy3n/cautious-fishstick
+maintainers:
+  - name: kennguy3n
+    url: https://github.com/kennguy3n

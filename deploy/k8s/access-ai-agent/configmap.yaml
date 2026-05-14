@@ -1,0 +1,29 @@
+# Non-sensitive runtime configuration for access-ai-agent. The
+# shared API key and any LLM provider credentials live in the
+# companion Secret (access-ai-agent-secrets).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: access-ai-agent-config
+  namespace: shieldnet-access
+  labels:
+    app.kubernetes.io/name: access-ai-agent
+    app.kubernetes.io/part-of: shieldnet-access
+data:
+  listen-addr: "0.0.0.0:8090"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: access-ai-agent-secrets
+  namespace: shieldnet-access
+  labels:
+    app.kubernetes.io/name: access-ai-agent
+    app.kubernetes.io/part-of: shieldnet-access
+type: Opaque
+stringData:
+  # Must match ACCESS_AI_AGENT_API_KEY on ztna-api per
+  # docs/PROPOSAL.md §10.3.
+  api-key: "CHANGE_ME"
+  openai-api-key: ""
+  anthropic-api-key: ""

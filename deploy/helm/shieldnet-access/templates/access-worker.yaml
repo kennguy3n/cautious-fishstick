@@ -1,0 +1,121 @@
+{{- if .Values.accessWorker.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: access-worker
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shieldnet-access.labels" . | nindent 4 }}
+    app.kubernetes.io/name: access-worker
+    app.kubernetes.io/component: worker
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: access-worker-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shieldnet-access.labels" . | nindent 4 }}
+    app.kubernetes.io/name: access-worker
+data:
+  full-resync-interval: {{ .Values.accessWorker.config.fullResyncInterval | quote }}
+  credential-checker-interval: {{ .Values.accessWorker.config.credentialCheckerInterval | quote }}
+  credential-expiry-warning-days: {{ .Values.accessWorker.config.credentialExpiryWarningDays | quote }}
+  kafka-brokers: {{ .Values.accessWorker.config.kafkaBrokers | quote }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: access-worker-secrets
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shieldnet-access.labels" . | nindent 4 }}
+    app.kubernetes.io/name: access-worker
+type: Opaque
+stringData:
+  database-url: {{ .Values.accessWorker.secrets.databaseUrl | quote }}
+  redis-url: {{ .Values.accessWorker.secrets.redisUrl | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: access-worker
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shieldnet-access.labels" . | nindent 4 }}
+    app.kubernetes.io/name: access-worker
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.accessWorker.replicaCount }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "shieldnet-access.selectorLabels" (dict "name" "access-worker" "ctx" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "shieldnet-access.labels" . | nindent 8 }}
+        {{- include "shieldnet-access.selectorLabels" (dict "name" "access-worker" "ctx" .) | nindent 8 }}
+        app.kubernetes.io/component: worker
+    spec:
+      serviceAccountName: access-worker
+      terminationGracePeriodSeconds: 60
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: access-worker
+          image: {{ include "shieldnet-access.image" (dict "service" "access-worker" "tag" .Values.image.accessWorkerTag "ctx" .) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            {{- range $k, $v := .Values.accessWorker.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            - name: ACCESS_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: access-worker-secrets
+                  key: database-url
+            - name: ACCESS_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: access-worker-secrets
+                  key: redis-url
+            - name: ACCESS_FULL_RESYNC_INTERVAL
+              valueFrom:
+                configMapKeyRef:
+                  name: access-worker-config
+                  key: full-resync-interval
+                  optional: true
+            - name: ACCESS_CREDENTIAL_CHECKER_INTERVAL
+              valueFrom:
+                configMapKeyRef:
+                  name: access-worker-config
+                  key: credential-checker-interval
+                  optional: true
+            - name: ACCESS_CREDENTIAL_EXPIRY_WARNING_DAYS
+              valueFrom:
+                configMapKeyRef:
+                  name: access-worker-config
+                  key: credential-expiry-warning-days
+                  optional: true
+            - name: ACCESS_KAFKA_BROKERS
+              valueFrom:
+                configMapKeyRef:
+                  name: access-worker-config
+                  key: kafka-brokers
+                  optional: true
+          resources:
+            {{- toYaml .Values.accessWorker.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+{{- end }}

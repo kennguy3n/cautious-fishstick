@@ -1,0 +1,141 @@
+# Default values for the shieldnet-access chart. Operators should
+# override at minimum: image.registry, .ztnaApi.config.* and the
+# four Secret blocks (database-url, redis-url, ai-agent-api-key,
+# notification secrets). The defaults below are tuned for a single-
+# region production deployment; smaller dev clusters can shrink
+# replicaCounts and resource ceilings without further edits.
+
+# -- Override the namespace name. Set to "" to deploy into the
+# release namespace.
+namespace: shieldnet-access
+createNamespace: true
+
+image:
+  registry: ghcr.io
+  repository: kennguy3n/cautious-fishstick
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+  # Per-service tags fall back to .Chart.AppVersion when blank.
+  ztnaApiTag: ""
+  accessWorkerTag: ""
+  accessWorkflowTag: ""
+  accessAiAgentTag: ""
+
+# Sizing follows docs/PROPOSAL.md §10.2 and docs/ARCHITECTURE.md §11.
+ztnaApi:
+  enabled: true
+  replicaCount: 2
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    cpuUtilization: 70
+    memoryUtilization: 80
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "1Gi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+  env:
+    GOMEMLIMIT: "900MiB"
+    GOGC: "100"
+  config:
+    aiAgentBaseUrl: "http://access-ai-agent.shieldnet-access.svc.cluster.local:8090"
+    workflowEngineBaseUrl: "http://access-workflow.shieldnet-access.svc.cluster.local:8082"
+    kafkaBrokers: ""
+    auditLogTopic: "access-audit-log"
+  secrets:
+    databaseUrl: "postgres://access:CHANGE_ME@postgres:5432/access?sslmode=require"
+    redisUrl: "redis://redis:6379/0"
+    aiAgentApiKey: "CHANGE_ME"
+  service:
+    type: ClusterIP
+    port: 8080
+
+accessWorker:
+  enabled: true
+  replicaCount: 3
+  resources:
+    requests:
+      cpu: "1000m"
+      memory: "400Mi"
+    limits:
+      cpu: "2000m"
+      memory: "400Mi"
+  env:
+    GOMEMLIMIT: "360MiB"
+    GOGC: "75"
+  config:
+    fullResyncInterval: "168h"
+    credentialCheckerInterval: "1h"
+    credentialExpiryWarningDays: "7"
+    kafkaBrokers: ""
+  secrets:
+    databaseUrl: "postgres://access:CHANGE_ME@postgres:5432/access?sslmode=require"
+    redisUrl: "redis://redis:6379/0"
+
+accessWorkflow:
+  enabled: true
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "1Gi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+  env:
+    GOMEMLIMIT: "900MiB"
+    GOGC: "100"
+  config:
+    smtpHost: ""
+    smtpPort: "587"
+    smtpFrom: "noreply@shieldnet.example"
+  secrets:
+    databaseUrl: "postgres://access:CHANGE_ME@postgres:5432/access?sslmode=require"
+    redisUrl: "redis://redis:6379/0"
+    smtpUsername: ""
+    smtpPassword: ""
+    slackWebhookUrl: ""
+  service:
+    type: ClusterIP
+    port: 8082
+
+accessAiAgent:
+  enabled: true
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+  secrets:
+    # MUST match ztnaApi.secrets.aiAgentApiKey.
+    apiKey: "CHANGE_ME"
+    openaiApiKey: ""
+    anthropicApiKey: ""
+  service:
+    type: ClusterIP
+    port: 8090
+
+# Pod-level securityContext shared by every Go service. The Python
+# agent reuses the same defaults (non-root, readOnlyRootFilesystem,
+# all caps dropped) — change here if you need to relax it.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL

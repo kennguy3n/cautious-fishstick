@@ -1,0 +1,196 @@
+{{- if .Values.ztnaApi.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ztna-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shieldnet-access.labels" . | nindent 4 }}
+    app.kubernetes.io/name: ztna-api
+    app.kubernetes.io/component: api
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ztna-api-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shieldnet-access.labels" . | nindent 4 }}
+    app.kubernetes.io/name: ztna-api
+data:
+  ai-agent-base-url: {{ .Values.ztnaApi.config.aiAgentBaseUrl | quote }}
+  workflow-engine-base-url: {{ .Values.ztnaApi.config.workflowEngineBaseUrl | quote }}
+  kafka-brokers: {{ .Values.ztnaApi.config.kafkaBrokers | quote }}
+  audit-log-topic: {{ .Values.ztnaApi.config.auditLogTopic | quote }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ztna-api-secrets
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shieldnet-access.labels" . | nindent 4 }}
+    app.kubernetes.io/name: ztna-api
+type: Opaque
+stringData:
+  database-url: {{ .Values.ztnaApi.secrets.databaseUrl | quote }}
+  redis-url: {{ .Values.ztnaApi.secrets.redisUrl | quote }}
+  ai-agent-api-key: {{ .Values.ztnaApi.secrets.aiAgentApiKey | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ztna-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shieldnet-access.labels" . | nindent 4 }}
+    app.kubernetes.io/name: ztna-api
+    app.kubernetes.io/component: api
+spec:
+  type: {{ .Values.ztnaApi.service.type }}
+  selector:
+    {{- include "shieldnet-access.selectorLabels" (dict "name" "ztna-api" "ctx" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.ztnaApi.service.port }}
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ztna-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shieldnet-access.labels" . | nindent 4 }}
+    app.kubernetes.io/name: ztna-api
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.ztnaApi.replicaCount }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "shieldnet-access.selectorLabels" (dict "name" "ztna-api" "ctx" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "shieldnet-access.labels" . | nindent 8 }}
+        {{- include "shieldnet-access.selectorLabels" (dict "name" "ztna-api" "ctx" .) | nindent 8 }}
+        app.kubernetes.io/component: api
+    spec:
+      serviceAccountName: ztna-api
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: ztna-api
+          image: {{ include "shieldnet-access.image" (dict "service" "ztna-api" "tag" .Values.image.ztnaApiTag "ctx" .) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: ZTNA_API_LISTEN_ADDR
+              value: ":8080"
+            {{- range $k, $v := .Values.ztnaApi.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            - name: ACCESS_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ztna-api-secrets
+                  key: database-url
+            - name: ACCESS_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ztna-api-secrets
+                  key: redis-url
+            - name: ACCESS_AI_AGENT_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: ztna-api-config
+                  key: ai-agent-base-url
+            - name: ACCESS_AI_AGENT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ztna-api-secrets
+                  key: ai-agent-api-key
+            - name: ACCESS_WORKFLOW_ENGINE_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: ztna-api-config
+                  key: workflow-engine-base-url
+            - name: ACCESS_KAFKA_BROKERS
+              valueFrom:
+                configMapKeyRef:
+                  name: ztna-api-config
+                  key: kafka-brokers
+                  optional: true
+            - name: ACCESS_AUDIT_LOG_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: ztna-api-config
+                  key: audit-log-topic
+                  optional: true
+          resources:
+            {{- toYaml .Values.ztnaApi.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 6
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+{{- if .Values.ztnaApi.hpa.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ztna-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shieldnet-access.labels" . | nindent 4 }}
+    app.kubernetes.io/name: ztna-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ztna-api
+  minReplicas: {{ .Values.ztnaApi.hpa.minReplicas }}
+  maxReplicas: {{ .Values.ztnaApi.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.ztnaApi.hpa.cpuUtilization }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.ztnaApi.hpa.memoryUtilization }}
+{{- end }}
+{{- end }}
