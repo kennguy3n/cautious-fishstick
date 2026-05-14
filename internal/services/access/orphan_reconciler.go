@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -46,6 +48,24 @@ type OrphanReconciler struct {
 	// SetPerConnectorDelay (config-driven, see
 	// internal/config/access.go::ACCESS_ORPHAN_RECONCILE_DELAY_PER_CONNECTOR).
 	perConnectorDelay time.Duration
+
+	// statsMu guards lastRunStats. The map is updated at the end of
+	// every reconcileWorkspace pass and read by the scheduler via
+	// WorkspaceConnectorStats so per-run scanned/failed counts
+	// reflect rows the reconciler actually processed (not the DB
+	// COUNT before the pass started).
+	statsMu      sync.Mutex
+	lastRunStats map[string]connectorRunStats
+}
+
+// connectorRunStats records the per-workspace outcome of the most
+// recent reconcileWorkspace pass. Exposed to the scheduler through
+// WorkspaceConnectorStats so the orphan_reconcile_summary log line
+// reports the count of connectors actually processed instead of
+// the workspace's total in the DB.
+type connectorRunStats struct {
+	scanned int
+	failed  int
 }
 
 // NewOrphanReconciler returns a reconciler bound to db. The
@@ -86,6 +106,39 @@ func (r *OrphanReconciler) PerConnectorDelay() time.Duration {
 		return 0
 	}
 	return r.perConnectorDelay
+}
+
+// WorkspaceConnectorStats returns the scanned/failed connector
+// counts from the most recent reconcileWorkspace pass for the
+// given workspace. Returns zeros when no pass has run yet so the
+// scheduler falls back to its DB COUNT estimate. This method
+// satisfies the cron package's reconcilerStatsReader contract.
+func (r *OrphanReconciler) WorkspaceConnectorStats(_ context.Context, workspaceID string) (scanned, failed int, err error) {
+	if r == nil {
+		return 0, 0, nil
+	}
+	r.statsMu.Lock()
+	defer r.statsMu.Unlock()
+	if r.lastRunStats == nil {
+		return 0, 0, nil
+	}
+	stats, ok := r.lastRunStats[workspaceID]
+	if !ok {
+		return 0, 0, nil
+	}
+	return stats.scanned, stats.failed, nil
+}
+
+// recordRunStats stores the per-workspace scanned/failed counts
+// for the just-completed pass under statsMu so concurrent
+// reconciles do not race on lastRunStats. Internal helper.
+func (r *OrphanReconciler) recordRunStats(workspaceID string, scanned, failed int) {
+	r.statsMu.Lock()
+	defer r.statsMu.Unlock()
+	if r.lastRunStats == nil {
+		r.lastRunStats = make(map[string]connectorRunStats)
+	}
+	r.lastRunStats[workspaceID] = connectorRunStats{scanned: scanned, failed: failed}
 }
 
 // SetClock overrides the default time source for deterministic
@@ -150,24 +203,39 @@ func (r *OrphanReconciler) reconcileWorkspace(ctx context.Context, workspaceID s
 	}
 
 	out := make([]models.AccessOrphanAccount, 0)
+	var connectorErrs []error
+	scanned := 0
+	failed := 0
 	for i := range connectors {
 		conn := &connectors[i]
+		scanned++
 		rows, err := r.reconcileConnector(ctx, conn, dryRun)
 		if err != nil {
-			// Per docs/PHASES.md the reconciler is best-effort: log and
-			// continue. We return the accumulated rows alongside the
-			// first error so the cron can surface it without losing
-			// earlier connector progress.
-			return out, fmt.Errorf("access: reconcile connector %s: %w", conn.ID, err)
+			// Per docs/PHASES.md and docs/ARCHITECTURE.md §12.2 the
+			// reconciler is best-effort across connectors: log this
+			// connector's failure and continue to the next one so a
+			// single broken upstream cannot mask orphans in the rest
+			// of the workspace. Errors are collected and returned as
+			// an aggregated error after the loop finishes.
+			failed++
+			wrapped := fmt.Errorf("access: reconcile connector %s: %w", conn.ID, err)
+			log.Printf("access: orphan_reconciler: workspace=%s connector=%s: %v", workspaceID, conn.ID, err)
+			connectorErrs = append(connectorErrs, wrapped)
+		} else {
+			out = append(out, rows...)
 		}
-		out = append(out, rows...)
 		if i < len(connectors)-1 && r.perConnectorDelay > 0 {
 			select {
 			case <-ctx.Done():
+				r.recordRunStats(workspaceID, scanned, failed)
 				return out, ctx.Err()
 			case <-time.After(r.perConnectorDelay):
 			}
 		}
+	}
+	r.recordRunStats(workspaceID, scanned, failed)
+	if len(connectorErrs) > 0 {
+		return out, errors.Join(connectorErrs...)
 	}
 	return out, nil
 }

@@ -38,9 +38,19 @@ type orphanReconcileLog struct {
 
 // reconcilerStatsReader is the optional contract a reconciler can
 // implement to expose per-workspace scan stats (connectors scanned
-// / failed). The production *access.OrphanReconciler does not
-// implement this yet; the scheduler falls back to len(connectors)
-// for ConnectorsScanned when the type assertion fails.
+// / failed) reflecting the most recent ReconcileWorkspace pass.
+// The production *access.OrphanReconciler records counts at the
+// end of every pass and exposes them through this interface so
+// connectors_scanned / connectors_failed in the orphan_reconcile_
+// summary log line reflect rows actually processed (not the DB
+// COUNT taken before the pass ran, which would over-report on a
+// partial failure).
+//
+// The scheduler must call WorkspaceConnectorStats AFTER
+// ReconcileWorkspace returns so the reconciler has a chance to
+// stamp the per-run stats. On the very first call (no prior pass
+// recorded for this workspace) the method returns zeros and the
+// scheduler falls back to a DB COUNT estimate for scanned only.
 type reconcilerStatsReader interface {
 	WorkspaceConnectorStats(ctx context.Context, workspaceID string) (scanned, failed int, err error)
 }
@@ -121,6 +131,16 @@ func (s *OrphanReconcilerScheduler) Run(ctx context.Context) error {
 	var lastErr error
 	for _, ws := range workspaceIDs {
 		start := s.now()
+		rows, err := s.reconciler.ReconcileWorkspace(ctx, ws)
+		dur := s.now().Sub(start)
+
+		// Pull per-run scanned/failed counts AFTER the reconcile so
+		// connectors_scanned reflects rows the reconciler actually
+		// processed in this pass. On a partial failure the reconciler
+		// is best-effort across connectors (see
+		// docs/ARCHITECTURE.md §12.2), so connectors_failed counts the
+		// per-connector failures rather than collapsing the whole pass
+		// to a single 1.
 		connectorsScanned := 0
 		connectorsFailed := 0
 		if statsReader, ok := s.reconciler.(reconcilerStatsReader); ok {
@@ -130,6 +150,9 @@ func (s *OrphanReconcilerScheduler) Run(ctx context.Context) error {
 			}
 		}
 		if connectorsScanned == 0 {
+			// Fallback for reconcilers that do not implement
+			// reconcilerStatsReader, or for the very first pass before
+			// stats have been recorded for this workspace.
 			var cnt int64
 			if cerr := s.db.WithContext(ctx).Model(&models.AccessConnector{}).
 				Where("workspace_id = ?", ws).Count(&cnt).Error; cerr == nil {
@@ -137,27 +160,37 @@ func (s *OrphanReconcilerScheduler) Run(ctx context.Context) error {
 			}
 		}
 
-		rows, err := s.reconciler.ReconcileWorkspace(ctx, ws)
-		dur := s.now().Sub(start)
 		if err != nil {
 			log.Printf("cron: orphan_reconciler: workspace=%s reconcile: %v", ws, err)
+			// connectorsFailed already reflects the per-connector
+			// failures the reconciler reported (≥1 on this branch when
+			// the reconciler implements reconcilerStatsReader). When it
+			// does not, fall back to 1 so SIEM consumers still see a
+			// non-zero failure count for the workspace.
+			if connectorsFailed == 0 {
+				connectorsFailed = 1
+			}
 			s.emitStats(orphanReconcileLog{
 				WorkspaceID: ws, OrphansDetected: len(rows), OrphansNew: countNewOrphans(rows),
-				ConnectorsScanned: connectorsScanned, ConnectorsFailed: connectorsFailed + 1,
+				ConnectorsScanned: connectorsScanned, ConnectorsFailed: connectorsFailed,
 				DurationMS: dur.Milliseconds(), Error: err.Error(),
 			})
 			lastErr = err
-			continue
+		} else {
+			s.emitStats(orphanReconcileLog{
+				WorkspaceID: ws, OrphansDetected: len(rows), OrphansNew: countNewOrphans(rows),
+				ConnectorsScanned: connectorsScanned, ConnectorsFailed: connectorsFailed,
+				DurationMS: dur.Milliseconds(),
+			})
 		}
-		s.emitStats(orphanReconcileLog{
-			WorkspaceID: ws, OrphansDetected: len(rows), OrphansNew: countNewOrphans(rows),
-			ConnectorsScanned: connectorsScanned, ConnectorsFailed: connectorsFailed,
-			DurationMS: dur.Milliseconds(),
-		})
-		if len(rows) == 0 {
-			continue
-		}
-		if s.notifier != nil {
+		// Best-effort across connectors (see docs/ARCHITECTURE.md
+		// §12.2): orphans surfaced by successful connectors must be
+		// dispatched to the notifier even when other connectors in the
+		// same workspace failed. The reconciler persists those rows
+		// before returning the aggregated error, so skipping the
+		// notification here would silently drop alerts operators rely
+		// on for flaky-connector workspaces.
+		if s.notifier != nil && len(rows) > 0 {
 			if nerr := s.notifier.NotifyOrphansDetected(ctx, ws, rows); nerr != nil {
 				log.Printf("cron: orphan_reconciler: workspace=%s notify: %v", ws, nerr)
 			}

@@ -132,7 +132,15 @@ func (h *OrphanHandler) Reconcile(c *gin.Context) {
 	} else {
 		rows, err = h.svc.ReconcileWorkspace(c.Request.Context(), body.WorkspaceID)
 	}
-	if err != nil {
+	// Best-effort across connectors (see docs/ARCHITECTURE.md §12.2): the
+	// reconciler returns rows from successful connectors alongside an
+	// aggregated error from failed connectors. When rows are present we
+	// surface them with HTTP 200 plus an optional "partial_failure" field
+	// so operators don't lose the preview in dry-run mode (where rows are
+	// not persisted) and still receive the partial set in wet runs. HTTP
+	// 500 is reserved for the no-rows case where there is nothing useful
+	// to return to the caller.
+	if err != nil && len(rows) == 0 {
 		writeError(c, http.StatusInternalServerError, err)
 		return
 	}
@@ -140,10 +148,14 @@ func (h *OrphanHandler) Reconcile(c *gin.Context) {
 	for _, r := range rows {
 		out = append(out, newUnusedAccountView(r))
 	}
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"unused_app_accounts": out,
 		"dry_run":             body.DryRun,
-	})
+	}
+	if err != nil {
+		resp["partial_failure"] = err.Error()
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // Revoke handles POST /access/orphans/:id/revoke.
