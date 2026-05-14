@@ -13,6 +13,31 @@ import (
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
 
+// stubGrantExpiryNotifier is the minimal cron.GrantExpiryNotifier
+// implementation the wiring test needs. No call is made during
+// WireCronJobs so the bodies are intentionally trivial — the test
+// only asserts the pointer landed on the enforcer via its public
+// Notifier() accessor.
+type stubGrantExpiryNotifier struct{}
+
+func (stubGrantExpiryNotifier) SendGrantRevokedNotification(_ context.Context, _, _, _, _ string, _ time.Time) error {
+	return nil
+}
+func (stubGrantExpiryNotifier) SendGrantExpiryWarning(_ context.Context, _, _, _, _ string, _ time.Time, _ int) error {
+	return nil
+}
+
+// stubAuditProducer is the minimal access.AuditProducer the wiring
+// test needs. No call is made during WireCronJobs so the body is
+// trivial — the test only asserts the pointer landed on the
+// enforcer via its public AuditProducer() accessor.
+type stubAuditProducer struct{}
+
+func (*stubAuditProducer) PublishAccessAuditLogs(_ context.Context, _ string, _ []*access.AuditLogEntry) error {
+	return nil
+}
+func (*stubAuditProducer) Close() error { return nil }
+
 // stubGrantRevoker is the minimal cron.GrantRevoker implementation
 // the wiring test needs. The enforcer never invokes Revoke during
 // construction so the call body is intentionally trivial.
@@ -47,12 +72,72 @@ func TestWireCronJobs_AppliesGrantExpiryWarningHours(t *testing.T) {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	cfg := config.Access{GrantExpiryWarningHours: 72}
-	jobs := WireCronJobs(db, nil, nil, stubGrantRevoker{}, stubCredentialsLoader{}, nil, cfg)
+	jobs := WireCronJobs(db, nil, nil, stubGrantRevoker{}, stubCredentialsLoader{}, nil, nil, nil, cfg)
 	if jobs.GrantExpiryEnforcer == nil {
 		t.Fatalf("WireCronJobs: GrantExpiryEnforcer = nil; want non-nil")
 	}
 	if got := jobs.GrantExpiryEnforcer.WarningHours(); got != 72 {
 		t.Errorf("WarningHours() = %d; want 72 (cfg.GrantExpiryWarningHours)", got)
+	}
+}
+
+// TestWireCronJobs_WiresGrantExpiryNotifierAndAuditProducer is the
+// Phase 11 batch 6 round-7 regression for the wiring gap where
+// WireCronJobs called SetWarningHours on the GrantExpiryEnforcer
+// but did NOT call SetNotifier or SetAuditProducer, leaving the
+// notification + audit hooks disconnected even though both
+// features were implemented in the enforcer. The test passes a
+// non-nil stub for each hook and asserts the pointers landed on
+// the enforcer via its public Notifier() / AuditProducer()
+// accessors. Without the wiring, both accessors would return nil
+// and downstream SIEM consumers + users would never see any
+// grant-expiry traffic out of the production binary.
+func TestWireCronJobs_WiresGrantExpiryNotifierAndAuditProducer(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	notifier := stubGrantExpiryNotifier{}
+	audit := &stubAuditProducer{}
+	cfg := config.Access{GrantExpiryWarningHours: 24}
+	jobs := WireCronJobs(db, nil, nil, stubGrantRevoker{}, stubCredentialsLoader{}, notifier, audit, nil, cfg)
+	if jobs.GrantExpiryEnforcer == nil {
+		t.Fatalf("WireCronJobs: GrantExpiryEnforcer = nil; want non-nil")
+	}
+	if jobs.GrantExpiryEnforcer.Notifier() == nil {
+		t.Error("Notifier() = nil; want non-nil (SetNotifier must wire grantExpiryNotifier)")
+	}
+	if jobs.GrantExpiryEnforcer.AuditProducer() == nil {
+		t.Error("AuditProducer() = nil; want non-nil (SetAuditProducer must wire auditProducer)")
+	}
+	// Phase 11 batch 6 round-7: the warning sweep cadence must
+	// also be populated so StartCronJobs has something to tick
+	// for jobs.GrantExpiryEnforcer.RunWarning.
+	if jobs.GrantExpiryWarningInterval <= 0 {
+		t.Errorf("GrantExpiryWarningInterval = %v; want > 0 (the warning sweep must have a tick cadence)", jobs.GrantExpiryWarningInterval)
+	}
+}
+
+// TestWireCronJobs_GrantExpiryNotifierNilStaysSkipped asserts the
+// scaffold path where grantExpiryNotifier is nil does not panic
+// and leaves the enforcer's Notifier() returning nil so the
+// enforcer's Status="skipped" branch (round 3) fires correctly
+// when RunWarning ticks against an unwired notifier.
+func TestWireCronJobs_GrantExpiryNotifierNilStaysSkipped(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	cfg := config.Access{GrantExpiryWarningHours: 24}
+	jobs := WireCronJobs(db, nil, nil, stubGrantRevoker{}, stubCredentialsLoader{}, nil, nil, nil, cfg)
+	if jobs.GrantExpiryEnforcer == nil {
+		t.Fatalf("WireCronJobs: GrantExpiryEnforcer = nil; want non-nil (nil notifier must not omit the cron)")
+	}
+	if jobs.GrantExpiryEnforcer.Notifier() != nil {
+		t.Error("Notifier() = non-nil; want nil so the enforcer's Status=\"skipped\" branch fires")
+	}
+	if jobs.GrantExpiryEnforcer.AuditProducer() != nil {
+		t.Error("AuditProducer() = non-nil; want nil so the audit branch short-circuits")
 	}
 }
 
@@ -67,7 +152,7 @@ func TestWireCronJobs_GrantExpiryWarningHoursZeroFallsBackToDefault(t *testing.T
 		t.Fatalf("open sqlite: %v", err)
 	}
 	cfg := config.Access{GrantExpiryWarningHours: 0}
-	jobs := WireCronJobs(db, nil, nil, stubGrantRevoker{}, stubCredentialsLoader{}, nil, cfg)
+	jobs := WireCronJobs(db, nil, nil, stubGrantRevoker{}, stubCredentialsLoader{}, nil, nil, nil, cfg)
 	if jobs.GrantExpiryEnforcer == nil {
 		t.Fatalf("WireCronJobs: GrantExpiryEnforcer = nil; want non-nil")
 	}

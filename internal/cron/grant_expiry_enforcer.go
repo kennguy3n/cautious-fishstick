@@ -157,6 +157,28 @@ func (e *GrantExpiryEnforcer) WarningHours() int {
 	return e.warningHours
 }
 
+// Notifier returns the currently wired GrantExpiryNotifier (or
+// nil when the hook is unwired). Exposed so the worker binary's
+// wiring tests can assert SetNotifier landed on the enforcer
+// without exercising a full revoke / warning sweep.
+func (e *GrantExpiryEnforcer) Notifier() GrantExpiryNotifier {
+	if e == nil {
+		return nil
+	}
+	return e.notifier
+}
+
+// AuditProducer returns the currently wired access.AuditProducer
+// (or nil when unwired). Exposed so the worker binary's wiring
+// tests can assert SetAuditProducer landed on the enforcer
+// without exercising a full revoke / warning sweep.
+func (e *GrantExpiryEnforcer) AuditProducer() access.AuditProducer {
+	if e == nil {
+		return nil
+	}
+	return e.auditProducer
+}
+
 // Run scans the access_grants table for unrevoked rows with
 // expires_at <= now and calls revoker.Revoke on each with the
 // decrypted credentials of the corresponding connector. Returns
@@ -302,12 +324,27 @@ func (e *GrantExpiryEnforcer) RunWarning(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("cron: list soon-to-expire grants: %w", err)
 	}
 
+	// Dedup window: a grant warned within the last `window` hours is
+	// skipped so a 12h-from-expiry grant gets one notification, not
+	// twelve under the default 1h tick / 24h warning window. The
+	// LastWarnedAt column is stamped after a successful notification
+	// (see end of loop below), so the very first tick in the window
+	// always fires for a fresh grant. Phase 11 batch 6 round-7.
+	dedupWindow := time.Duration(window) * time.Hour
+
 	var (
 		warned  int
 		lastErr error
 	)
 	for i := range grants {
 		g := &grants[i]
+		// Skip grants that were already warned within the current
+		// window. This is the dedup pivot — without it, every tick
+		// in the (1h cadence × 24h window) configuration would
+		// re-warn the same grant up to 24 times before expiry.
+		if g.LastWarnedAt != nil && now.Sub(*g.LastWarnedAt) < dedupWindow {
+			continue
+		}
 		expiresAt := now
 		if g.ExpiresAt != nil {
 			expiresAt = *g.ExpiresAt
@@ -362,6 +399,20 @@ func (e *GrantExpiryEnforcer) RunWarning(ctx context.Context) (int, error) {
 			}
 		}
 		if notified {
+			// Stamp LastWarnedAt so subsequent ticks within the
+			// dedup window skip this grant. Best-effort: a DB
+			// failure here is logged but does not undo the
+			// notification (the user has already received it).
+			// The next tick will re-fetch the row and, if the
+			// stamp landed, dedup correctly; if it didn't, the
+			// user gets at most one extra warning.
+			stamp := now
+			if err := e.db.WithContext(ctx).
+				Model(&models.AccessGrant{}).
+				Where("id = ?", g.ID).
+				Update("last_warned_at", stamp).Error; err != nil {
+				log.Printf("cron: grant_expiry_enforcer: stamp last_warned_at grant=%s: %v", g.ID, err)
+			}
 			warned++
 		}
 	}

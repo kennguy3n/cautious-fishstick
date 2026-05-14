@@ -346,6 +346,76 @@ func TestGrantExpiryEnforcer_RunWarning_NilNotifierIsSkipped(t *testing.T) {
 	}
 }
 
+// TestGrantExpiryEnforcer_RunWarning_DedupPerGrant is the Phase 11
+// batch 6 round-7 regression for the bug where RunWarning had no
+// dedup mechanism — under the default (1h tick × 24h warning window)
+// configuration, a single grant 12 hours from expiry would receive
+// up to 12 duplicate "your access expires in N hours" notifications
+// across consecutive ticks before being auto-revoked. The fix
+// stamps models.AccessGrant.LastWarnedAt after a successful
+// notification, and the next tick's query+iteration skips any
+// grant whose LastWarnedAt is within the warning window. This test
+// asserts the warned counter increments exactly once across two
+// consecutive ticks for the same grant, and that the stamp lands
+// on the row.
+func TestGrantExpiryEnforcer_RunWarning_DedupPerGrant(t *testing.T) {
+	db := newGrantDB(t)
+	now := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	soon := now.Add(2 * time.Hour)
+	seedGrant(t, db, "01HGRANT0DEDUP0000000000A", &soon)
+
+	rev := &captureRevoker{now: func() time.Time { return now }, db: db}
+	loader := newStubCredentialsLoader()
+	notifier := &stubGrantExpiryNotifier{}
+
+	e := NewGrantExpiryEnforcer(db, rev, loader, 100)
+	// Pin the enforcer clock so the second tick still falls
+	// inside the warning window (a real 1h-later tick would
+	// also remain inside the default 24h window, but pinning
+	// makes the assertion deterministic).
+	e.SetClock(func() time.Time { return now })
+	e.SetWarningHours(24)
+	e.SetNotifier(notifier)
+
+	warnedFirst, err := e.RunWarning(context.Background())
+	if err != nil {
+		t.Fatalf("RunWarning (first tick): %v", err)
+	}
+	if warnedFirst != 1 {
+		t.Errorf("first tick warned = %d; want 1 (initial notification)", warnedFirst)
+	}
+
+	// Verify the stamp landed on the row so the dedup pivot
+	// can take effect on the next tick.
+	var row models.AccessGrant
+	if err := db.Where("id = ?", "01HGRANT0DEDUP0000000000A").First(&row).Error; err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if row.LastWarnedAt == nil {
+		t.Fatal("LastWarnedAt = nil after a successful notification; want non-nil so the next tick dedups")
+	}
+
+	// Advance the enforcer clock by 1 hour so the second tick
+	// looks like a real subsequent run. The grant's expiry is
+	// still 1h ahead at this point, well inside the 24h warning
+	// window, so without dedup it would fire again.
+	e.SetClock(func() time.Time { return now.Add(1 * time.Hour) })
+
+	warnedSecond, err := e.RunWarning(context.Background())
+	if err != nil {
+		t.Fatalf("RunWarning (second tick): %v", err)
+	}
+	if warnedSecond != 0 {
+		t.Errorf("second tick warned = %d; want 0 (dedup must suppress the duplicate notification)", warnedSecond)
+	}
+
+	notifier.mu.Lock()
+	defer notifier.mu.Unlock()
+	if len(notifier.warnCalls) != 1 {
+		t.Errorf("warning notify calls = %d; want 1 (dedup must collapse the two ticks into a single notification)", len(notifier.warnCalls))
+	}
+}
+
 // errFake is a sentinel for the notifier failure test above.
 var errFake = errFakeT("notifier broke")
 
