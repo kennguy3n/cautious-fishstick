@@ -78,6 +78,11 @@ func TestAccessRequestService_GetRequest_EmptyIDValidation(t *testing.T) {
 // request when one exists. The Admin UI uses Grant to render
 // "active grant: <user> → <resource> until <expires_at>" on the
 // triage page without a second round-trip.
+//
+// The request is forced into RequestStateProvisioned because that
+// is the only path on which an access_grants row is ever written
+// in production (see provisioning_service.go) — GetRequest reads
+// the grant table only when the request has reached such a state.
 func TestAccessRequestService_GetRequest_IncludesGrant(t *testing.T) {
 	db := newTestDB(t)
 	svc := NewAccessRequestService(db)
@@ -86,6 +91,15 @@ func TestAccessRequestService_GetRequest_IncludesGrant(t *testing.T) {
 	created, err := svc.CreateRequest(ctx, validInput())
 	if err != nil {
 		t.Fatalf("create: %v", err)
+	}
+	// Bypass the FSM for test setup — provisioning_service.go is
+	// the production path that writes both the state and the grant
+	// transactionally; tests that exercise the read API only need
+	// the post-conditions, not the workflow.
+	if err := db.Model(&models.AccessRequest{}).
+		Where("id = ?", created.ID).
+		Update("state", models.RequestStateProvisioned).Error; err != nil {
+		t.Fatalf("force state to provisioned: %v", err)
 	}
 
 	requestID := created.ID
@@ -116,6 +130,52 @@ func TestAccessRequestService_GetRequest_IncludesGrant(t *testing.T) {
 	}
 	if got.Grant.ID != seedGrant.ID {
 		t.Fatalf("Grant.ID = %q; want %q", got.Grant.ID, seedGrant.ID)
+	}
+}
+
+// TestAccessRequestService_GetRequest_SkipsGrantLookupForNonProvisioned
+// pins the optimisation that GetRequest does NOT issue a grant SELECT
+// when the request never reached a state that could have written one.
+// This is the common path for pending / denied / cancelled requests
+// on the Admin UI triage page — the wasted indexed SELECT used to add
+// a round-trip per render. The assertion uses a stale grant row that
+// SHOULD NOT surface in the detail because the request is still in
+// RequestStateRequested.
+func TestAccessRequestService_GetRequest_SkipsGrantLookupForNonProvisioned(t *testing.T) {
+	db := newTestDB(t)
+	svc := NewAccessRequestService(db)
+	ctx := context.Background()
+
+	created, err := svc.CreateRequest(ctx, validInput())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	requestID := created.ID
+	expiresAt := time.Now().Add(7 * 24 * time.Hour).UTC()
+	stale := &models.AccessGrant{
+		ID:                 "01H00000000000000GRANTSTAL",
+		RequestID:          &requestID,
+		WorkspaceID:        created.WorkspaceID,
+		UserID:             created.TargetUserID,
+		ConnectorID:        created.ConnectorID,
+		ResourceExternalID: created.ResourceExternalID,
+		Role:               created.Role,
+		GrantedAt:          time.Now().UTC(),
+		ExpiresAt:          &expiresAt,
+		CreatedAt:          time.Now().UTC(),
+		UpdatedAt:          time.Now().UTC(),
+	}
+	if err := db.Create(stale).Error; err != nil {
+		t.Fatalf("seed stale grant: %v", err)
+	}
+
+	got, err := svc.GetRequest(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Grant != nil {
+		t.Fatalf("Grant = %+v; want nil because request is still in RequestStateRequested", got.Grant)
 	}
 }
 

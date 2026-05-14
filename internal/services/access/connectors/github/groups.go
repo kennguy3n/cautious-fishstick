@@ -116,12 +116,17 @@ func (c *GitHubAccessConnector) SyncGroupMembers(
 		return err
 	}
 
-	slug, err := c.resolveTeamSlug(ctx, secrets, cfg.Organization, groupExternalID)
-	if err != nil {
-		return err
-	}
 	nextURL := checkpoint
 	if nextURL == "" {
+		// Slug resolution is only needed when constructing the first
+		// page URL. Resuming via checkpoint already carries the slug
+		// in the URL, so skipping the lookup here avoids a wasted
+		// HTTP call (and avoids failing the entire resume if the
+		// team has since been renamed or deleted).
+		slug, err := c.resolveTeamSlug(ctx, secrets, cfg.Organization, groupExternalID)
+		if err != nil {
+			return err
+		}
 		nextURL = fmt.Sprintf("%s/orgs/%s/teams/%s/members?per_page=100",
 			c.baseURL(), url.PathEscape(cfg.Organization), url.PathEscape(slug))
 	}

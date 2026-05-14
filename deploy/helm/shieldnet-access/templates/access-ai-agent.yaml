@@ -97,7 +97,10 @@ spec:
               protocol: TCP
           env:
             - name: ACCESS_AI_AGENT_LISTEN_ADDR
-              value: "0.0.0.0:8090"
+              valueFrom:
+                configMapKeyRef:
+                  name: access-ai-agent-config
+                  key: listen-addr
             - name: ACCESS_AI_AGENT_API_KEY
               valueFrom:
                 secretKeyRef:

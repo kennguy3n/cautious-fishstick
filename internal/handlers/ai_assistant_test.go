@@ -42,13 +42,13 @@ func TestAIHandler_Assistant_RoutesToRiskAssessmentSkill(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s; want 200", w.Code, w.Body.String())
 	}
-	if stub.skill != "risk_assessment" {
-		t.Fatalf("invoked skill = %q; want risk_assessment", stub.skill)
+	if stub.skill != "access_risk_assessment" {
+		t.Fatalf("invoked skill = %q; want access_risk_assessment", stub.skill)
 	}
 	var got assistantResponse
 	decodeJSON(t, w, &got)
-	if got.Intent != "risk_assessment" || got.Skill != "risk_assessment" {
-		t.Fatalf("intent/skill = (%q, %q); want both risk_assessment", got.Intent, got.Skill)
+	if got.Intent != "access_risk_assessment" || got.Skill != "access_risk_assessment" {
+		t.Fatalf("intent/skill = (%q, %q); want both access_risk_assessment", got.Intent, got.Skill)
 	}
 	if got.Result == nil || got.Result.RiskScore != "high" {
 		t.Fatalf("result = %+v; want RiskScore=high", got.Result)
@@ -80,8 +80,8 @@ func TestAIHandler_Assistant_RoutesToConnectorSetupSkill(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s; want 200", w.Code, w.Body.String())
 	}
-	if stub.skill != "connector_setup" {
-		t.Fatalf("invoked skill = %q; want connector_setup", stub.skill)
+	if stub.skill != "connector_setup_assistant" {
+		t.Fatalf("invoked skill = %q; want connector_setup_assistant", stub.skill)
 	}
 }
 
@@ -118,6 +118,53 @@ func TestAIHandler_Assistant_SkillOverrideBypassesClassifier(t *testing.T) {
 	decodeJSON(t, w, &got)
 	if got.Intent != "override" {
 		t.Fatalf("intent = %q; want override", got.Intent)
+	}
+}
+
+// TestAIHandler_Assistant_RoutesPunctuatedConnectQueryToConnectorSetup
+// pins the classifyIntent fix for the trailing-punctuation edge case
+// — "how do I connect?" used to fall through to policy_recommendation
+// because the "connect " keyword guard required a trailing space.
+func TestAIHandler_Assistant_RoutesPunctuatedConnectQueryToConnectorSetup(t *testing.T) {
+	for _, q := range []string{
+		"how do I connect?",
+		"how do I connect!",
+		"connect.",
+		"how do I CONNECT?", // also exercises lower-casing
+	} {
+		t.Run(q, func(t *testing.T) {
+			stub := &stubAIInvoker{resp: &aiclient.SkillResponse{}}
+			r := Router(Dependencies{AIService: stub})
+			w := doJSON(t, r, http.MethodPost, "/access/assistant", map[string]interface{}{
+				"query": q,
+			})
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d body=%s; want 200", w.Code, w.Body.String())
+			}
+			if stub.skill != "connector_setup_assistant" {
+				t.Fatalf("invoked skill = %q; want connector_setup_assistant for %q", stub.skill, q)
+			}
+		})
+	}
+}
+
+// TestAIHandler_Assistant_UnknownSkillOverrideReturns400 pins the
+// skill allowlist guard: a typo in the override surfaces as a clear
+// validation error rather than getting forwarded to the agent and
+// returning an opaque 502.
+func TestAIHandler_Assistant_UnknownSkillOverrideReturns400(t *testing.T) {
+	stub := &stubAIInvoker{resp: &aiclient.SkillResponse{}}
+	r := Router(Dependencies{AIService: stub})
+
+	w := doJSON(t, r, http.MethodPost, "/access/assistant", map[string]interface{}{
+		"query": "anything",
+		"skill": "access_risk_assesment", // typo: missing the second 's'
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s; want 400 for unknown skill", w.Code, w.Body.String())
+	}
+	if stub.skill != "" {
+		t.Fatalf("invoker.skill = %q; want empty (handler must short-circuit before invoking)", stub.skill)
 	}
 }
 

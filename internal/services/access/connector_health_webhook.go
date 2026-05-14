@@ -174,6 +174,15 @@ func (d *ConnectorHealthWebhookDispatcher) EvaluateAndDispatch(
 			dispatched++
 		}
 	}
+	// Boundary note: this fires `credential_expired` when expiresAt <= now,
+	// while internal/services/notification/service.go fires the
+	// "rotating soon" branch when delta >= 0 (expiresAt >= now). At the
+	// exact nanosecond `expiresAt == now` both branches are technically
+	// reachable from different subsystems. This is intentional: the
+	// webhook is the operational alert path (better to over-notify),
+	// the notifier is the user-facing rotation reminder (better to give
+	// the operator one last "still time to rotate" nudge). Hitting the
+	// exact nanosecond boundary in practice is vanishingly unlikely.
 	if credentialExpiredTime != nil && !credentialExpiredTime.After(now) {
 		ev := base
 		ev.EventType = "credential_expired"

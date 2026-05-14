@@ -167,3 +167,65 @@ func TestMetricsMiddleware_UnmatchedRoute(t *testing.T) {
 		t.Fatalf("unmatched route should bucket under path=\"unmatched\":\n%s", out)
 	}
 }
+
+// TestMetricsMiddleware_SkipsSelfInstrumentation pins that the
+// middleware does not record requests to its own scrape endpoint
+// or the kube-probe endpoint. Without the skip, Prometheus' 15s
+// scrape cadence would dominate the http_requests_total counter
+// and drown out real traffic in the dashboard.
+func TestMetricsMiddleware_SkipsSelfInstrumentation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := NewMetricsRegistry()
+	engine := gin.New()
+	engine.Use(MetricsMiddleware(r))
+	engine.GET("/metrics", func(c *gin.Context) { c.String(200, "ok") })
+	engine.GET("/health", func(c *gin.Context) { c.String(200, "ok") })
+	engine.GET("/access/requests", func(c *gin.Context) { c.String(200, "ok") })
+
+	for _, p := range []string{"/metrics", "/health"} {
+		req := httptest.NewRequest(http.MethodGet, p, nil)
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+	}
+	out := r.Render()
+	if strings.Contains(out, `path="/metrics"`) {
+		t.Fatalf("expected /metrics to be skipped:\n%s", out)
+	}
+	if strings.Contains(out, `path="/health"`) {
+		t.Fatalf("expected /health to be skipped:\n%s", out)
+	}
+
+	// Real traffic still records normally.
+	req := httptest.NewRequest(http.MethodGet, "/access/requests", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	out = r.Render()
+	if !strings.Contains(out, `path="/access/requests"`) {
+		t.Fatalf("expected /access/requests to record:\n%s", out)
+	}
+}
+
+// TestMetricsRegistry_LabelKeyEscapesSeparators pins that label
+// values containing the encoding's separator characters (`|`, `=`,
+// `\`) do not corrupt the rendered Prometheus output. Before the
+// escape fix, provider="a|b" would silently truncate to provider="a"
+// because splitLabels split on every `|`.
+func TestMetricsRegistry_LabelKeyEscapesSeparators(t *testing.T) {
+	r := NewMetricsRegistry()
+	r.ObserveConnectorSync("a|b", "sync", "ok", 100*time.Millisecond)
+	r.ObserveConnectorSync("a", "sync", "ok", 100*time.Millisecond)
+
+	out := r.Render()
+	if !strings.Contains(out, `provider="a|b"`) {
+		t.Fatalf("provider=\"a|b\" missing from render; encoding lost the pipe:\n%s", out)
+	}
+	if !strings.Contains(out, `provider="a",kind="sync"`) {
+		t.Fatalf("provider=\"a\" missing from render after coexistence with a|b:\n%s", out)
+	}
+	// Each provider must have produced its own _count line. The
+	// pre-fix encoding would have collapsed both into one series
+	// keyed by `provider=a`, missing the second _count line entirely.
+	if strings.Count(out, "ztna_api_connector_sync_duration_seconds_count") != 2 {
+		t.Fatalf("expected two distinct _count series (one per provider); got:\n%s", out)
+	}
+}

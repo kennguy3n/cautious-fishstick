@@ -192,5 +192,27 @@ spec:
         target:
           type: Utilization
           averageUtilization: {{ .Values.ztnaApi.hpa.memoryUtilization }}
+  # Behavior block mirrors deploy/k8s/ztna-api/hpa.yaml so the two
+  # deploy paths produce the same scaling envelope: a 300s scale-down
+  # stabilization with a 50%/60s policy guards against capacity loss
+  # during traffic dips, while a 30s scale-up window keeps the API
+  # responsive when load returns.
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: {{ .Values.ztnaApi.hpa.scaleDown.stabilizationWindowSeconds }}
+      policies:
+        - type: Percent
+          value: {{ .Values.ztnaApi.hpa.scaleDown.percentValue }}
+          periodSeconds: {{ .Values.ztnaApi.hpa.scaleDown.periodSeconds }}
+    scaleUp:
+      stabilizationWindowSeconds: {{ .Values.ztnaApi.hpa.scaleUp.stabilizationWindowSeconds }}
+      policies:
+        - type: Percent
+          value: {{ .Values.ztnaApi.hpa.scaleUp.percentValue }}
+          periodSeconds: {{ .Values.ztnaApi.hpa.scaleUp.periodSeconds }}
+        - type: Pods
+          value: {{ .Values.ztnaApi.hpa.scaleUp.podsValue }}
+          periodSeconds: {{ .Values.ztnaApi.hpa.scaleUp.periodSeconds }}
+      selectPolicy: Max
 {{- end }}
 {{- end }}

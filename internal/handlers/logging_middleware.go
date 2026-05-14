@@ -34,8 +34,13 @@ func init() {
 	}))
 }
 
-// Logger returns the current package logger. Returned pointer is safe
-// to retain — concurrent SetLogger swaps the underlying value.
+// Logger returns a snapshot of the current package logger. The
+// returned pointer is safe to use concurrently (slog.Logger itself
+// is safe for concurrent use), but it is a snapshot — a later call
+// to SetLogger will NOT update an already-returned pointer. Hot-path
+// code should call Logger() on every emit to pick up overrides;
+// long-lived callers that want to follow the current logger should
+// hold a reference to the function, not its return value.
 func Logger() *slog.Logger {
 	loggerMu.RLock()
 	defer loggerMu.RUnlock()
@@ -71,18 +76,35 @@ func JSONLoggerMiddleware() gin.HandlerFunc {
 		c.Next()
 		dur := time.Since(start)
 
+		// Use the matched-route template for log aggregation so
+		// scanner traffic hitting random URLs cannot blow up the
+		// `path` cardinality. The raw client-supplied URL is kept
+		// alongside as `raw_path` for forensic spelunking. This
+		// mirrors the metrics middleware's `"unmatched"` bucket so
+		// the two telemetry streams partition the same way.
 		path := c.FullPath()
+		rawPath := c.Request.URL.Path
 		if path == "" {
-			path = c.Request.URL.Path
+			path = "unmatched"
+		}
+
+		// c.Writer.Size() returns -1 (Gin's noWritten sentinel)
+		// when the handler wrote no body (e.g. 204 No Content).
+		// Clamp to 0 so downstream pipelines that sum byte counts
+		// don't subtract a phantom byte per bodiless response.
+		bytesWritten := c.Writer.Size()
+		if bytesWritten < 0 {
+			bytesWritten = 0
 		}
 
 		attrs := []any{
 			slog.String("method", c.Request.Method),
 			slog.String("path", path),
+			slog.String("raw_path", rawPath),
 			slog.Int("status", c.Writer.Status()),
 			slog.Duration("duration", dur),
 			slog.String("client_ip", c.ClientIP()),
-			slog.Int("bytes", c.Writer.Size()),
+			slog.Int("bytes", bytesWritten),
 		}
 
 		if len(c.Errors) > 0 {

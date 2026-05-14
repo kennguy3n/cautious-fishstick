@@ -770,7 +770,7 @@
     "/access/assistant": {
       "post": {
         "summary": "Natural-language assistant \u2014 classifies a free-text query and dispatches to the matching AI skill",
-        "description": "Routes a chat-style query to one of risk_assessment, access_anomaly_detection, connector_setup, or policy_recommendation (default). The request may supply an explicit 'skill' override to bypass classification. Returns the matched intent, the dispatched skill name, and the raw SkillResponse envelope.",
+        "description": "Routes a chat-style query to one of access_risk_assessment, access_anomaly_detection, connector_setup_assistant, or policy_recommendation (default). The request may supply an explicit 'skill' override to bypass classification. Returns the matched intent, the dispatched skill name, and the raw SkillResponse envelope. Skill names match the Python access-ai-agent registry exactly.",
         "tags": [
           "ai"
         ],

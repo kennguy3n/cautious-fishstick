@@ -44,10 +44,10 @@ type assistantResponse struct {
 // canonical AI skills documented in docs/PROPOSAL.md §11
 // ("Phase 4 AI agent skills"):
 //
-//   - risk_assessment           — "is this risky?"
+//   - access_risk_assessment    — "is this risky?"
 //   - policy_recommendation     — "explain / suggest a policy"
 //   - access_anomaly_detection  — "is this user behaving normally?"
-//   - connector_setup           — "how do I connect X?"
+//   - connector_setup_assistant — "how do I connect X?"
 //
 // The classifier is intentionally keyword-based, not
 // model-driven: this endpoint is a routing surface, not a fully
@@ -57,22 +57,72 @@ type assistantResponse struct {
 // query as part of its payload.
 //
 // Returned skill names match the strings the Python agent
-// registers (see internal/pkg/aiclient/client.go and the agent's
-// skill registry). Falling through with no match maps to
-// policy_recommendation because Phase 4 designates it as the
-// default "ask anything" skill.
+// registers (cmd/access-ai-agent/main.py → SKILL_REGISTRY).
+// Falling through with no match maps to policy_recommendation
+// because Phase 4 designates it as the default "ask anything"
+// skill.
 func classifyIntent(query string) string {
-	q := strings.ToLower(query)
+	q := normalizeIntentQuery(query)
 	switch {
 	case containsAny(q, "risk", "risky", "threat", "danger", "compromise"):
-		return "risk_assessment"
+		return "access_risk_assessment"
 	case containsAny(q, "anomaly", "anomalous", "unusual", "abnormal", "weird", "suspicious"):
 		return "access_anomaly_detection"
 	case containsAny(q, "connect ", "connector", "integrate", "integration", "set up", "setup", "configure"):
-		return "connector_setup"
+		return "connector_setup_assistant"
 	default:
 		return "policy_recommendation"
 	}
+}
+
+// normalizeIntentQuery lower-cases the query and replaces every
+// non-alphanumeric rune with a single space so the trailing-space
+// keyword guards ("connect ") match a query like "how do I connect?"
+// without also lighting up on "connected" or "connection". Multiple
+// whitespace runs collapse so "set up" still matches even when the
+// user types "set  up" or "set-up".
+func normalizeIntentQuery(query string) string {
+	lower := strings.ToLower(query)
+	var b strings.Builder
+	b.Grow(len(lower) + 2)
+	// Pad with leading/trailing spaces so the "connect " trailing-space
+	// guard hits the end of the string the same way it hits the middle.
+	b.WriteByte(' ')
+	lastSpace := true
+	for _, r := range lower {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastSpace = false
+			continue
+		}
+		if !lastSpace {
+			b.WriteByte(' ')
+			lastSpace = true
+		}
+	}
+	if !lastSpace {
+		b.WriteByte(' ')
+	}
+	return b.String()
+}
+
+// validSkillOverrides is the closed allowlist of skill names the
+// /access/assistant endpoint accepts as an explicit override. Keys
+// must match the Python access-ai-agent's skill registry
+// (cmd/access-ai-agent/main.py) exactly, otherwise the agent will
+// reject the request and the handler will surface an opaque 502.
+// Skills outside this set are rejected with 400 here rather than
+// forwarded.
+var validSkillOverrides = map[string]struct{}{
+	"access_risk_assessment":    {},
+	"access_anomaly_detection":  {},
+	"connector_setup_assistant": {},
+	"policy_recommendation":     {},
+}
+
+func isValidSkillOverride(skill string) bool {
+	_, ok := validSkillOverrides[skill]
+	return ok
 }
 
 // containsAny returns true if haystack contains any of the
@@ -128,6 +178,13 @@ func (h *AIHandler) Assistant(c *gin.Context) {
 	if skill == "" {
 		skill = classifyIntent(req.Query)
 		intent = skill
+	} else if !isValidSkillOverride(skill) {
+		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
+			Error:   "unknown_skill",
+			Code:    "validation_failed",
+			Message: "skill must be one of access_risk_assessment, access_anomaly_detection, connector_setup_assistant, policy_recommendation",
+		})
+		return
 	}
 
 	// Forward the full request (including the natural-language
