@@ -170,6 +170,87 @@ Beyond the minimum capabilities of Phase 7: real `ProvisionAccess` / `RevokeAcce
 
 ---
 
+## Phase 11 — Hybrid Access & Offboarding Safety Net  🟢
+
+Phase 11 introduces an access-mode classification per connector, an
+"unused app account" reconciler, SSO-only enforcement verification,
+session revocation, a five-layer leaver kill switch, and automatic
+grant-expiry enforcement (docs/PROPOSAL.md §13).
+
+### WS1 — Per-connector access mode
+
+- [x] `access_connectors.access_mode` column (values: `tunnel`,
+  `sso_only`, `api_only`), default `api_only`.
+- [x] Migration 014 / model index updated; no FOREIGN KEY constraints.
+- [x] Auto-classification at Connect time (SSO metadata + Keycloak
+  federation → `sso_only`; private connector_type → `tunnel`).
+- [x] `PATCH /access/connectors/:id` accepts `access_mode` with enum
+  validation.
+- [x] `PolicyService.Promote` surfaces `access_mode` so downstream
+  ztna-business-layer can skip the OpenZiti ServicePolicy write.
+
+### WS2 — Orphan account reconciler
+
+- [x] `access_orphan_accounts` table + model + migration.
+- [x] `OrphanReconciler.ReconcileWorkspace` cross-references upstream
+  `SyncIdentities` against `team_members.external_id`.
+- [x] `RevokeOrphan` / `DismissOrphan` / `AcknowledgeOrphan` /
+  `ListOrphans` service methods.
+- [x] `OrphanReconcilerScheduler` cron wired into
+  `access-connector-worker` with `ACCESS_ORPHAN_RECONCILE_INTERVAL`
+  (default 24h).
+- [x] `GET /access/orphans`, `POST /access/orphans/:id/revoke`,
+  `POST /access/orphans/:id/dismiss`, `POST /access/orphans/reconcile`
+  handlers using the SN360 "unused app accounts" envelope.
+- [x] httptest-driven unit tests for reconciler, handler, scheduler.
+
+### WS3 — SSO-only enforcement verification
+
+- [x] `SSOEnforcementChecker` optional capability interface.
+- [x] Top-6 implementations (Salesforce, Google Workspace, Okta,
+  Slack, GitHub, Microsoft) with happy + failure tests.
+- [x] Health endpoint surfaces `sso_enforcement_status`.
+- [x] Orphan reconciler re-checks SSO enforcement on `sso_only`
+  connectors daily.
+
+### WS4 — Session revocation
+
+- [x] `SessionRevoker` optional capability interface.
+- [x] Top-7 implementations (Okta, Google Workspace, Microsoft,
+  Salesforce, Slack, Auth0, GitHub) with happy + failure tests.
+- [x] `SSOFederationService.DisableKeycloakUser` +
+  `KeycloakClient.UpdateUser` added with tests.
+
+### WS5 — Enhanced leaver flow (five-layer kill switch)
+
+- [x] `JMLService.HandleLeaver` extended to call, in order: revoke
+  grants → remove memberships → disable Keycloak user → revoke
+  sessions across connectors → SCIM-deprovision across connectors →
+  disable OpenZiti identity.
+- [x] Pre-deletion snapshot of connector → external-id pivot so the
+  later kill-switch layers retain the IDs they need after team
+  memberships are removed.
+- [x] All layers are best-effort; failures in one do not block the
+  next. Idempotent on re-run.
+
+### WS6 — Grant expiry enforcer
+
+- [x] `GrantExpiryEnforcer` cron job (Phase 11 automation) added.
+- [x] `ACCESS_GRANT_EXPIRY_CHECK_INTERVAL` configuration knob (default
+  1h) and `access-connector-worker` wiring.
+- [x] httptest-driven tests verifying expired grants get revoked and
+  non-expired grants do not.
+
+### WS7 — Documentation
+
+- [x] PROPOSAL §13 (Hybrid Access Model).
+- [x] PHASES.md Phase 11 section (this section).
+- [x] ARCHITECTURE.md §12 (Hybrid Access Model & kill switch flow).
+- [x] PROGRESS.md Phase 11 rows + changelog.
+- [x] README.md feature list updated.
+
+---
+
 ## Cross-cutting exit criteria for *every* phase
 
 Independent of which phase a PR contributes to, the following must hold before merge:

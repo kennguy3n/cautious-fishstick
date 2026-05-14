@@ -42,9 +42,20 @@ type ConnectorHealth struct {
 	Provider              string               `json:"provider"`
 	ConnectorType         string               `json:"connector_type"`
 	Status                string               `json:"status"`
+	AccessMode            string               `json:"access_mode"`
 	CredentialExpiredTime *time.Time           `json:"credential_expired_time,omitempty"`
 	LastSyncTimes         map[string]time.Time `json:"last_sync_times"`
 	StaleAudit            bool                 `json:"stale_audit"`
+	// SSOEnforcementStatus reports whether the SaaS app behind
+	// this connector enforces SSO-only sign-in. Values:
+	//   - "enforced"      : password sign-in is disabled upstream.
+	//   - "not_enforced"  : password sign-in is still allowed.
+	//   - "unknown"       : the probe failed (auth, transport, etc.).
+	//   - "not_applicable": the connector does not implement
+	//                       SSOEnforcementChecker (e.g. tunnel-mode
+	//                       private resource, generic API connector).
+	SSOEnforcementStatus  string `json:"sso_enforcement_status,omitempty"`
+	SSOEnforcementDetails string `json:"sso_enforcement_details,omitempty"`
 }
 
 // ConnectorHealthService is the production-backed implementation of
@@ -54,6 +65,12 @@ type ConnectorHealth struct {
 // by the supplied context.
 type ConnectorHealthService struct {
 	DB *gorm.DB
+	// SSOEnforcement is the optional probe used to populate
+	// ConnectorHealth.SSOEnforcementStatus. Production wires it to
+	// a probe that loads credentials and calls SSOEnforcementChecker
+	// on the connector; tests can leave it nil and the response
+	// reports "not_applicable".
+	SSOEnforcement SSOEnforcementProbe
 }
 
 // NewConnectorHealthService returns a service bound to db. db may
@@ -108,10 +125,31 @@ func (s *ConnectorHealthService) GetConnectorHealth(ctx context.Context, connect
 		Provider:              connector.Provider,
 		ConnectorType:         connector.ConnectorType,
 		Status:                connector.Status,
+		AccessMode:            connector.AccessMode,
 		CredentialExpiredTime: connector.CredentialExpiredTime,
 		LastSyncTimes:         lastSync,
 		StaleAudit:            stale,
+		SSOEnforcementStatus:  ssoEnforcementStatusFor(ctx, s.SSOEnforcement, &connector),
 	}, nil
+}
+
+// SSOEnforcementProbe is the optional dependency that resolves the
+// upstream SSO-enforcement status for a connector. ConnectorHealthService
+// calls it when wired; a nil probe yields "not_applicable".
+type SSOEnforcementProbe func(ctx context.Context, conn *models.AccessConnector) (status, details string)
+
+// ssoEnforcementStatusFor dispatches to the supplied probe, mapping
+// a nil probe to "not_applicable" so the JSON payload always has a
+// concrete enum value rather than an empty string.
+func ssoEnforcementStatusFor(ctx context.Context, probe SSOEnforcementProbe, conn *models.AccessConnector) string {
+	if probe == nil {
+		return "not_applicable"
+	}
+	status, _ := probe(ctx, conn)
+	if status == "" {
+		return "not_applicable"
+	}
+	return status
 }
 
 // ConnectorHealthHandler exposes GET /access/connectors/:id/health,

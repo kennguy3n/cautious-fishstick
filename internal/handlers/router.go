@@ -97,6 +97,10 @@ type Dependencies struct {
 	// RateLimiter is nil. Set this in tests that need an unthrottled
 	// router but don't want to manage a *RateLimiter instance.
 	DisableRateLimiter bool
+
+	// OrphanReconciler backs the Phase 11 /access/orphans surface.
+	// May be nil; the routes are only registered when wired.
+	OrphanReconciler OrphanReconcilerReader
 }
 
 // Router builds the *gin.Engine that serves the access platform's
@@ -181,6 +185,11 @@ func Router(deps Dependencies) *gin.Engine {
 	if deps.ConnectorManagementService != nil {
 		cmh := NewConnectorManagementHandler(deps.ConnectorManagementService)
 		cmh.Register(r)
+	}
+
+	if deps.OrphanReconciler != nil {
+		oh := NewOrphanHandler(deps.OrphanReconciler)
+		oh.Register(r)
 	}
 
 	return r

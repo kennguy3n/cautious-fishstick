@@ -38,7 +38,7 @@ func openTestDB(t *testing.T) *gorm.DB {
 // catches "added the file but forgot to wire it into All()" wiring bugs.
 func TestAll_ReturnsAllMigrations(t *testing.T) {
 	got := All()
-	want := []string{"001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012"}
+	want := []string{"001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012", "013", "014"}
 	if len(got) != len(want) {
 		t.Fatalf("All() returned %d migrations; want %d", len(got), len(want))
 	}
@@ -83,6 +83,7 @@ func TestRunAll_AutoMigratesEveryTable(t *testing.T) {
 		"access_jobs",
 		"access_workflow_step_history",
 		"push_subscriptions",
+		"access_orphan_accounts",
 	}
 	mig := db.Migrator()
 	for _, table := range wantTables {

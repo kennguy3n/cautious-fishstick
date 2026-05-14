@@ -280,6 +280,12 @@ Path is the target directory under `internal/services/access/connectors/` once t
 | Connector health endpoint | ✅ | Phase 7. `GET /access/connectors/:id/health` returns per-kind last-sync timestamps, credential expiry, and a `stale_audit` flag. Admin UI dashboard consumes this endpoint from `ztna-frontend`. |
 | API hardening | ✅ | Per-workspace token-bucket rate limiting (`ZTNA_API_RATE_LIMIT_RPS`), JSON request validation middleware, credential-rotation alerts, batch connector status endpoint, and an audited OpenAPI 3.0 spec. |
 | Admin UI surfaces | ⏳ | Phases 1–5 admin surfaces (Connector Marketplace, Access Requests, Policy Simulator, AI Assistant chat, Access Reviews dashboard) live in [`ztna-frontend`](https://github.com/uneycom/ztna-frontend). Backend REST API is final. |
+| Hybrid access model (Phase 11) | ✅ | Per-connector `access_mode` (`tunnel` / `sso_only` / `api_only`) with auto-classification at Connect time and `PATCH` override. `PolicyService.Promote` propagates the mode so the ZTNA business layer can skip OpenZiti writes for SaaS-only rows. |
+| Unused-app-account reconciler (Phase 11) | ✅ | `OrphanReconciler` cross-references upstream `SyncIdentities` against the IdP pivot, persists rows to `access_orphan_accounts`, and exposes `GET /access/orphans` + revoke / dismiss / acknowledge / reconcile endpoints. Cron runs daily inside `access-connector-worker`. |
+| SSO-only enforcement verification (Phase 11) | 🟡 | `SSOEnforcementChecker` capability + top-6 implementations (Salesforce, Google Workspace, Okta, Slack, GitHub, Microsoft). Surfaced through the connector health endpoint. |
+| Session revocation (Phase 11) | 🟡 | `SessionRevoker` capability + top-7 implementations (Okta, Google Workspace, Microsoft, Salesforce, Slack, Auth0, GitHub). Invoked from the enhanced leaver flow. |
+| Five-layer leaver kill switch (Phase 11) | ✅ | `JMLService.HandleLeaver` now revokes grants → removes memberships → disables Keycloak user → revokes upstream sessions → SCIM-deprovisions → disables OpenZiti identity. All steps best-effort and idempotent. |
+| Automatic grant expiry enforcement (Phase 11) | ✅ | `GrantExpiryEnforcer` cron ticks every `ACCESS_GRANT_EXPIRY_CHECK_INTERVAL` (default 1h) and replays the Phase 5 revoke path for every expired grant. |
 
 ---
 
@@ -311,6 +317,7 @@ Newest first. Each entry is a 1–2 sentence summary; PR links carry the detail.
 
 | Date | What | PR |
 |------|------|----|
+| 2026-05-14 | Phase 11 — Hybrid Access Model: per-connector access_mode classification, unused-app-account reconciler, SSO-only enforcement verification, session revocation across top-7 connectors, five-layer leaver kill switch, automatic grant-expiry enforcement, plus full docs sync. | this PR |
 | 2026-05-14 | API hardening + connector enhancements: rate limiting, request validation, credential rotation alerts, `GroupSyncer` for top-5 connectors, delta-sync hardening, health webhooks, batch status endpoint, OpenAPI audit. | this PR |
 | 2026-05-14 | SDK publishing manifests + per-platform integration guides; Phase 9 closes at ✅ shipped. | this PR |
 | 2026-05-14 | Post-PR-#67 documentation audit — promote audit-only Tier-5 connectors to ✅ and update overall progress. | this PR |

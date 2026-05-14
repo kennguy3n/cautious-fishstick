@@ -52,8 +52,24 @@ type JMLService struct {
 	// integration in this repo — the ZTNA business layer is
 	// responsible for reconciling the identity state.
 	zitiClient OpenZitiClient
-	now        func() time.Time
-	newID      func() string
+	// ssoFedSvc is the optional Phase 11 hook into the Keycloak
+	// federation surface. When set, the leaver flow flips the
+	// Keycloak user to enabled=false and revokes every active SSO
+	// session as the first kill-switch layer.
+	ssoFedSvc *SSOFederationService
+	// credLoader is the optional Phase 11 hook used to load the
+	// (config, secrets) pair for each connector the user had
+	// grants on. The leaver flow needs real credentials to call
+	// SessionRevoker / SCIMProvisioner on the connector.
+	credLoader *ConnectorCredentialsLoader
+	// getConnectorFn lets tests inject a fake registry. Defaults
+	// to access.GetAccessConnector.
+	getConnectorFn func(provider string) (AccessConnector, error)
+	// realmFor maps a workspace ID to its Keycloak realm. Defaults
+	// to identity (the workspace ID is the realm name).
+	realmFor func(workspaceID string) string
+	now      func() time.Time
+	newID    func() string
 }
 
 // NewJMLService returns a new service backed by db. db must not be
@@ -74,6 +90,8 @@ func NewJMLService(db *gorm.DB, provisioningSvc *AccessProvisioningService) *JML
 		db:              db,
 		requestSvc:      provisioningSvc.requestSvc,
 		provisioningSvc: provisioningSvc,
+		getConnectorFn:  GetAccessConnector,
+		realmFor:        func(workspaceID string) string { return workspaceID },
 		now:             provisioningSvc.now,
 		newID:           provisioningSvc.newID,
 	}
@@ -87,6 +105,36 @@ func NewJMLService(db *gorm.DB, provisioningSvc *AccessProvisioningService) *JML
 // with HandleLeaver.
 func (s *JMLService) SetOpenZitiClient(c OpenZitiClient) {
 	s.zitiClient = c
+}
+
+// SetSSOFederationService wires the Phase 11 Keycloak federation
+// hook. When set, HandleLeaver disables the Keycloak user and
+// invalidates every active SSO session as the first kill-switch
+// layer. Passing nil restores the default "no Keycloak
+// integration" behaviour. Call this once at boot from cmd/ztna-api;
+// it is NOT safe to call concurrently with HandleLeaver.
+func (s *JMLService) SetSSOFederationService(svc *SSOFederationService) {
+	s.ssoFedSvc = svc
+}
+
+// SetConnectorCredentialsLoader wires the Phase 11 credentials
+// loader. The leaver flow needs decoded (config, secrets) pairs to
+// call SessionRevoker / SCIMProvisioner on each connector the
+// user had grants on. Without a loader the per-connector session
+// revoke / SCIM deprovision layers are skipped with a log line.
+func (s *JMLService) SetConnectorCredentialsLoader(l *ConnectorCredentialsLoader) {
+	s.credLoader = l
+}
+
+// SetKeycloakRealmResolver overrides the default workspace-id-is-
+// realm-name mapping. Used by deployments where the Keycloak realm
+// name diverges from the workspace ULID (e.g. a slug column).
+func (s *JMLService) SetKeycloakRealmResolver(fn func(workspaceID string) string) {
+	if fn == nil {
+		s.realmFor = func(workspaceID string) string { return workspaceID }
+		return
+	}
+	s.realmFor = fn
 }
 
 // JMLEventKind classifies a SCIM event into the JML lane the service
@@ -390,6 +438,17 @@ func (s *JMLService) HandleLeaver(ctx context.Context, workspaceID, userID strin
 		return nil, fmt.Errorf("access: list leaver active grants: %w", err)
 	}
 
+	// Snapshot the (connector_id → user_external_id) pivot BEFORE we
+	// soft-delete team_members in removeUserFromAllTeams. The Phase
+	// 11 kill switch needs these IDs to call SessionRevoker and
+	// SCIMProvisioner on each connector the user existed on; once
+	// the team_members rows are gone the pivot is lost.
+	connectorExternalIDs, cerr := s.collectConnectorExternalIDs(ctx, workspaceID, userID)
+	if cerr != nil {
+		log.Printf("access: leaver %s: collect connector external ids: %v", userID, cerr)
+		connectorExternalIDs = map[string]string{}
+	}
+
 	out := &JMLResult{}
 	for i := range grants {
 		g := &grants[i]
@@ -420,7 +479,136 @@ func (s *JMLService) HandleLeaver(ctx context.Context, workspaceID, userID strin
 		out.Failed = append(out.Failed, JMLGrantResult{Err: err})
 	}
 
+	// Phase 11 five-layer leaver kill switch — every step is
+	// best-effort; a failure logs but does not block the next
+	// layer. The order is intentional:
+	//   1. grant revoke (above)            — pull upstream API access
+	//   2. team membership removal (above) — drop ImpactResolver matches
+	//   3. Keycloak user disable           — block new SSO sign-ins
+	//   4. per-connector session revoke    — kill live SaaS sessions
+	//   5. SCIM deprovision                — push terminal state to SaaS
+	//   6. OpenZiti identity disable       — kill the dataplane tunnel
+	s.disableKeycloakUser(ctx, workspaceID, userID)
+	s.revokeSessionsAcrossConnectors(ctx, workspaceID, userID, connectorExternalIDs)
+	s.scimDeprovisionAcrossConnectors(ctx, workspaceID, userID, connectorExternalIDs)
 	s.disableOpenZitiIdentity(ctx, workspaceID, userID)
+	return out, nil
+}
+
+// disableKeycloakUser flips the user to enabled=false in Keycloak
+// and revokes every active refresh token. Best-effort: a Keycloak
+// outage logs but does not block the rest of the kill switch.
+func (s *JMLService) disableKeycloakUser(ctx context.Context, workspaceID, userID string) {
+	if s.ssoFedSvc == nil {
+		log.Printf("access: leaver %s in workspace %s: keycloak disable is stubbed (no sso federation service wired)", userID, workspaceID)
+		return
+	}
+	realm := workspaceID
+	if s.realmFor != nil {
+		realm = s.realmFor(workspaceID)
+	}
+	if err := s.ssoFedSvc.DisableKeycloakUser(ctx, realm, userID); err != nil {
+		if errors.Is(err, ErrSSOFederationDisabled) || errors.Is(err, ErrSSOFederationUnsupported) {
+			log.Printf("access: leaver %s in workspace %s: keycloak disable skipped: %v", userID, workspaceID, err)
+			return
+		}
+		log.Printf("access: leaver %s in workspace %s: keycloak DisableKeycloakUser failed: %v", userID, workspaceID, err)
+	}
+}
+
+// revokeSessionsAcrossConnectors loads every connector the user
+// has a team_members row on, and calls SessionRevoker on the
+// connector when implemented. Best-effort: per-connector errors
+// log but do not block the next connector or the next layer.
+func (s *JMLService) revokeSessionsAcrossConnectors(ctx context.Context, workspaceID, userID string, members map[string]string) {
+	if s.credLoader == nil || s.getConnectorFn == nil {
+		log.Printf("access: leaver %s in workspace %s: session revoke skipped (no credentials loader wired)", userID, workspaceID)
+		return
+	}
+	for connectorID, externalID := range members {
+		cfg, secrets, lerr := s.credLoader.LoadConnectorCredentials(ctx, connectorID)
+		if lerr != nil {
+			log.Printf("access: leaver %s connector %s: load credentials: %v", userID, connectorID, lerr)
+			continue
+		}
+		provider, perr := s.provisioningSvc.lookupProvider(ctx, connectorID)
+		if perr != nil {
+			log.Printf("access: leaver %s connector %s: lookup provider: %v", userID, connectorID, perr)
+			continue
+		}
+		connector, cerr := s.getConnectorFn(provider)
+		if cerr != nil {
+			log.Printf("access: leaver %s connector %s: get connector %s: %v", userID, connectorID, provider, cerr)
+			continue
+		}
+		revoker, ok := connector.(SessionRevoker)
+		if !ok {
+			continue
+		}
+		if rerr := revoker.RevokeUserSessions(ctx, cfg, secrets, externalID); rerr != nil {
+			log.Printf("access: leaver %s connector %s: RevokeUserSessions: %v", userID, connectorID, rerr)
+		}
+	}
+}
+
+// scimDeprovisionAcrossConnectors loads every connector the user
+// has a team_members row on, and calls SCIMProvisioner.DeleteSCIMResource
+// when implemented. Best-effort: per-connector errors log but do not
+// block the next connector or the next layer.
+func (s *JMLService) scimDeprovisionAcrossConnectors(ctx context.Context, workspaceID, userID string, members map[string]string) {
+	if s.credLoader == nil || s.getConnectorFn == nil {
+		log.Printf("access: leaver %s in workspace %s: scim deprovision skipped (no credentials loader wired)", userID, workspaceID)
+		return
+	}
+	for connectorID, externalID := range members {
+		cfg, secrets, lerr := s.credLoader.LoadConnectorCredentials(ctx, connectorID)
+		if lerr != nil {
+			log.Printf("access: leaver %s connector %s: load credentials: %v", userID, connectorID, lerr)
+			continue
+		}
+		provider, perr := s.provisioningSvc.lookupProvider(ctx, connectorID)
+		if perr != nil {
+			log.Printf("access: leaver %s connector %s: lookup provider: %v", userID, connectorID, perr)
+			continue
+		}
+		connector, cerr := s.getConnectorFn(provider)
+		if cerr != nil {
+			log.Printf("access: leaver %s connector %s: get connector %s: %v", userID, connectorID, provider, cerr)
+			continue
+		}
+		scim, ok := connector.(SCIMProvisioner)
+		if !ok {
+			continue
+		}
+		if derr := scim.DeleteSCIMResource(ctx, cfg, secrets, "User", externalID); derr != nil {
+			log.Printf("access: leaver %s connector %s: DeleteSCIMResource: %v", userID, connectorID, derr)
+		}
+	}
+}
+
+// collectConnectorExternalIDs walks team_members for the supplied
+// userID and returns a (connector_id → external_id) map. Rows with
+// empty ConnectorID or ExternalID are skipped — the connector flow
+// can't act on them. Soft-deleted rows are excluded by GORM's
+// default scope.
+func (s *JMLService) collectConnectorExternalIDs(ctx context.Context, workspaceID, userID string) (map[string]string, error) {
+	_ = workspaceID // reserved for future workspace-scoped filtering
+	var rows []models.TeamMember
+	if err := s.db.WithContext(ctx).
+		Where("user_id = ?", userID).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(rows))
+	for _, r := range rows {
+		if r.ConnectorID == "" || r.ExternalID == "" {
+			continue
+		}
+		if _, ok := out[r.ConnectorID]; ok {
+			continue // first writer wins; multiple team rows per (user, connector) collapse to one
+		}
+		out[r.ConnectorID] = r.ExternalID
+	}
 	return out, nil
 }
 

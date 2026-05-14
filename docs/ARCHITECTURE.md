@@ -572,3 +572,93 @@ Per-runtime profile (SN360 standard): API services target `cpu=200m mem=1Gi` wit
 **Local dev.** The same six processes can be brought up locally via `docker compose up --build --wait` against the repo-root `docker-compose.yml`. Each Go service builds from `docker/Dockerfile.*` (multi-stage `golang:1.25-alpine` → `gcr.io/distroless/static-debian12:nonroot`); the Python `access-ai-agent` builds from `cmd/access-ai-agent/Dockerfile`. Healthchecks wire `pg_isready` / `redis-cli ping` / the in-binary `/health` (Go) / `/healthz` (Python), so `--wait` blocks until the stack is responsive. The dev stack is not a substitute for the per-runtime resource profile — it exists so contributors can exercise the full request flow end-to-end without a Kubernetes cluster.
 
 **Kubernetes deployment.** The four runtime services are packaged under `deploy/k8s/` (raw manifests + Kustomize) and `deploy/helm/shieldnet-access/` (Helm chart). Both render the same 21-resource bundle: a `shieldnet-access` namespace, four Deployments, four ConfigMaps + Secrets, four ServiceAccounts, three Services (`ztna-api`, `access-workflow`, `access-ai-agent` — the worker is a headless queue consumer), and an HPA for `ztna-api` (2–10 replicas, 70 % CPU target). Per [`PROPOSAL.md`](PROPOSAL.md) §10.3, only `ztna-api` is exposed publicly; the workflow engine and AI agent stay cluster-internal and authenticate via a shared `X-API-Key` header.
+
+---
+
+## 12. Hybrid Access Model (Phase 11)
+
+Phase 11 adds three runtime concepts to the architecture: an
+access-mode classifier, an unused-app-account reconciler, and a
+five-layer leaver kill switch. Together they let SN360 run a hybrid
+on-prem + SaaS estate without paying OpenZiti tunnel overhead on every
+SaaS app and without leaving stale upstream sessions behind when
+someone leaves the org.
+
+### 12.1 Access mode classification
+
+Every `access_connectors` row carries an `access_mode` column with one
+of three values:
+
+```
+                    +---------------------------+
+GetSSOMetadata --->| ssoMetadata != nil &&     |---> sso_only
+                    |  Keycloak federation OK   |
+                    +---------------------------+
+                                 |
+                                 v
+                    +---------------------------+
+connector_type ---->| is_private == true        |---> tunnel
+                    +---------------------------+
+                                 |
+                                 v
+                    +---------------------------+
+                    |  default                  |---> api_only
+                    +---------------------------+
+```
+
+`PolicyService.Promote` ships the mode in its event payload so the
+`ztna-business-layer` can skip the OpenZiti `ServicePolicy` write for
+`sso_only` / `api_only` connectors.
+
+### 12.2 Unused-app-account reconciliation
+
+`OrphanReconciler` runs daily via `OrphanReconcilerScheduler` inside
+`access-connector-worker`. For each connector in each workspace it:
+
+1. Calls `connector.SyncIdentities` for the current upstream user set.
+2. Cross-references the result against `team_members.external_id`.
+3. Persists every upstream user with no IdP pivot to
+   `access_orphan_accounts` (status `detected`).
+4. Notifies operators through `NotificationService`.
+
+Operators dispose of each row via the
+`/access/orphans/:id/{revoke,dismiss,acknowledge}` endpoints. New
+schema:
+
+| Table | New | Columns |
+|-------|-----|---------|
+| `access_orphan_accounts` | yes | `id`, `workspace_id`, `connector_id`, `user_external_id`, `email`, `display_name`, `status`, `detected_at`, `resolved_at`, `created_at`, `updated_at`, `deleted_at` |
+
+Indexes: `(workspace_id, status)` and `(connector_id, user_external_id)`.
+
+### 12.3 Five-layer leaver kill switch
+
+The Phase 4 leaver flow used to do two things. Phase 11 extends it to
+six (the kill switch counts the existing two plus the four new
+layers):
+
+```
+HandleLeaver(userID)
+    |
+    v
+1. snapshot connector_id -> external_id pivot (BEFORE step 2)
+2. revoke all active access_grants                    (existing)
+3. remove team memberships                            (existing)
+4. SSOFederationService.DisableKeycloakUser           (NEW)
+5. for each connector: SessionRevoker.RevokeUserSessions (NEW)
+6. for each connector: SCIMProvisioner.DeleteSCIMResource (NEW)
+7. OpenZitiClient.DisableIdentity                     (existing)
+```
+
+Every step is best-effort: a failure in step N does NOT prevent steps
+N+1..7 from running. The flow is idempotent — replaying it on a half-
+applied leaver is safe.
+
+### 12.4 Automatic grant expiry
+
+`GrantExpiryEnforcer` ticks every `ACCESS_GRANT_EXPIRY_CHECK_INTERVAL`
+(default 1h) inside `access-connector-worker`. It selects
+`access_grants` rows with `expires_at < now AND revoked_at IS NULL`
+and replays the same `AccessProvisioningService.Revoke` path the Phase
+5 reviewer flow uses, so the upstream side-effects and audit envelope
+are identical regardless of trigger.

@@ -200,3 +200,72 @@ func TestConnectorManagementHandler_TriggerSync_HappyPath(t *testing.T) {
 		t.Fatalf("expected at least 2 jobs (initial + manual), got %d", len(jobs))
 	}
 }
+
+// TestConnectorManagementHandler_Patch_AccessMode_HappyPath asserts
+// PATCH /access/connectors/:id flips access_mode from the default
+// "api_only" to "tunnel" and persists the new value to the DB.
+func TestConnectorManagementHandler_Patch_AccessMode_HappyPath(t *testing.T) {
+	r, svc := newConnectorManagementEngine(t, happyMock())
+	createW := doJSON(t, r, http.MethodPost, "/access/connectors", validCreateConnectorBody())
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("seed: %d", createW.Code)
+	}
+	var created access.ConnectResult
+	decodeJSON(t, createW, &created)
+
+	body := map[string]interface{}{"access_mode": "tunnel"}
+	w := doJSON(t, r, http.MethodPatch, "/access/connectors/"+created.ConnectorID, body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s; want 200", w.Code, w.Body.String())
+	}
+	var got map[string]string
+	decodeJSON(t, w, &got)
+	if got["access_mode"] != models.AccessModeTunnel {
+		t.Fatalf("response access_mode=%q, want %q", got["access_mode"], models.AccessModeTunnel)
+	}
+	var row models.AccessConnector
+	if err := svc.DBForTest().Where("id = ?", created.ConnectorID).First(&row).Error; err != nil {
+		t.Fatalf("load row: %v", err)
+	}
+	if row.AccessMode != models.AccessModeTunnel {
+		t.Fatalf("row.AccessMode=%q, want %q", row.AccessMode, models.AccessModeTunnel)
+	}
+}
+
+// TestConnectorManagementHandler_Patch_AccessMode_Validation covers
+// the two 400 paths: malformed access_mode and an empty body. Both
+// must return 400 with the validation_failed code so the admin UI
+// surfaces the reason inline.
+func TestConnectorManagementHandler_Patch_AccessMode_Validation(t *testing.T) {
+	r, _ := newConnectorManagementEngine(t, happyMock())
+	createW := doJSON(t, r, http.MethodPost, "/access/connectors", validCreateConnectorBody())
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("seed: %d", createW.Code)
+	}
+	var created access.ConnectResult
+	decodeJSON(t, createW, &created)
+
+	w := doJSON(t, r, http.MethodPatch, "/access/connectors/"+created.ConnectorID,
+		map[string]interface{}{"access_mode": "nonsense"})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("malformed mode: status=%d body=%s; want 400", w.Code, w.Body.String())
+	}
+
+	w = doJSON(t, r, http.MethodPatch, "/access/connectors/"+created.ConnectorID,
+		map[string]interface{}{})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("empty body: status=%d body=%s; want 400", w.Code, w.Body.String())
+	}
+}
+
+// TestConnectorManagementHandler_Patch_AccessMode_NotFound asserts
+// PATCH on a missing connector ID returns 404 (via the
+// ErrConnectorRowNotFound sentinel mapping).
+func TestConnectorManagementHandler_Patch_AccessMode_NotFound(t *testing.T) {
+	r, _ := newConnectorManagementEngine(t, happyMock())
+	body := map[string]interface{}{"access_mode": "tunnel"}
+	w := doJSON(t, r, http.MethodPatch, "/access/connectors/01HDOES_NOT_EXIST00000000", body)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status=%d body=%s; want 404", w.Code, w.Body.String())
+	}
+}
