@@ -223,3 +223,21 @@ def test_resolve_listen_addr_rejects_non_integer_port(monkeypatch: pytest.Monkey
     monkeypatch.setenv("ACCESS_AI_AGENT_LISTEN_ADDR", "0.0.0.0:not-a-number")
     with pytest.raises(ValueError):
         main._resolve_listen_addr()
+
+
+def test_resolve_listen_addr_accepts_empty_host_colon_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Go services in this repo (ztna-api, access-workflow-engine) use the
+    # bare `:port` form in docker-compose.yml to mean "listen on all
+    # interfaces"; Python's HTTPServer treats `("", port)` the same way,
+    # so operators copying that convention must not crash-loop the agent.
+    monkeypatch.setenv("ACCESS_AI_AGENT_LISTEN_ADDR", ":8090")
+    host, port = main._resolve_listen_addr()
+    assert (host, port) == ("", 8090)
+
+
+def test_resolve_listen_addr_rejects_empty_port_after_colon(monkeypatch: pytest.MonkeyPatch) -> None:
+    # `host:` (no port) is still malformed and must fail fast so a
+    # misconfigured Helm chart crash-loops instead of binding to 0.
+    monkeypatch.setenv("ACCESS_AI_AGENT_LISTEN_ADDR", "0.0.0.0:")
+    with pytest.raises(ValueError):
+        main._resolve_listen_addr()

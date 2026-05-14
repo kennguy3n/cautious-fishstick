@@ -162,15 +162,21 @@ def build_handler(api_key: str) -> type:
 def _resolve_listen_addr() -> tuple[str, int]:
     # ACCESS_AI_AGENT_LISTEN_ADDR is the canonical env var the
     # docker-compose stack and Helm chart set — it carries the same
-    # `host:port` shape as Go services' *_LISTEN_ADDR knobs. Falls
-    # back to AGENT_HOST / AGENT_PORT so standalone dev runs and
+    # `host:port` shape as Go services' *_LISTEN_ADDR knobs, including
+    # the bare `:port` form (empty host = all interfaces) the rest of
+    # docker-compose.yml uses for ztna-api / access-workflow-engine.
+    # Falls back to AGENT_HOST / AGENT_PORT so standalone dev runs and
     # tests that pre-date the env var keep working.
     raw = os.environ.get("ACCESS_AI_AGENT_LISTEN_ADDR", "").strip()
     if raw:
-        host, _, port_s = raw.rpartition(":")
-        if not host or not port_s:
+        if ":" not in raw:
             raise ValueError(
-                f"ACCESS_AI_AGENT_LISTEN_ADDR must be host:port, got {raw!r}"
+                f"ACCESS_AI_AGENT_LISTEN_ADDR must be host:port or :port, got {raw!r}"
+            )
+        host, _, port_s = raw.rpartition(":")
+        if not port_s:
+            raise ValueError(
+                f"ACCESS_AI_AGENT_LISTEN_ADDR must be host:port or :port, got {raw!r}"
             )
         try:
             port = int(port_s)

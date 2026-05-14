@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -164,8 +165,12 @@ func AccessSyncIdentities(ctx context.Context, jc JobContext, jobID string) erro
 		}
 
 		// Persist the new sync_state row. Upsert by
-		// (connector_id, kind).
-		return persistSyncState(ctx, jc.DB, job.ConnectorID, nextCheckpoint, totalCount)
+		// (connector_id, kind). Thread `now` so the row's updated_at is
+		// driven by the same clock as the rest of this sync — the
+		// IdentitySyncScheduler reads `updated_at` to decide whether a
+		// connector is overdue, so explicit threading keeps that
+		// staleness signal deterministic in tests.
+		return persistSyncState(ctx, jc.DB, job.ConnectorID, nextCheckpoint, totalCount, now)
 	})
 }
 
@@ -277,8 +282,13 @@ func resolveManagerLinks(ctx context.Context, db *gorm.DB, connectorID string, u
 // persistSyncState writes / upserts an access_sync_state row for
 // the (connector_id, identity) pair. Called once at the end of a
 // successful sync so the next probe can read the new checkpoint
-// and identity_count.
-func persistSyncState(ctx context.Context, db *gorm.DB, connectorID, checkpoint string, count int) error {
+// and identity_count. `now` is threaded from the caller so the
+// row's updated_at column is driven by the same clock the rest of
+// the sync uses — the IdentitySyncScheduler keys staleness off
+// updated_at, so a deterministic timestamp keeps that signal
+// testable and consistent with sibling helpers (upsertTeam,
+// upsertTeamMember, resolveManagerLinks).
+func persistSyncState(ctx context.Context, db *gorm.DB, connectorID, checkpoint string, count int, now interface{}) error {
 	var existing models.AccessSyncState
 	err := db.WithContext(ctx).
 		Where("connector_id = ? AND kind = ?", connectorID, models.SyncStateKindIdentity).
@@ -287,18 +297,21 @@ func persistSyncState(ctx context.Context, db *gorm.DB, connectorID, checkpoint 
 		updates := map[string]interface{}{
 			"delta_link":     checkpoint,
 			"identity_count": count,
+			"updated_at":     now,
 		}
 		return db.WithContext(ctx).Model(&existing).Updates(updates).Error
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
+	ts, _ := now.(time.Time)
 	row := &models.AccessSyncState{
 		ID:            newEntitlementID(),
 		ConnectorID:   connectorID,
 		Kind:          models.SyncStateKindIdentity,
 		DeltaLink:     checkpoint,
 		IdentityCount: count,
+		UpdatedAt:     ts,
 	}
 	return db.WithContext(ctx).Create(row).Error
 }
