@@ -51,25 +51,25 @@ A future runtime probe will additionally assert that SDK builds only ever issue 
 
 ## Integration guide outline
 
-The contracts in this repo are interface definitions only — concrete `URLSession` / `OkHttp` / `fetch` implementations live in the host application. A canonical host integration looks like:
+Each SDK ships **both** the protocol / interface definition *and* a concrete REST implementation; host applications can use the ready-made implementation or substitute their own. See the per-platform integration guides for the full walkthrough.
 
 ### iOS (Swift Package)
 
-1. Add the package via Xcode → *File* → *Add Packages…* and point at the internal package registry URL.
-2. Implement `AccessSDKClient` against `URLSession` (or your existing networking stack); the host owns auth-token handling and base URL configuration.
-3. Inject the concrete client into your SwiftUI screens as a dependency — never let view code instantiate transport directly.
+1. Add the package via Xcode → *File* → *Add Packages…* using the SwiftPM URL.
+2. Use the shipped `URLSessionAccessSDKClient` (Foundation-only — no third-party HTTP libraries) or substitute your own conformer of `AccessSDKClient`. The host owns auth-token handling and base URL configuration.
+3. Inject the client into SwiftUI screens as a dependency — never let view code instantiate transport directly.
 
 ### Android (Kotlin library)
 
-1. Add the AAR via the internal Maven registry and declare it in `build.gradle.kts`.
-2. Implement `AccessSDKClient` with your `OkHttpClient` / `Retrofit` instance and a coroutine dispatcher of your choice.
-3. Provide the implementation via Hilt / Koin / manual DI to ViewModels that need it; the host owns auth and base URL.
+1. Add the AAR via the Maven registry and declare it in `build.gradle.kts`.
+2. Use the shipped `OkHttpAccessSDKClient` (library-free JSON via `org.json`) or substitute your own implementation of `AccessSDKClient` with a coroutine dispatcher of your choice.
+3. Provide via Hilt / Koin / manual DI to ViewModels that need it; the host owns auth and base URL.
 
 ### Desktop (Electron npm module)
 
-1. Install the package from the internal npm registry: `npm install @shieldnet360/access-extension`.
-2. In the **main process**, implement `AccessIPC` against `node-fetch` / `undici` and register handlers with `ipcMain.handle` using the channel name constants from `AccessIPCChannel`.
-3. In the **preload script**, expose a renderer-safe proxy via `contextBridge.exposeInMainWorld('access', { ... })` that calls `ipcRenderer.invoke` on the same channels.
+1. Install the package: `npm install @shieldnet360/access-extension`.
+2. In the **main process**, call `registerAccessIPC` — it registers `ipcMain.handle` for every `AccessIPCChannel` against a real `fetch`-backed client. Pass an auth-token resolver and base URL.
+3. In the **preload script**, call `registerAccessRenderer` to expose a renderer-safe proxy via `contextBridge.exposeInMainWorld('access', …)` with error rehydration across the IPC boundary.
 4. The renderer imports the types from `@shieldnet360/access-extension` for compile-time safety — it never imports the implementation module.
 
 ## Error handling
