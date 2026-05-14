@@ -37,6 +37,7 @@ func (h *PolicyHandler) Register(r *gin.Engine) {
 	g.GET("/:id", h.GetPolicy)
 	g.POST("/:id/simulate", h.Simulate)
 	g.POST("/:id/promote", h.Promote)
+	g.GET("/:id/diff", h.Diff)
 	g.POST("/test-access", h.TestAccess)
 }
 
@@ -140,6 +141,30 @@ func (h *PolicyHandler) Simulate(c *gin.Context) {
 		return
 	}
 	report, err := h.policyService.Simulate(c.Request.Context(), req.WorkspaceID, id)
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, err)
+		return
+	}
+	c.JSON(http.StatusOK, report)
+}
+
+// Diff handles GET /workspace/policy/:id/diff. Returns a structured
+// before/after comparison of the draft policy against the workspace's
+// current live state. Requires a workspace_id query parameter and a
+// previously-simulated draft (the service surfaces ErrPolicyNotSimulated
+// otherwise, mapped to 409 Conflict in errors.go).
+func (h *PolicyHandler) Diff(c *gin.Context) {
+	id := GetStringParam(c, "id")
+	wsID := GetPtrStringQuery(c, "workspace_id")
+	if wsID == nil || *wsID == "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
+			Error:   "workspace_id query parameter is required",
+			Code:    "validation_failed",
+			Message: "workspace_id query parameter is required",
+		})
+		return
+	}
+	report, err := h.policyService.DiffPolicy(c.Request.Context(), *wsID, id)
 	if err != nil {
 		writeError(c, http.StatusInternalServerError, err)
 		return

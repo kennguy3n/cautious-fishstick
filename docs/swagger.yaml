@@ -148,6 +148,21 @@ paths:
       responses:
         '202': { description: Job enqueued }
         '404': { description: Connector not found }
+  /access/connectors/catalogue:
+    get:
+      summary: List the full process-global connector registry with per-workspace connection state
+      description: |
+        Returns one entry per registered provider with capability flags
+        (sync_identities, sync_groups, sync_audit, scim_provision,
+        sync_identities_delta) and, when the workspace already has a
+        connection, the connector ID and status. Powers the Admin UI
+        "available integrations" marketplace.
+      tags: [access-connectors]
+      parameters:
+        - { name: workspace_id, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+        '400': { description: workspace_id required }
   /access/reviews:
     post:
       summary: Start an access review campaign
@@ -170,6 +185,22 @@ paths:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
         '200': { description: OK }
+  /access/reviews/{id}/decisions/bulk:
+    post:
+      summary: Submit multiple campaign decisions in a single best-effort batch
+      description: |
+        Each entry in the decisions array is dispatched through the
+        same SubmitDecision flow; failures on one entry do NOT short-
+        circuit the remaining entries. Always returns 200 with a per-
+        row results array and a summary roll-up (total / succeeded /
+        failed). Envelope-level failures (missing decided_by, empty
+        array, malformed JSON) return 4xx.
+      tags: [access-reviews]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: OK — per-row success/error in results array }
+        '400': { description: Validation failed }
   /access/reviews/{id}/auto-revoke:
     post:
       summary: Auto-revoke unreviewed grants for a campaign
@@ -223,6 +254,22 @@ paths:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
         '200': { description: OK }
+  /workspace/policy/{id}/diff:
+    get:
+      summary: Diff a draft policy against the workspace's current live state
+      description: |
+        Returns a structured before/after report comparing the live
+        baseline (union of OTHER live policies in the workspace) against
+        the projection of the draft. Requires a previously-simulated
+        draft; otherwise returns 409 Conflict.
+      tags: [policy]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: workspace_id, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+        '400': { description: workspace_id required }
+        '409': { description: Draft has not been simulated or is no longer a draft }
   /workspace/policy/test-access:
     post:
       summary: Test policy against a hypothetical access
@@ -242,6 +289,22 @@ paths:
       tags: [ai]
       responses:
         '200': { description: OK }
+        '503': { description: AI agent not configured }
+  /access/assistant:
+    post:
+      summary: Natural-language assistant — classifies a free-text query and dispatches to the matching AI skill
+      description: |
+        Routes a chat-style query to one of risk_assessment,
+        access_anomaly_detection, connector_setup, or
+        policy_recommendation (default). The request may supply an
+        explicit 'skill' override to bypass classification. Returns
+        the matched intent, the dispatched skill name, and the raw
+        SkillResponse envelope.
+      tags: [ai]
+      responses:
+        '200': { description: OK }
+        '400': { description: query required }
+        '502': { description: Upstream AI agent failure }
         '503': { description: AI agent not configured }
   /scim/Users:
     post:

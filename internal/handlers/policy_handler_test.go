@@ -166,6 +166,66 @@ func TestPolicyHandler_Simulate_HappyPath(t *testing.T) {
 	decodeJSON(t, simW, &report)
 }
 
+func TestPolicyHandler_Diff_HappyPath(t *testing.T) {
+	r, _ := newPolicyEngine(t)
+	w := doJSON(t, r, http.MethodPost, "/workspace/policy", validCreateDraftBody())
+	if w.Code != http.StatusCreated {
+		t.Fatalf("seed draft: %d body=%s", w.Code, w.Body.String())
+	}
+	var created models.Policy
+	decodeJSON(t, w, &created)
+
+	simW := doJSON(t, r, http.MethodPost, "/workspace/policy/"+created.ID+"/simulate",
+		map[string]string{"workspace_id": created.WorkspaceID})
+	if simW.Code != http.StatusOK {
+		t.Fatalf("simulate: %d body=%s", simW.Code, simW.Body.String())
+	}
+
+	diffW := doJSON(t, r, http.MethodGet,
+		"/workspace/policy/"+created.ID+"/diff?workspace_id="+created.WorkspaceID, nil)
+	if diffW.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s; want 200", diffW.Code, diffW.Body.String())
+	}
+	var diff access.PolicyDiffReport
+	decodeJSON(t, diffW, &diff)
+	if diff.Policy == nil || diff.Policy.ID != created.ID {
+		t.Fatalf("diff.Policy = %+v; want id=%q", diff.Policy, created.ID)
+	}
+	if diff.Before.AppliesDraft {
+		t.Fatal("Before.AppliesDraft = true; want false")
+	}
+	if !diff.After.AppliesDraft {
+		t.Fatal("After.AppliesDraft = false; want true")
+	}
+	if diff.Delta == nil {
+		t.Fatal("Delta = nil; want non-nil ImpactReport")
+	}
+}
+
+func TestPolicyHandler_Diff_MissingWorkspaceIDReturns400(t *testing.T) {
+	r, _ := newPolicyEngine(t)
+	w := doJSON(t, r, http.MethodGet, "/workspace/policy/some-id/diff", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d; want 400", w.Code)
+	}
+}
+
+func TestPolicyHandler_Diff_RequiresSimulate(t *testing.T) {
+	r, _ := newPolicyEngine(t)
+	w := doJSON(t, r, http.MethodPost, "/workspace/policy", validCreateDraftBody())
+	if w.Code != http.StatusCreated {
+		t.Fatalf("seed: %d body=%s", w.Code, w.Body.String())
+	}
+	var created models.Policy
+	decodeJSON(t, w, &created)
+
+	diffW := doJSON(t, r, http.MethodGet,
+		"/workspace/policy/"+created.ID+"/diff?workspace_id="+created.WorkspaceID, nil)
+	if diffW.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s; want 409 (ErrPolicyNotSimulated)", diffW.Code, diffW.Body.String())
+	}
+}
+
 func TestPolicyHandler_Promote_RequiresSimulate(t *testing.T) {
 	r, _ := newPolicyEngine(t)
 	w := doJSON(t, r, http.MethodPost, "/workspace/policy", validCreateDraftBody())
