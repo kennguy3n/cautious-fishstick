@@ -14,6 +14,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/kennguy3n/cautious-fishstick/internal/config"
 	"github.com/kennguy3n/cautious-fishstick/internal/handlers"
@@ -228,6 +230,16 @@ import (
 )
 
 func main() {
+	// `--healthcheck` is a self-probe mode used by the docker-compose
+	// healthcheck command (the distroless runtime image has no curl).
+	// It performs a quick HTTP GET against the local /health endpoint
+	// and exits 0/1 based on the response.
+	for _, arg := range os.Args[1:] {
+		if arg == "--healthcheck" || arg == "-healthcheck" {
+			os.Exit(runHealthcheck())
+		}
+	}
+
 	cfg := config.Load()
 	log.Printf("ztna-api: starting; registered access connectors: %v", access.ListRegisteredProviders())
 	if cfg.AIConfigured() {
@@ -250,4 +262,30 @@ func main() {
 	if err := http.ListenAndServe(addr, r); err != nil {
 		log.Fatalf("ztna-api: server exited: %v", err)
 	}
+}
+
+// runHealthcheck issues a short-timeout GET against the local
+// /health endpoint and reports the exit code the docker-compose
+// healthcheck should observe. The listen address is read from the
+// same env var the main server uses so port overrides work
+// transparently.
+func runHealthcheck() int {
+	addr := os.Getenv("ZTNA_API_LISTEN_ADDR")
+	if addr == "" {
+		addr = ":8080"
+	}
+	port := addr
+	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
+		port = addr[idx:]
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get("http://127.0.0.1" + port + "/health")
+	if err != nil {
+		return 1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
 }
