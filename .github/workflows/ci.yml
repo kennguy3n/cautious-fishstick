@@ -45,3 +45,44 @@ jobs:
 
       - name: Verify no on-device model files under sdk/
         run: bash scripts/check_no_model_files.sh
+
+  docker-compose-smoke:
+    name: docker-compose smoke (build + /health + /healthz)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and start the access stack
+        # `up --build --wait` exits non-zero unless every service with a
+        # healthcheck reports healthy, so this catches both Dockerfile
+        # breakages and missing inter-service wiring (e.g. the ztna-api
+        # → access-ai-agent dependency declared in docker-compose.yml).
+        run: docker compose up --build --wait --wait-timeout 300
+
+      - name: Probe ztna-api /health
+        run: |
+          set -euo pipefail
+          curl -fsSL --max-time 10 --retry 5 --retry-delay 3 --retry-connrefused \
+            http://localhost:8080/health | tee /dev/stderr | grep -q '"status"'
+
+      - name: Probe access-workflow-engine /health
+        run: |
+          set -euo pipefail
+          curl -fsSL --max-time 10 --retry 5 --retry-delay 3 --retry-connrefused \
+            http://localhost:8082/health | tee /dev/stderr | grep -q '"status"'
+
+      - name: Probe access-ai-agent /healthz
+        run: |
+          set -euo pipefail
+          curl -fsSL --max-time 10 --retry 5 --retry-delay 3 --retry-connrefused \
+            http://localhost:8090/healthz | tee /dev/stderr | grep -q '"status"'
+
+      - name: Dump service logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=200
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v --remove-orphans

@@ -78,6 +78,12 @@ type Dependencies struct {
 	// wired so dev binaries without a credential manager keep serving
 	// the rest of the /access/grants surface.
 	GrantEntitlementsReader GrantEntitlementsReader
+
+	// Metrics backs the /metrics Prometheus endpoint and is consulted
+	// from the MetricsMiddleware to observe per-request count/latency.
+	// May be nil; the middleware is then a no-op and /metrics returns
+	// a minimal "up" gauge so the route stays reachable for k8s probes.
+	Metrics *MetricsRegistry
 }
 
 // Router builds the *gin.Engine that serves the access platform's
@@ -92,8 +98,11 @@ func Router(deps Dependencies) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(JSONLoggerMiddleware())
+	r.Use(MetricsMiddleware(deps.Metrics))
 
 	r.GET("/health", HealthHandler)
+	r.GET("/metrics", MetricsHandler(deps.Metrics))
 	r.GET("/swagger", SwaggerHandler)
 	r.GET("/swagger.json", SwaggerHandler)
 	r.GET("/swagger.yaml", SwaggerYAMLHandler)
