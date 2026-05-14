@@ -44,10 +44,10 @@ type assistantResponse struct {
 // canonical AI skills documented in docs/PROPOSAL.md §11
 // ("Phase 4 AI agent skills"):
 //
-//   - risk_assessment           — "is this risky?"
+//   - access_risk_assessment    — "is this risky?"
 //   - policy_recommendation     — "explain / suggest a policy"
 //   - access_anomaly_detection  — "is this user behaving normally?"
-//   - connector_setup           — "how do I connect X?"
+//   - connector_setup_assistant — "how do I connect X?"
 //
 // The classifier is intentionally keyword-based, not
 // model-driven: this endpoint is a routing surface, not a fully
@@ -57,19 +57,19 @@ type assistantResponse struct {
 // query as part of its payload.
 //
 // Returned skill names match the strings the Python agent
-// registers (see internal/pkg/aiclient/client.go and the agent's
-// skill registry). Falling through with no match maps to
-// policy_recommendation because Phase 4 designates it as the
-// default "ask anything" skill.
+// registers (cmd/access-ai-agent/main.py → SKILL_REGISTRY).
+// Falling through with no match maps to policy_recommendation
+// because Phase 4 designates it as the default "ask anything"
+// skill.
 func classifyIntent(query string) string {
 	q := normalizeIntentQuery(query)
 	switch {
 	case containsAny(q, "risk", "risky", "threat", "danger", "compromise"):
-		return "risk_assessment"
+		return "access_risk_assessment"
 	case containsAny(q, "anomaly", "anomalous", "unusual", "abnormal", "weird", "suspicious"):
 		return "access_anomaly_detection"
 	case containsAny(q, "connect ", "connector", "integrate", "integration", "set up", "setup", "configure"):
-		return "connector_setup"
+		return "connector_setup_assistant"
 	default:
 		return "policy_recommendation"
 	}
@@ -107,15 +107,17 @@ func normalizeIntentQuery(query string) string {
 }
 
 // validSkillOverrides is the closed allowlist of skill names the
-// /access/assistant endpoint accepts as an explicit override. Skills
-// outside this set are rejected with 400 rather than forwarded to
-// the agent (which would surface as an opaque 502 "agent reachable
-// but call failed").
+// /access/assistant endpoint accepts as an explicit override. Keys
+// must match the Python access-ai-agent's skill registry
+// (cmd/access-ai-agent/main.py) exactly, otherwise the agent will
+// reject the request and the handler will surface an opaque 502.
+// Skills outside this set are rejected with 400 here rather than
+// forwarded.
 var validSkillOverrides = map[string]struct{}{
-	"risk_assessment":          {},
-	"access_anomaly_detection": {},
-	"connector_setup":          {},
-	"policy_recommendation":    {},
+	"access_risk_assessment":    {},
+	"access_anomaly_detection":  {},
+	"connector_setup_assistant": {},
+	"policy_recommendation":     {},
 }
 
 func isValidSkillOverride(skill string) bool {
@@ -180,7 +182,7 @@ func (h *AIHandler) Assistant(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
 			Error:   "unknown_skill",
 			Code:    "validation_failed",
-			Message: "skill must be one of risk_assessment, access_anomaly_detection, connector_setup, policy_recommendation",
+			Message: "skill must be one of access_risk_assessment, access_anomaly_detection, connector_setup_assistant, policy_recommendation",
 		})
 		return
 	}

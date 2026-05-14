@@ -42,13 +42,13 @@ func TestAIHandler_Assistant_RoutesToRiskAssessmentSkill(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s; want 200", w.Code, w.Body.String())
 	}
-	if stub.skill != "risk_assessment" {
-		t.Fatalf("invoked skill = %q; want risk_assessment", stub.skill)
+	if stub.skill != "access_risk_assessment" {
+		t.Fatalf("invoked skill = %q; want access_risk_assessment", stub.skill)
 	}
 	var got assistantResponse
 	decodeJSON(t, w, &got)
-	if got.Intent != "risk_assessment" || got.Skill != "risk_assessment" {
-		t.Fatalf("intent/skill = (%q, %q); want both risk_assessment", got.Intent, got.Skill)
+	if got.Intent != "access_risk_assessment" || got.Skill != "access_risk_assessment" {
+		t.Fatalf("intent/skill = (%q, %q); want both access_risk_assessment", got.Intent, got.Skill)
 	}
 	if got.Result == nil || got.Result.RiskScore != "high" {
 		t.Fatalf("result = %+v; want RiskScore=high", got.Result)
@@ -80,8 +80,8 @@ func TestAIHandler_Assistant_RoutesToConnectorSetupSkill(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s; want 200", w.Code, w.Body.String())
 	}
-	if stub.skill != "connector_setup" {
-		t.Fatalf("invoked skill = %q; want connector_setup", stub.skill)
+	if stub.skill != "connector_setup_assistant" {
+		t.Fatalf("invoked skill = %q; want connector_setup_assistant", stub.skill)
 	}
 }
 
@@ -141,8 +141,8 @@ func TestAIHandler_Assistant_RoutesPunctuatedConnectQueryToConnectorSetup(t *tes
 			if w.Code != http.StatusOK {
 				t.Fatalf("status = %d body=%s; want 200", w.Code, w.Body.String())
 			}
-			if stub.skill != "connector_setup" {
-				t.Fatalf("invoked skill = %q; want connector_setup for %q", stub.skill, q)
+			if stub.skill != "connector_setup_assistant" {
+				t.Fatalf("invoked skill = %q; want connector_setup_assistant for %q", stub.skill, q)
 			}
 		})
 	}
@@ -158,7 +158,7 @@ func TestAIHandler_Assistant_UnknownSkillOverrideReturns400(t *testing.T) {
 
 	w := doJSON(t, r, http.MethodPost, "/access/assistant", map[string]interface{}{
 		"query": "anything",
-		"skill": "risk_assesment", // typo: missing the second 's'
+		"skill": "access_risk_assesment", // typo: missing the second 's'
 	})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d body=%s; want 400 for unknown skill", w.Code, w.Body.String())
