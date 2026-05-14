@@ -624,10 +624,13 @@ connector_type ---->| is_private == true        |---> tunnel
 
 **Phase 11 batch 6 hardening:**
 
-- `OrphanReconciler.DryRun` (settable via `SetDryRun(true)` or via
-  `POST /access/orphans/reconcile` body `dry_run: true`) detects
+- `OrphanReconciler.ReconcileWorkspaceDryRun` (callable directly or
+  via `POST /access/orphans/reconcile` body `dry_run: true`) detects
   unused app accounts but skips the persist step — the caller gets
-  the detected rows back for review without committing them.
+  the detected rows back for review without committing them. Dry-run
+  is threaded through the call chain as a per-call parameter so
+  concurrent HTTP requests (one dry, one wet) cannot race on a
+  shared flag.
 - Per-connector throttle
   (`ACCESS_ORPHAN_RECONCILE_DELAY_PER_CONNECTOR`, default `1s`)
   paces the reconciler between connector iterations so upstream

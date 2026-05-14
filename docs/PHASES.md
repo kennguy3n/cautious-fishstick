@@ -270,9 +270,10 @@ grant-expiry enforcement (docs/PROPOSAL.md §13).
 
 ### WS8 — Hardening (Phase 11 batch 6)
 
-- [x] `OrphanReconciler.DryRun` mode plus `POST /access/orphans/reconcile`
+- [x] `OrphanReconciler.ReconcileWorkspaceDryRun` plus `POST /access/orphans/reconcile`
   body field `dry_run` so operators can preview unused-app-account
-  detections without persisting rows.
+  detections without persisting rows. Dry-run is passed per-call so
+  concurrent dry/wet requests cannot race on shared state.
 - [x] Per-connector throttle
   (`ACCESS_ORPHAN_RECONCILE_DELAY_PER_CONNECTOR`, default `1s`) so
   the reconciler does not hammer upstream APIs.

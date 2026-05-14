@@ -290,10 +290,18 @@ func (e *GrantExpiryEnforcer) RunWarning(ctx context.Context) (int, error) {
 		if hoursAhead < 0 {
 			hoursAhead = 0
 		}
+		// Audit-event emission is decoupled from notifier success
+		// so SIEM still observes warning attempts even when the
+		// notification channel is broken. This mirrors
+		// emitRevokedSideEffects which audits both success and
+		// failure outcomes.
+		notifyStatus := "success"
+		notifyErrMsg := ""
 		if e.notifier != nil {
 			if err := e.notifier.SendGrantExpiryWarning(ctx, g.WorkspaceID, g.UserID, g.ConnectorID, g.ResourceExternalID, expiresAt, hoursAhead); err != nil {
 				lastErr = fmt.Errorf("cron: warn grant %s: %w", g.ID, err)
-				continue
+				notifyStatus = "failed"
+				notifyErrMsg = err.Error()
 			}
 		}
 		if e.auditProducer != nil {
@@ -304,7 +312,8 @@ func (e *GrantExpiryEnforcer) RunWarning(ctx context.Context) (int, error) {
 				ConnectorID: g.ConnectorID,
 				ResourceID:  g.ResourceExternalID,
 				Action:      access.GrantExpiryActionWarned,
-				Status:      "success",
+				Status:      notifyStatus,
+				Error:       notifyErrMsg,
 				ExpiresAt:   expiresAt,
 				Timestamp:   now,
 			}
@@ -312,7 +321,9 @@ func (e *GrantExpiryEnforcer) RunWarning(ctx context.Context) (int, error) {
 				log.Printf("cron: grant_expiry_enforcer: audit warn grant=%s: %v", g.ID, err)
 			}
 		}
-		warned++
+		if notifyStatus == "success" {
+			warned++
+		}
 	}
 	return warned, lastErr
 }

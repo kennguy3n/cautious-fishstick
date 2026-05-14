@@ -51,8 +51,19 @@ func TestOrphanReconciler_DryRun_DoesNotPersist(t *testing.T) {
 	if len(rows) != 0 {
 		t.Errorf("persisted orphans after dry-run = %d; want 0", len(rows))
 	}
-	if rec.DryRun {
-		t.Errorf("DryRun flag = true after ReconcileWorkspaceDryRun; want false (must be restored)")
+	// A real ReconcileWorkspace after the dry-run must still persist
+	// rows — dry-run is per-call, not a sticky struct flag.
+	wet, err := rec.ReconcileWorkspace(context.Background(), "01H000000000000000WORKSPACE")
+	if err != nil {
+		t.Fatalf("ReconcileWorkspace (wet) after dry-run: %v", err)
+	}
+	if len(wet) != 2 {
+		t.Errorf("wet sweep detected = %d; want 2", len(wet))
+	}
+	for _, r := range wet {
+		if r.ID == "" {
+			t.Errorf("wet sweep row has empty ID; want persisted")
+		}
 	}
 }
 
@@ -123,5 +134,53 @@ func TestOrphanReconciler_PerConnectorDelay_ZeroDisabled(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
 		t.Errorf("elapsed = %v; want fast (no throttle)", elapsed)
+	}
+}
+
+// TestOrphanReconciler_DryRunIsolatedFromWet asserts that a
+// dry-run sweep does NOT alter the behaviour of a subsequent wet
+// sweep when the two are interleaved sequentially. Together with
+// the in-test wet-after-dry assertion in
+// TestOrphanReconciler_DryRun_DoesNotPersist this locks in the
+// Phase 11 batch 6 race fix where dry-run was a shared struct
+// field — concurrent HTTP requests could flip the bool and let
+// other requests silently skip persistence.
+func TestOrphanReconciler_DryRunIsolatedFromWet(t *testing.T) {
+	const provider = "mock_orphan_dryrun_isolated"
+	db := newJMLTestDB(t)
+	if err := db.AutoMigrate(&models.AccessOrphanAccount{}); err != nil {
+		t.Fatalf("automigrate orphan: %v", err)
+	}
+	_ = seedConnectorWithSecrets(t, db, "01HCONN0ORPHANISOLATED00001", provider)
+
+	mock := &MockAccessConnector{
+		FuncSyncIdentities: func(_ context.Context, _, _ map[string]interface{}, _ string, h func([]*Identity, string) error) error {
+			return h([]*Identity{{ExternalID: "u-iso-1"}}, "")
+		},
+	}
+	SwapConnector(t, provider, mock)
+
+	rec := NewOrphanReconciler(db, NewAccessProvisioningService(db), NewConnectorCredentialsLoader(db, PassthroughEncryptor{}))
+	rec.SetPerConnectorDelay(0)
+
+	// Interleave dry/wet/dry. The wet sweep in the middle must
+	// persist a row even though the dry sweeps before and after
+	// pass dryRun=true to the same reconcileConnector code path.
+	if _, err := rec.ReconcileWorkspaceDryRun(context.Background(), "01H000000000000000WORKSPACE"); err != nil {
+		t.Fatalf("dry-run 1: %v", err)
+	}
+	if _, err := rec.ReconcileWorkspace(context.Background(), "01H000000000000000WORKSPACE"); err != nil {
+		t.Fatalf("wet: %v", err)
+	}
+	if _, err := rec.ReconcileWorkspaceDryRun(context.Background(), "01H000000000000000WORKSPACE"); err != nil {
+		t.Fatalf("dry-run 2: %v", err)
+	}
+
+	var rows []models.AccessOrphanAccount
+	if err := db.Find(&rows).Error; err != nil {
+		t.Fatalf("list orphans: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Errorf("persisted orphans after dry+wet+dry = %d; want 1 (the wet sweep)", len(rows))
 	}
 }

@@ -233,6 +233,62 @@ func TestGrantExpiryEnforcer_RunWarning_NotifierErrorIsLogged(t *testing.T) {
 	}
 }
 
+// TestGrantExpiryEnforcer_RunWarning_AuditsEvenWhenNotifierFails
+// is the Phase 11 batch 6 regression for the inconsistency where
+// a notifier failure used to short-circuit the audit-event
+// emission. SIEM ingestion must observe every warning attempt,
+// including failed ones, so dashboards can pivot on warned-then-
+// failed grants.
+func TestGrantExpiryEnforcer_RunWarning_AuditsEvenWhenNotifierFails(t *testing.T) {
+	db := newGrantDB(t)
+	now := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	soon := now.Add(2 * time.Hour)
+	seedGrant(t, db, "01HGRANT0WARNAUDIT000000A", &soon)
+
+	rev := &captureRevoker{now: func() time.Time { return now }, db: db}
+	loader := newStubCredentialsLoader()
+	notifier := &stubGrantExpiryNotifier{warnErr: errFake}
+	audit := &stubAuditProducer{}
+
+	e := NewGrantExpiryEnforcer(db, rev, loader, 100)
+	e.SetClock(func() time.Time { return now })
+	e.SetWarningHours(24)
+	e.SetNotifier(notifier)
+	e.SetAuditProducer(audit)
+
+	warned, err := e.RunWarning(context.Background())
+	if err == nil {
+		t.Error("err = nil; want notifier error surfaced")
+	}
+	if warned != 0 {
+		t.Errorf("warned = %d; want 0 on notifier failure", warned)
+	}
+
+	if audit.calls.Load() != 1 {
+		t.Fatalf("audit calls = %d; want 1 (the failed-notify audit event)", audit.calls.Load())
+	}
+	audit.mu.Lock()
+	defer audit.mu.Unlock()
+	if len(audit.entries) != 1 || len(audit.entries[0]) != 1 {
+		t.Fatalf("audit batches = %d (entries[0] len = %d); want 1/1", len(audit.entries), func() int {
+			if len(audit.entries) == 0 {
+				return 0
+			}
+			return len(audit.entries[0])
+		}())
+	}
+	entry := audit.entries[0][0]
+	if entry.EventType != "access.grant.expiry" {
+		t.Errorf("event_type = %q; want access.grant.expiry", entry.EventType)
+	}
+	if entry.Action != string(access.GrantExpiryActionWarned) {
+		t.Errorf("action = %q; want warned", entry.Action)
+	}
+	if entry.Outcome != "failed" {
+		t.Errorf("outcome = %q; want failed (notifier returned an error)", entry.Outcome)
+	}
+}
+
 // errFake is a sentinel for the notifier failure test above.
 var errFake = errFakeT("notifier broke")
 

@@ -24,6 +24,15 @@ import (
 // The reconciler is best-effort across connectors: a single
 // connector failure logs but does not block the next connector in
 // the workspace.
+//
+// Dry-run is threaded through the call chain as a per-call
+// parameter (see ReconcileWorkspaceDryRun) rather than a shared
+// struct field so two concurrent HTTP requests (one dry, one wet)
+// cannot race each other: a shared bool would let request A flip
+// it true, request B silently skip its persistence, then defer
+// flip it back to false. Callers must go through
+// ReconcileWorkspace or ReconcileWorkspaceDryRun — the public API
+// never accepts a dry-run bool.
 type OrphanReconciler struct {
 	db              *gorm.DB
 	provisioningSvc *AccessProvisioningService
@@ -31,11 +40,6 @@ type OrphanReconciler struct {
 	getConnectorFn  func(provider string) (AccessConnector, error)
 	now             func() time.Time
 	newID           func() string
-	// DryRun — when true, ReconcileWorkspace detects unused app
-	// accounts but does NOT persist them. Callers receive the
-	// detected list so operators can review what would have been
-	// recorded before they run a real sweep. Phase 11 batch 6 hook.
-	DryRun bool
 	// perConnectorDelay throttles per-connector iterations inside
 	// ReconcileWorkspace so an upstream API is not hammered by N
 	// connectors firing concurrently. Defaults to 1s. Set via
@@ -92,17 +96,14 @@ func (r *OrphanReconciler) SetIDFn(fn func() string) {
 // ReconcileWorkspace but without persisting any rows. The returned
 // slice contains in-memory AccessOrphanAccount values populated
 // with the detected upstream account metadata so operators can
-// review what a real sweep would record. The reconciler's DryRun
-// flag is restored on exit so concurrent callers are not affected
-// by this method.
+// review what a real sweep would record. Dry-run is passed as a
+// per-call parameter so concurrent callers can mix dry and wet
+// sweeps safely.
 func (r *OrphanReconciler) ReconcileWorkspaceDryRun(ctx context.Context, workspaceID string) ([]models.AccessOrphanAccount, error) {
 	if r == nil {
 		return nil, fmt.Errorf("%w: orphan reconciler not configured", ErrValidation)
 	}
-	prev := r.DryRun
-	r.DryRun = true
-	defer func() { r.DryRun = prev }()
-	return r.ReconcileWorkspace(ctx, workspaceID)
+	return r.reconcileWorkspace(ctx, workspaceID, true)
 }
 
 // ReconcileWorkspace iterates every connector in the workspace,
@@ -113,6 +114,15 @@ func (r *OrphanReconciler) ReconcileWorkspaceDryRun(ctx context.Context, workspa
 // "auto_revoked" / "acknowledged" / "dismissed" terminal states
 // are not duplicated.
 func (r *OrphanReconciler) ReconcileWorkspace(ctx context.Context, workspaceID string) ([]models.AccessOrphanAccount, error) {
+	return r.reconcileWorkspace(ctx, workspaceID, false)
+}
+
+// reconcileWorkspace is the shared implementation backing both
+// ReconcileWorkspace and ReconcileWorkspaceDryRun. dryRun is a
+// per-call parameter (not a struct field) so concurrent callers
+// cannot race on a shared flag — see the OrphanReconciler doc
+// comment above for the full rationale.
+func (r *OrphanReconciler) reconcileWorkspace(ctx context.Context, workspaceID string, dryRun bool) ([]models.AccessOrphanAccount, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("%w: orphan reconciler not configured", ErrValidation)
 	}
@@ -130,7 +140,7 @@ func (r *OrphanReconciler) ReconcileWorkspace(ctx context.Context, workspaceID s
 	out := make([]models.AccessOrphanAccount, 0)
 	for i := range connectors {
 		conn := &connectors[i]
-		rows, err := r.reconcileConnector(ctx, conn)
+		rows, err := r.reconcileConnector(ctx, conn, dryRun)
 		if err != nil {
 			// Per docs/PHASES.md the reconciler is best-effort: log and
 			// continue. We return the accumulated rows alongside the
@@ -152,8 +162,10 @@ func (r *OrphanReconciler) ReconcileWorkspace(ctx context.Context, workspaceID s
 
 // reconcileConnector handles a single connector. Returns the slice
 // of orphan rows that were persisted (new or re-detected) during
-// this pass.
-func (r *OrphanReconciler) reconcileConnector(ctx context.Context, conn *models.AccessConnector) ([]models.AccessOrphanAccount, error) {
+// this pass. dryRun is threaded in from reconcileWorkspace as a
+// per-call parameter so this method never reads shared mutable
+// state for the dry-run decision.
+func (r *OrphanReconciler) reconcileConnector(ctx context.Context, conn *models.AccessConnector, dryRun bool) ([]models.AccessOrphanAccount, error) {
 	if conn == nil {
 		return nil, nil
 	}
@@ -206,7 +218,7 @@ func (r *OrphanReconciler) reconcileConnector(ctx context.Context, conn *models.
 			continue
 		}
 
-		if r.DryRun {
+		if dryRun {
 			out = append(out, models.AccessOrphanAccount{
 				WorkspaceID:    conn.WorkspaceID,
 				ConnectorID:    conn.ID,
