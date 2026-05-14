@@ -33,7 +33,8 @@ const (
 // GrantExpiryEvent is the canonical audit envelope for the
 // grant-expiry enforcer. Status mirrors the kill-switch shape:
 // "success" for happy-path emit, "failed" when the revoke or
-// notification failed.
+// notification failed, and "skipped" when the corresponding hook
+// (notifier on the warn-path) is unwired so no attempt was made.
 type GrantExpiryEvent struct {
 	WorkspaceID string            `json:"workspace_id"`
 	UserID      string            `json:"user_id"`

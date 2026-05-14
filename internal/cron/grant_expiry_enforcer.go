@@ -294,14 +294,28 @@ func (e *GrantExpiryEnforcer) RunWarning(ctx context.Context) (int, error) {
 		// so SIEM still observes warning attempts even when the
 		// notification channel is broken. This mirrors
 		// emitRevokedSideEffects which audits both success and
-		// failure outcomes.
-		notifyStatus := "success"
-		notifyErrMsg := ""
-		if e.notifier != nil {
+		// failure outcomes. When the notifier hook is unwired
+		// (dev / test mode, or pre-rollout), the audit event is
+		// emitted with Status="skipped" — matching the
+		// LeaverKillSwitchEvent convention so downstream SIEM
+		// pivots on Status cannot confuse "we tried and it
+		// succeeded" with "we never tried."
+		var (
+			notifyStatus string
+			notifyErrMsg string
+			notified     bool
+		)
+		switch {
+		case e.notifier == nil:
+			notifyStatus = "skipped"
+		default:
 			if err := e.notifier.SendGrantExpiryWarning(ctx, g.WorkspaceID, g.UserID, g.ConnectorID, g.ResourceExternalID, expiresAt, hoursAhead); err != nil {
 				lastErr = fmt.Errorf("cron: warn grant %s: %w", g.ID, err)
 				notifyStatus = "failed"
 				notifyErrMsg = err.Error()
+			} else {
+				notifyStatus = "success"
+				notified = true
 			}
 		}
 		if e.auditProducer != nil {
@@ -321,7 +335,7 @@ func (e *GrantExpiryEnforcer) RunWarning(ctx context.Context) (int, error) {
 				log.Printf("cron: grant_expiry_enforcer: audit warn grant=%s: %v", g.ID, err)
 			}
 		}
-		if notifyStatus == "success" {
+		if notified {
 			warned++
 		}
 	}

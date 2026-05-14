@@ -289,6 +289,63 @@ func TestGrantExpiryEnforcer_RunWarning_AuditsEvenWhenNotifierFails(t *testing.T
 	}
 }
 
+// TestGrantExpiryEnforcer_RunWarning_NilNotifierIsSkipped is the
+// Phase 11 batch 6 round-3 regression for the asymmetry where a
+// nil notifier silently inflated the warned counter and emitted
+// Status="success" audit events even though no notification had
+// actually been attempted. When the notifier hook is unwired,
+// the audit event MUST carry Outcome="skipped" (matching the
+// LeaverKillSwitchEvent convention) and the warned counter MUST
+// stay at zero so dashboards do not over-report warning coverage.
+func TestGrantExpiryEnforcer_RunWarning_NilNotifierIsSkipped(t *testing.T) {
+	db := newGrantDB(t)
+	now := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	soon := now.Add(2 * time.Hour)
+	seedGrant(t, db, "01HGRANT0WARNNIL00000000A", &soon)
+
+	rev := &captureRevoker{now: func() time.Time { return now }, db: db}
+	loader := newStubCredentialsLoader()
+	audit := &stubAuditProducer{}
+
+	e := NewGrantExpiryEnforcer(db, rev, loader, 100)
+	e.SetClock(func() time.Time { return now })
+	e.SetWarningHours(24)
+	// Intentionally NO SetNotifier — the notifier hook is nil.
+	e.SetAuditProducer(audit)
+
+	warned, err := e.RunWarning(context.Background())
+	if err != nil {
+		t.Fatalf("RunWarning: %v (want nil because the warning attempt was skipped, not failed)", err)
+	}
+	if warned != 0 {
+		t.Errorf("warned = %d; want 0 (no notifier wired ⇒ no actual notification was attempted)", warned)
+	}
+
+	if audit.calls.Load() != 1 {
+		t.Fatalf("audit calls = %d; want 1 (the skipped-notify audit event)", audit.calls.Load())
+	}
+	audit.mu.Lock()
+	defer audit.mu.Unlock()
+	if len(audit.entries) != 1 || len(audit.entries[0]) != 1 {
+		t.Fatalf("audit batches = %d (entries[0] len = %d); want 1/1", len(audit.entries), func() int {
+			if len(audit.entries) == 0 {
+				return 0
+			}
+			return len(audit.entries[0])
+		}())
+	}
+	entry := audit.entries[0][0]
+	if entry.EventType != "access.grant.expiry" {
+		t.Errorf("event_type = %q; want access.grant.expiry", entry.EventType)
+	}
+	if entry.Action != string(access.GrantExpiryActionWarned) {
+		t.Errorf("action = %q; want warned", entry.Action)
+	}
+	if entry.Outcome != "skipped" {
+		t.Errorf("outcome = %q; want skipped (notifier hook is nil so no notification was attempted)", entry.Outcome)
+	}
+}
+
 // errFake is a sentinel for the notifier failure test above.
 var errFake = errFakeT("notifier broke")
 
