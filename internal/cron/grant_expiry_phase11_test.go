@@ -416,6 +416,99 @@ func TestGrantExpiryEnforcer_RunWarning_DedupPerGrant(t *testing.T) {
 	}
 }
 
+// TestGrantExpiryEnforcer_RunWarning_DedupPushedIntoSQL is the
+// Phase 11 batch 6 round-8 regression for the bug where the
+// LastWarnedAt dedup pivot only filtered already-warned grants
+// after LIMIT had already chopped the result set, so a workspace
+// with a hot tail of already-warned grants would consume the
+// batch budget on rows that get continue'd and unwarned grants
+// beyond position batchSize would never receive a notification.
+// The fix pushes the (last_warned_at IS NULL OR last_warned_at <
+// now - window) predicate into the WHERE clause so LIMIT only
+// counts unwarned rows.
+//
+// The test seeds batchSize=3, then inserts 3 already-warned grants
+// AND 1 fresh unwarned grant in the warning window. Without the
+// SQL pushdown, LIMIT 3 returns the 3 already-warned rows, the
+// loop skips them all, and the fresh grant is silently dropped.
+// With the pushdown, LIMIT 3 returns the fresh grant first and
+// warned==1.
+func TestGrantExpiryEnforcer_RunWarning_DedupPushedIntoSQL(t *testing.T) {
+	db := newGrantDB(t)
+	now := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	soon := now.Add(2 * time.Hour)
+	// Three rows that have already been warned within the
+	// 24h dedup window. last_warned_at is set to "30 minutes
+	// ago" so the predicate (last_warned_at < now - 24h)
+	// excludes them.
+	recentlyWarned := now.Add(-30 * time.Minute)
+	for _, id := range []string{
+		"01HGRANT0WARNED0000000001A",
+		"01HGRANT0WARNED0000000002A",
+		"01HGRANT0WARNED0000000003A",
+	} {
+		seedGrant(t, db, id, &soon)
+		if err := db.Model(&models.AccessGrant{}).
+			Where("id = ?", id).
+			Update("last_warned_at", recentlyWarned).Error; err != nil {
+			t.Fatalf("stamp last_warned_at for %s: %v", id, err)
+		}
+	}
+	// One fresh grant in the same workspace + window that has
+	// never been warned. This is the row the fix must surface
+	// inside the LIMIT=3 batch.
+	seedGrant(t, db, "01HGRANT0FRESH00000000004A", &soon)
+
+	rev := &captureRevoker{now: func() time.Time { return now }, db: db}
+	loader := newStubCredentialsLoader()
+	notifier := &stubGrantExpiryNotifier{}
+
+	e := NewGrantExpiryEnforcer(db, rev, loader, 3)
+	e.SetClock(func() time.Time { return now })
+	e.SetWarningHours(24)
+	e.SetNotifier(notifier)
+
+	warned, err := e.RunWarning(context.Background())
+	if err != nil {
+		t.Fatalf("RunWarning: %v", err)
+	}
+	if warned != 1 {
+		t.Errorf("warned = %d; want 1 (the SQL WHERE clause must filter the 3 already-warned rows so LIMIT 3 returns the fresh grant)", warned)
+	}
+
+	notifier.mu.Lock()
+	callCount := len(notifier.warnCalls)
+	notifier.mu.Unlock()
+	if callCount != 1 {
+		t.Errorf("warning notify calls = %d; want 1 (only the fresh grant must be notified)", callCount)
+	}
+
+	// Verify the fresh row picked up a stamp and the three
+	// already-warned rows kept their pre-existing stamp
+	// (i.e. the loop never touched them).
+	var fresh models.AccessGrant
+	if err := db.Where("id = ?", "01HGRANT0FRESH00000000004A").First(&fresh).Error; err != nil {
+		t.Fatalf("load fresh grant: %v", err)
+	}
+	if fresh.LastWarnedAt == nil {
+		t.Error("fresh grant LastWarnedAt = nil; want non-nil (the SQL pushdown surfaced this row and the loop stamped it)")
+	}
+	var olderStampedCount int64
+	if err := db.Model(&models.AccessGrant{}).
+		Where("id IN ?", []string{
+			"01HGRANT0WARNED0000000001A",
+			"01HGRANT0WARNED0000000002A",
+			"01HGRANT0WARNED0000000003A",
+		}).
+		Where("last_warned_at = ?", recentlyWarned).
+		Count(&olderStampedCount).Error; err != nil {
+		t.Fatalf("count older stamped: %v", err)
+	}
+	if olderStampedCount != 3 {
+		t.Errorf("count of already-warned rows still carrying the original stamp = %d; want 3 (the SQL filter must have excluded them so the loop never restamped them)", olderStampedCount)
+	}
+}
+
 // errFake is a sentinel for the notifier failure test above.
 var errFake = errFakeT("notifier broke")
 

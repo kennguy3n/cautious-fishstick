@@ -540,7 +540,25 @@ func main() {
 	// The helper returns nil in the scaffold path (db / provisioning
 	// service / credentials loader are all nil here) so the orphan
 	// cron is still omitted by WireCronJobs.
-	orphanReconciler := BuildOrphanReconciler(nil, nil, nil, *cfg)
+	//
+	// Phase 11 batch 6 round-8: the helper returns a concrete
+	// *access.OrphanReconciler. Assigning a nil typed pointer
+	// directly to a cron.WorkspaceOrphanReconciler-typed variable
+	// would produce a non-nil interface value carrying a nil
+	// dynamic pointer, defeating WireCronJobs' `orphanReconciler !=
+	// nil` guard (the classic Go nil-interface trap). The branch
+	// is currently masked by the parallel `db != nil` guard, but
+	// fixing the wiring at the source means any future caller that
+	// passes a real db with a nil reconciler still skips the orphan
+	// cron rather than panicking on a nil-pointer deref. We assign
+	// to the interface variable only when the concrete pointer is
+	// non-nil so the interface stays a properly-nil interface in
+	// the scaffold path.
+	orphanReconcilerImpl := BuildOrphanReconciler(nil, nil, nil, *cfg)
+	var orphanReconciler cron.WorkspaceOrphanReconciler
+	if orphanReconcilerImpl != nil {
+		orphanReconciler = orphanReconcilerImpl
+	}
 	auditProducer := BuildAuditProducer(*cfg)
 	// Phase 11 batch 6 round-7: the grant-expiry notifier hook is
 	// not yet wired in the scaffold path (no production

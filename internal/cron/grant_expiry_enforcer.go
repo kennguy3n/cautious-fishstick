@@ -316,14 +316,6 @@ func (e *GrantExpiryEnforcer) RunWarning(ctx context.Context) (int, error) {
 	}
 	cutoff := now.Add(time.Duration(window) * time.Hour)
 
-	var grants []models.AccessGrant
-	if err := e.db.WithContext(ctx).
-		Where("revoked_at IS NULL AND expires_at IS NOT NULL AND expires_at > ? AND expires_at <= ?", now, cutoff).
-		Limit(e.batchSize).
-		Find(&grants).Error; err != nil {
-		return 0, fmt.Errorf("cron: list soon-to-expire grants: %w", err)
-	}
-
 	// Dedup window: a grant warned within the last `window` hours is
 	// skipped so a 12h-from-expiry grant gets one notification, not
 	// twelve under the default 1h tick / 24h warning window. The
@@ -331,6 +323,29 @@ func (e *GrantExpiryEnforcer) RunWarning(ctx context.Context) (int, error) {
 	// (see end of loop below), so the very first tick in the window
 	// always fires for a fresh grant. Phase 11 batch 6 round-7.
 	dedupWindow := time.Duration(window) * time.Hour
+	// Phase 11 batch 6 round-8: push the dedup filter into the SQL
+	// WHERE clause so already-warned grants never count against the
+	// batch budget. Before this change, the application-level skip
+	// at the top of the per-grant loop fired only after LIMIT had
+	// already chopped the result set — meaning a workspace with
+	// 100+ already-warned grants in the window would consume the
+	// entire batch on rows that get continue'd, and unwarned grants
+	// beyond position N never received a notification. The
+	// equivalent application-level guard remains as a
+	// belt-and-suspenders check so unit tests that exercise the
+	// loop with hand-crafted in-memory rows still skip correctly.
+	dedupCutoff := now.Add(-dedupWindow)
+
+	var grants []models.AccessGrant
+	if err := e.db.WithContext(ctx).
+		Where(
+			"revoked_at IS NULL AND expires_at IS NOT NULL AND expires_at > ? AND expires_at <= ? AND (last_warned_at IS NULL OR last_warned_at < ?)",
+			now, cutoff, dedupCutoff,
+		).
+		Limit(e.batchSize).
+		Find(&grants).Error; err != nil {
+		return 0, fmt.Errorf("cron: list soon-to-expire grants: %w", err)
+	}
 
 	var (
 		warned  int

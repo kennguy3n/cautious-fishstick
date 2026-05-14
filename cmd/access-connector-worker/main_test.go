@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/kennguy3n/cautious-fishstick/internal/config"
+	"github.com/kennguy3n/cautious-fishstick/internal/cron"
 	"github.com/kennguy3n/cautious-fishstick/internal/models"
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 )
@@ -237,4 +238,79 @@ func TestBuildOrphanReconciler_NilDepsReturnNil(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestWireCronJobs_NilInterfaceTrapDoesNotEnableOrphanCron is the
+// Phase 11 batch 6 round-8 regression for the nil-interface
+// gotcha where a typed-nil concrete *access.OrphanReconciler
+// assigned directly into a cron.WorkspaceOrphanReconciler-typed
+// variable produces a non-nil interface value carrying a nil
+// dynamic pointer. WireCronJobs' `orphanReconciler != nil` guard
+// would then evaluate to true and construct a scheduler around
+// the nil pointer — the first tick would panic on a nil-pointer
+// deref.
+//
+// main()'s wrap pattern guards against this by assigning to the
+// interface variable only when the concrete pointer is non-nil
+// (so the interface stays a properly-nil interface in the
+// scaffold path). The test below replays both patterns:
+//
+//  1. The buggy pattern (direct assign of typed nil) — confirms
+//     WireCronJobs WOULD construct a non-nil scheduler around the
+//     bogus interface, illustrating the bug.
+//  2. The safe wrap pattern from main() — confirms the
+//     interface stays nil and WireCronJobs correctly omits the
+//     orphan cron.
+//
+// The first sub-test is a should-not-happen assertion: it documents
+// the bug surface so a future refactor cannot reintroduce the gap
+// without flipping this assertion.
+func TestWireCronJobs_NilInterfaceTrapDoesNotEnableOrphanCron(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	cfg := config.Access{}
+
+	// Scaffold-path build: nil deps → BuildOrphanReconciler
+	// returns a nil concrete *access.OrphanReconciler. This is
+	// the value main() wraps before handing it to WireCronJobs.
+	concreteNil := BuildOrphanReconciler(nil, nil, nil, cfg)
+	if concreteNil != nil {
+		t.Fatalf("BuildOrphanReconciler(nil deps) = %v; want nil concrete pointer (precondition for the wrap test)", concreteNil)
+	}
+
+	t.Run("buggy_direct_assign_produces_non_nil_interface", func(t *testing.T) {
+		// Direct assignment of the typed-nil pointer to an
+		// interface variable. Go converts (*T)(nil) into an
+		// interface value with a non-nil type tag, so the
+		// `!= nil` check below is true even though the
+		// dynamic pointer is nil — the classic gotcha.
+		var buggy cron.WorkspaceOrphanReconciler = concreteNil
+		if buggy == nil {
+			t.Fatal("regression: nil-interface gotcha appears to be gone; the test premise is invalid — re-evaluate the wrap pattern in main()")
+		}
+		// We intentionally do NOT call WireCronJobs with the
+		// buggy value because the resulting scheduler would
+		// panic on first tick. The point of this sub-test is
+		// to document why main()'s wrap pattern is required.
+	})
+
+	t.Run("safe_wrap_keeps_interface_nil_and_omits_orphan_cron", func(t *testing.T) {
+		// Mirrors the wrap pattern in cmd/access-connector-
+		// worker/main.go: assign to the interface variable
+		// only when the concrete pointer is non-nil so the
+		// interface stays a properly-nil interface.
+		var safe cron.WorkspaceOrphanReconciler
+		if concreteNil != nil {
+			safe = concreteNil
+		}
+		if safe != nil {
+			t.Fatalf("safe wrap: interface = %v; want nil (the concrete pointer was nil so the interface must stay nil)", safe)
+		}
+		jobs := WireCronJobs(db, nil, nil, nil, nil, nil, nil, safe, cfg)
+		if jobs.OrphanReconcilerScheduler != nil {
+			t.Errorf("OrphanReconcilerScheduler = %v; want nil (WireCronJobs' orphanReconciler != nil guard must skip the cron when the interface is properly nil)", jobs.OrphanReconcilerScheduler)
+		}
+	})
 }
