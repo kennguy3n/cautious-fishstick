@@ -91,6 +91,16 @@ type KeycloakClient interface {
 // errors.Is against this sentinel to decide between create and update.
 var ErrKeycloakIdPNotFound = errors.New("keycloak: identity provider not found")
 
+// KeycloakUserAdminClient is the optional capability used by the
+// Phase 11 leaver kill switch to disable a Keycloak user and
+// revoke their refresh tokens. Production HTTPKeycloakClient
+// implements this interface; tests can opt in by providing a mock
+// that also satisfies it.
+type KeycloakUserAdminClient interface {
+	UpdateUser(ctx context.Context, realm, userID string, patch map[string]interface{}) error
+	LogoutUser(ctx context.Context, realm, userID string) error
+}
+
 // HTTPKeycloakClient is the production KeycloakClient. It calls the
 // Keycloak Admin REST API with a bearer token.
 type HTTPKeycloakClient struct {
@@ -286,6 +296,88 @@ func (s *SSOFederationService) ConfigureBroker(
 		}
 	}
 	return idp.Alias, idp.ProviderID, nil
+}
+
+// UpdateUser PUTs an arbitrary JSON patch onto a Keycloak user.
+// The Phase 11 leaver kill switch uses this with {"enabled": false}
+// to flip the user to disabled at the realm.
+func (c *HTTPKeycloakClient) UpdateUser(ctx context.Context, realm, userID string, patch map[string]interface{}) error {
+	body, err := json.Marshal(patch)
+	if err != nil {
+		return err
+	}
+	req, err := c.newRequest(ctx, http.MethodPut,
+		fmt.Sprintf("/admin/realms/%s/users/%s",
+			url.PathEscape(realm), url.PathEscape(userID)), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	resp, err := c.http().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil // already gone — idempotent kill switch
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return fmt.Errorf("keycloak: PUT user status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// LogoutUser POSTs to the Keycloak Admin logout endpoint which
+// invalidates every active session and refresh token issued to the
+// user.
+func (c *HTTPKeycloakClient) LogoutUser(ctx context.Context, realm, userID string) error {
+	req, err := c.newRequest(ctx, http.MethodPost,
+		fmt.Sprintf("/admin/realms/%s/users/%s/logout",
+			url.PathEscape(realm), url.PathEscape(userID)), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return fmt.Errorf("keycloak: POST user logout status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// DisableKeycloakUser flips a Keycloak user to enabled=false and
+// invalidates every active session and refresh token. Returns
+// ErrSSOFederationDisabled when the service was constructed
+// without a KeycloakClient, ErrSSOFederationUnsupported when the
+// configured KeycloakClient does not satisfy the user-admin
+// capability. Both error sentinels are best-effort signals — the
+// JML leaver flow logs them but continues to the next kill-switch
+// layer.
+func (s *SSOFederationService) DisableKeycloakUser(ctx context.Context, realm, userID string) error {
+	if s == nil || s.keycloak == nil {
+		return ErrSSOFederationDisabled
+	}
+	admin, ok := s.keycloak.(KeycloakUserAdminClient)
+	if !ok {
+		return ErrSSOFederationUnsupported
+	}
+	if strings.TrimSpace(realm) == "" || strings.TrimSpace(userID) == "" {
+		return errors.New("sso_federation: realm and userID are required")
+	}
+	if err := admin.UpdateUser(ctx, realm, userID, map[string]interface{}{"enabled": false}); err != nil {
+		return fmt.Errorf("sso_federation: disable %s: %w", userID, err)
+	}
+	if err := admin.LogoutUser(ctx, realm, userID); err != nil {
+		return fmt.Errorf("sso_federation: logout %s: %w", userID, err)
+	}
+	return nil
 }
 
 // DeleteBroker removes the Keycloak IdP for the supplied alias. Safe
