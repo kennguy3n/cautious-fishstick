@@ -227,3 +227,106 @@ func TestConnectorManagementService_Disconnect_FallsBackOnRevokeFailure(t *testi
 // errAccessConnectorBoom is a sentinel used by the fallback test to
 // simulate an unreachable upstream provider during Disconnect.
 var errAccessConnectorBoom = errors.New("boom: upstream connector unreachable")
+
+// errDecryptBoom is the sentinel a failingEncryptor returns from
+// Decrypt. The decrypt-failure Disconnect test asserts this error
+// surfaces up the call chain so operators see why upstream
+// revocation was skipped.
+var errDecryptBoom = errors.New("boom: dek rotated; cannot decrypt connector credentials")
+
+// failingEncryptor is a CredentialEncryptor whose Decrypt always
+// fails. Encrypt is unused by Disconnect so its return is
+// irrelevant; we keep the contract honest by passing aad through.
+type failingEncryptor struct{}
+
+func (failingEncryptor) Encrypt(plaintext, aad []byte) ([]byte, string, error) {
+	return plaintext, "0", nil
+}
+
+func (failingEncryptor) Decrypt(_, _ []byte, _ string) ([]byte, error) {
+	return nil, errDecryptBoom
+}
+
+// TestConnectorManagementService_Disconnect_DecryptFailureFallsThroughToBulk
+// pins the safety-net invariant that Disconnect MUST NOT early-return
+// on a credential decryption failure. If decrypt fails (e.g. the DEK
+// has been rotated since this row was encrypted), the per-grant
+// upstream Revoke loop is skipped because there are no credentials to
+// pass — but the bulk DB-level revoke and the connector soft-delete
+// still run, and the decryption error surfaces in the return value so
+// operators know upstream revocation did not happen. Without this
+// safety net an operator with a rotated DEK could not disconnect a
+// connector at all and grants would orphan against a non-deleted row.
+func TestConnectorManagementService_Disconnect_DecryptFailureFallsThroughToBulk(t *testing.T) {
+	const provider = "test_provider_disconnect_decrypt_fail"
+	db := newDisconnectTestDB(t)
+
+	revokeCalled := false
+	mock := &MockAccessConnector{
+		FuncRevokeAccess: func(context.Context, map[string]interface{}, map[string]interface{}, AccessGrant) error {
+			revokeCalled = true
+			return nil
+		},
+	}
+	SwapConnector(t, provider, mock)
+
+	connectorID := "01HDISC00000000000000000C"
+	conn := &models.AccessConnector{
+		ID:            connectorID,
+		WorkspaceID:   "01HWORKSPACE0DISC00000000C",
+		Provider:      provider,
+		ConnectorType: "directory",
+		Status:        models.StatusConnected,
+		Credentials:   `{"api_key":"shhh"}`,
+		KeyVersion:    1,
+	}
+	if err := db.Create(conn).Error; err != nil {
+		t.Fatalf("seed connector: %v", err)
+	}
+	expires := time.Now().Add(24 * time.Hour)
+	reqID := "01HREQ00000000000000000012"
+	grant := &models.AccessGrant{
+		ID:                 "01HGRANT0DISC0000000000C",
+		RequestID:          &reqID,
+		WorkspaceID:        "01HWORKSPACE0DISC00000000C",
+		UserID:             "01HUSER0DISC00000000000C",
+		ConnectorID:        connectorID,
+		ResourceExternalID: "projects/baz",
+		Role:               "viewer",
+		GrantedAt:          time.Now(),
+		ExpiresAt:          &expires,
+	}
+	if err := db.Create(grant).Error; err != nil {
+		t.Fatalf("seed grant: %v", err)
+	}
+
+	provSvc := NewAccessProvisioningService(db)
+	svc := NewConnectorManagementService(db, failingEncryptor{}, provSvc, nil)
+
+	err := svc.Disconnect(context.Background(), connectorID)
+	if err == nil {
+		t.Fatalf("Disconnect: want error wrapping decrypt failure, got nil")
+	}
+	if !errors.Is(err, errDecryptBoom) {
+		t.Errorf("Disconnect error = %v; want it to wrap errDecryptBoom so operators see why upstream revocation was skipped", err)
+	}
+	if revokeCalled {
+		t.Errorf("RevokeAccess was called; expected per-grant upstream loop to be skipped on decrypt failure")
+	}
+
+	var deletedConn models.AccessConnector
+	if err := db.Unscoped().Where("id = ?", connectorID).First(&deletedConn).Error; err != nil {
+		t.Fatalf("reload connector: %v", err)
+	}
+	if !deletedConn.DeletedAt.Valid {
+		t.Errorf("expected connector deleted_at to be set even when decrypt failed; got %+v", deletedConn.DeletedAt)
+	}
+
+	var reloadedGrant models.AccessGrant
+	if err := db.Where("id = ?", grant.ID).First(&reloadedGrant).Error; err != nil {
+		t.Fatalf("reload grant: %v", err)
+	}
+	if reloadedGrant.RevokedAt == nil {
+		t.Errorf("expected grant.revoked_at to be set by bulk safety net even when decrypt failed; got nil")
+	}
+}

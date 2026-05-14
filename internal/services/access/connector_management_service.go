@@ -330,13 +330,7 @@ func (s *ConnectorManagementService) Disconnect(ctx context.Context, connectorID
 	// grants pointing at it would make the data model unrecoverable
 	// on the next provisioning sweep.
 	cfg, secrets, credErr := decodeConnectorCredentials(&conn, s.encryptor)
-	if credErr != nil {
-		// Surface the decryption failure so operators see why
-		// upstream revocation is being skipped instead of silently
-		// falling back to a DB-only mark.
-		return credErr
-	}
-	if s.provSvc != nil {
+	if credErr == nil && s.provSvc != nil {
 		var grants []models.AccessGrant
 		if err := s.db.WithContext(ctx).
 			Where("connector_id = ? AND revoked_at IS NULL", connectorID).
@@ -353,6 +347,12 @@ func (s *ConnectorManagementService) Disconnect(ctx context.Context, connectorID
 			}
 		}
 	}
+	// credErr != nil reaches here with the per-grant upstream loop
+	// skipped (no credentials to pass). The bulk DB-level revoke and
+	// soft-delete still run so the data model ends in a consistent
+	// state: grants are marked revoked_at, connector row gets
+	// deleted_at, and the decryption failure is surfaced as the
+	// return value so operators know upstream revocation did not run.
 	now := s.now()
 	if err := s.db.WithContext(ctx).
 		Model(&models.AccessGrant{}).
@@ -366,6 +366,9 @@ func (s *ConnectorManagementService) Disconnect(ctx context.Context, connectorID
 
 	if err := s.db.WithContext(ctx).Delete(&conn).Error; err != nil {
 		return fmt.Errorf("access: soft delete access_connector: %w", err)
+	}
+	if credErr != nil {
+		return fmt.Errorf("access: decrypt connector credentials (upstream revocation skipped, bulk DB revoke + soft delete applied): %w", credErr)
 	}
 	return nil
 }
