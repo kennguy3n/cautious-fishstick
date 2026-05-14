@@ -68,4 +68,4 @@ jobs:
       - name: Publish to internal npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm publish
+        run: npm publish --provenance

@@ -230,17 +230,19 @@ class AccessRequestListViewModel(
         } catch (e: AccessSDKException.Unauthenticated) {
             auth.refreshThenRetry { refresh() }
             UiState.Loading
-        } catch (e: AccessSDKException.Http) when (e.statusCode in 500..599) -> {
-            UiState.Error("ztna-api is unavailable (${e.statusCode}); retry in a moment.")
-        } catch (e: AccessSDKException.Http) -> {
-            UiState.Error("Request failed (${e.statusCode}): ${e.body ?: ""}")
-        } catch (e: AccessSDKException.Transport) -> {
+        } catch (e: AccessSDKException.Http) {
+            if (e.statusCode in 500..599) {
+                UiState.Error("ztna-api is unavailable (${e.statusCode}); retry in a moment.")
+            } else {
+                UiState.Error("Request failed (${e.statusCode}): ${e.body ?: ""}")
+            }
+        } catch (e: AccessSDKException.Transport) {
             UiState.Error("Network error: ${e.message}")
-        } catch (e: AccessSDKException.Decoding) -> {
+        } catch (e: AccessSDKException.Decoding) {
             UiState.Error("Unexpected server response: ${e.message}")
-        } catch (e: AccessSDKException.InvalidInput) -> {
+        } catch (e: AccessSDKException.InvalidInput) {
             UiState.Error("Bad input: ${e.message}")
-        } catch (e: AccessSDKException.NotConfigured) -> {
+        } catch (e: AccessSDKException.NotConfigured) {
             UiState.Error("The SDK has not been configured yet.")
         }
     }
