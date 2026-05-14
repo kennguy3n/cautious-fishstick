@@ -9,11 +9,20 @@ import (
 )
 
 // RevokeUserSessions implements access.SessionRevoker for Jira /
-// Atlassian Cloud. It calls DELETE /rest/api/3/user?accountId={id}
-// against the cloud-gateway proxy, which invalidates every active
-// Atlassian session and refresh token for the supplied account ID.
-// Atlassian Admin replicas reconcile within minutes so subsequent
-// sign-in attempts must round-trip the federated IdP.
+// Atlassian Cloud. Atlassian does not expose a per-user session
+// invalidation endpoint on the Jira site REST API, so the canonical
+// Phase 11 strategy is to POST the Atlassian Admin user-lifecycle
+// deactivation endpoint:
+//
+//	POST https://api.atlassian.com/users/{accountId}/manage/lifecycle/disable
+//
+// The endpoint deactivates the Atlassian account, which invalidates
+// every active session and refresh token across Jira / Confluence /
+// other Atlassian properties; the next sign-in must round-trip the
+// federated IdP. Deactivation is reversible (admins can re-enable) —
+// distinct from the pre-Phase-11-batch-6 implementation which called
+// the destructive DELETE /rest/api/3/user site endpoint and removed
+// the user permanently.
 //
 // userExternalID is the Atlassian accountId (the same value
 // SyncIdentities emits as Identity.ExternalID). 200 / 204 means
@@ -25,12 +34,12 @@ func (c *JiraAccessConnector) RevokeUserSessions(ctx context.Context, configRaw,
 	if userExternalID == "" {
 		return fmt.Errorf("jira: session revoke: userExternalID is required")
 	}
-	cfg, secrets, err := c.decodeBoth(configRaw, secretsRaw)
+	_, secrets, err := c.decodeBoth(configRaw, secretsRaw)
 	if err != nil {
 		return err
 	}
-	fullURL := c.baseURL(cfg) + "/rest/api/3/user?accountId=" + url.QueryEscape(userExternalID)
-	req, err := c.newRequest(ctx, secrets, http.MethodDelete, fullURL)
+	fullURL := c.adminBaseURL() + "/users/" + url.PathEscape(userExternalID) + "/manage/lifecycle/disable"
+	req, err := c.newRequest(ctx, secrets, http.MethodPost, fullURL)
 	if err != nil {
 		return err
 	}

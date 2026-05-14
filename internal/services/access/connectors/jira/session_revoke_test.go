@@ -9,11 +9,10 @@ import (
 )
 
 func TestRevokeUserSessions_HappyPath(t *testing.T) {
-	var seenMethod, seenPath, seenQuery string
+	var seenMethod, seenPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seenMethod = r.Method
 		seenPath = r.URL.Path
-		seenQuery = r.URL.RawQuery
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(srv.Close)
@@ -23,14 +22,19 @@ func TestRevokeUserSessions_HappyPath(t *testing.T) {
 	if err := c.RevokeUserSessions(context.Background(), validConfig(), validSecrets(), "557058:abc-1"); err != nil {
 		t.Fatalf("RevokeUserSessions: %v", err)
 	}
-	if seenMethod != http.MethodDelete {
-		t.Errorf("method=%q; want DELETE", seenMethod)
+	if seenMethod != http.MethodPost {
+		t.Errorf("method=%q; want POST", seenMethod)
 	}
-	if !strings.HasSuffix(seenPath, "/rest/api/3/user") {
-		t.Errorf("path=%q; want suffix /rest/api/3/user", seenPath)
+	// The Atlassian Admin lifecycle-disable path. r.URL.Path is the
+	// decoded form (':' is not percent-encoded by the test server),
+	// so assert against the unescaped accountId.
+	wantSuffix := "/users/557058:abc-1/manage/lifecycle/disable"
+	if !strings.HasSuffix(seenPath, wantSuffix) {
+		t.Errorf("path=%q; want suffix %q", seenPath, wantSuffix)
 	}
-	if !strings.Contains(seenQuery, "accountId=557058%3Aabc-1") {
-		t.Errorf("query=%q; want accountId=557058%%3Aabc-1", seenQuery)
+	// Regression: we must NOT hit the destructive site-level Delete User endpoint.
+	if strings.Contains(seenPath, "/rest/api/3/user") {
+		t.Errorf("path=%q hit the destructive DELETE /rest/api/3/user endpoint; want admin lifecycle path", seenPath)
 	}
 }
 

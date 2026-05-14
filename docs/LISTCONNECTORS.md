@@ -258,7 +258,7 @@ Best-effort upstream session termination wired into `JMLService.HandleLeaver`. E
 | 9 | Zendesk | `zendesk/` | `DELETE /api/v2/users/{id}/sessions.json` |
 | 10 | HubSpot | `hubspot/` | `DELETE /settings/v3/users/{userId}` |
 | 11 | Dropbox | `dropbox/` | `POST /2/team/members/revoke_device_sessions` |
-| 12 | Jira/Atlassian | `jira/` | `DELETE /wiki/rest/api/user/{accountId}/sessions` |
+| 12 | Jira/Atlassian | `jira/` | `POST /users/{accountId}/manage/lifecycle/disable` (Atlassian Admin lifecycle) |
 | 13 | Notion | `notion/` | `PATCH /v1/users/{user_id}` (deactivate) |
 | 14 | BambooHR | `bamboohr/` | `PUT /v1/employees/{id}/terminateEmployee` |
 
@@ -275,7 +275,7 @@ Returns `(enforced bool, details string, err error)`. Transport / auth failures 
 | 5 | GitHub | `github/` | `GET /orgs/{org}/credential-authorizations` |
 | 6 | Microsoft | `microsoft/` | `policies/authenticationMethodsPolicy` |
 | 7 | Auth0 | `auth0/` | `GET /api/v2/connections` |
-| 8 | Ping Identity | `ping_identity/` | `GET /environments/{envId}/signOnPolicies` |
+| 8 | Ping Identity | `ping_identity/` | `GET /environments/{envId}/signOnPolicies` + `GET .../signOnPolicies/{policyId}/actions` (rejects LOGIN-fallback actions) |
 | 9 | Zendesk | `zendesk/` | `GET /api/v2/account/settings.json` |
 | 10 | BambooHR | `bamboohr/` | `GET /v1/meta/security` |
 | 11 | Workday | `workday/` | REST API authentication-policy endpoint |
