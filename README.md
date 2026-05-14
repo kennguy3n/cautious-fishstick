@@ -123,6 +123,14 @@ Server-side AI agents over the A2A protocol provide:
 
 Mobile and desktop clients are thin REST / IPC clients — no on-device model inference, ever. Enforced by [`scripts/check_no_model_files.sh`](scripts/check_no_model_files.sh).
 
+### Hybrid access model (Phase 11)
+
+- **Per-connector access mode** — every connector is auto-classified as `tunnel` (private resource, OpenZiti dataplane), `sso_only` (federated through Keycloak), or `api_only` (direct SaaS REST). The platform skips the OpenZiti policy write for `sso_only` / `api_only` rows so a SaaS-heavy estate does not pay tunnel overhead it doesn't need.
+- **Unused-app-account reconciler** — a daily cron cross-references upstream SaaS users against the IdP pivot and flags accounts the IdP no longer knows about. Operators triage them in the admin UI (revoke / dismiss / acknowledge).
+- **SSO-only enforcement verification** — connectors that federate through Keycloak optionally implement `SSOEnforcementChecker`, so the health endpoint can surface "SSO-only mode is OFF" warnings the operator can fix without leaving the dashboard.
+- **Five-layer leaver kill switch** — a single off-boarding call now revokes grants, removes team memberships, disables the Keycloak user, revokes upstream sessions across every connector that supports it, SCIM-deprovisions everywhere it can, and disables the OpenZiti identity. Every layer is best-effort and idempotent.
+- **Automatic grant expiry** — `GrantExpiryEnforcer` ticks every `ACCESS_GRANT_EXPIRY_CHECK_INTERVAL` (default 1h) and revokes expired grants through the same path the Phase 5 reviewer flow uses.
+
 ---
 
 ## Architecture overview

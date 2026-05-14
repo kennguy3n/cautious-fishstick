@@ -495,7 +495,117 @@ All three SDKs target the same REST surface on `ztna-api`:
 
 ---
 
-## 12. Open questions / future work
+## 13. Hybrid Access Model (Phase 11)
+
+Phase 11 extends the access platform with a hybrid access posture so the
+operator can run a SaaS-heavy workload without paying OpenZiti tunnel
+overhead, while still safely off-boarding leavers across every channel
+the user has access to.
+
+### 13.1 Access mode classification (per connector)
+
+Every `access_connectors` row carries an `access_mode` column with one of
+three values:
+
+- `tunnel` — private / self-hosted resource fronted by an OpenZiti
+  dataplane tunnel. Default for connectors whose `connector_type`
+  declares a private endpoint.
+- `sso_only` — SaaS app federated through Keycloak. The platform never
+  pushes grants and never opens a tunnel for `sso_only` rows; the SAML /
+  OIDC redirect IS the access. Auto-classified at Connect time when
+  `GetSSOMetadata` returns a non-nil metadata block and the Keycloak
+  federation handshake succeeds.
+- `api_only` — SaaS app reachable directly via the connector's REST
+  surface. Default for everything else.
+
+The mode is operator-overridable via `PATCH /access/connectors/:id`. The
+classification is surfaced from `PolicyService.Promote` so the
+`ztna-business-layer` can skip the OpenZiti `ServicePolicy` write for
+`sso_only` / `api_only` rows.
+
+### 13.2 SSO-only enforcement verification
+
+Connectors that federate through Keycloak optionally implement
+`SSOEnforcementChecker.CheckSSOEnforcement`. The connector setup flow
+calls the checker after SSO federation succeeds and includes a warning
+in the connect response when password-login is still permitted upstream.
+The connector health endpoint surfaces `sso_enforcement_status` so the
+admin UI can render an "SSO-only mode is OFF" warning that operators can
+remediate without leaving the dashboard. The orphan reconciler re-checks
+this status on every daily pass.
+
+Top-six implementations: Salesforce, Google Workspace, Okta, Slack,
+GitHub, Microsoft.
+
+### 13.3 Session revocation (kill the live session, not just the grant)
+
+Phase 5 revoke removed the upstream entitlement but did not kick the
+user out of any session they had already established. Phase 11 adds the
+`SessionRevoker.RevokeUserSessions` optional capability and implements
+it for the highest-impact connectors:
+
+| Connector | Upstream endpoint |
+|-----------|-------------------|
+| Okta | `DELETE /api/v1/users/{userId}/sessions` |
+| Google Workspace | `POST /admin/directory/v1/users/{userKey}/signOut` |
+| Microsoft (Graph) | `POST /users/{id}/revokeSignInSessions` |
+| Salesforce | `DELETE /services/oauth2/revoke` |
+| Slack | `POST /auth.revoke` |
+| Auth0 | `POST /api/v2/users/{id}/multifactor/actions/invalidate-remember-browser` |
+| GitHub | org membership removal |
+
+All session-revocation calls are best-effort: failures are logged but
+never block the rest of the leaver flow.
+
+### 13.4 Unused app-account reconciliation (orphan accounts)
+
+The reconciler periodically asks every connector "who do you see?" and
+cross-references the result against the IdP-side `team_members` pivot.
+Upstream users with no IdP record are persisted to
+`access_orphan_accounts` (status `detected`). Operators see them in the
+admin UI labelled as "unused app accounts" (SN360 language) and may
+either revoke (`auto_revoked`), dismiss permanently (`dismissed`), or
+acknowledge (`acknowledged`).
+
+The reconciler runs on a configurable schedule
+(`ACCESS_ORPHAN_RECONCILE_INTERVAL`, default `24h`). New detections
+fire a notification through the existing `NotificationService`.
+
+### 13.5 Five-layer leaver kill switch
+
+The Phase 4 leaver flow used to do two things: revoke active grants and
+remove team memberships. Phase 11 extends `JMLService.HandleLeaver` into
+a five-layer kill switch so a single off-boarding call locks the user
+out of every channel the platform knows about:
+
+1. Revoke all active access grants (existing).
+2. Remove team memberships (existing).
+3. Disable the Keycloak user (kill SSO at the IdP).
+4. Revoke active sessions across every connector implementing
+   `SessionRevoker` (kill SaaS sign-in tokens).
+5. SCIM-deprovision across every connector implementing
+   `SCIMProvisioner` (drop the upstream user object).
+6. Disable the OpenZiti identity (kill tunnel access; existing).
+
+Every layer is best-effort: a failure in any one layer logs but does
+not block the others. The flow is idempotent — replaying it on a
+half-applied leaver is safe.
+
+### 13.6 Automatic grant expiry enforcement
+
+`GrantExpiryEnforcer` is the Phase 11 cron job that runs every
+`ACCESS_GRANT_EXPIRY_CHECK_INTERVAL` (default `1h`) and revokes every
+`access_grants` row whose `expires_at` has passed. Revocation goes
+through the same `AccessProvisioningService.Revoke` path as the
+reviewer-driven Phase 5 flow so the upstream side-effects (connector
+revoke + DB stamp + audit event) are identical regardless of trigger.
+
+This closes the "approved JIT grant that nobody bothers to clean up"
+gap and makes time-bounded access posture the default.
+
+---
+
+## 14. Open questions / future work
 
 Listed so they don't get rediscovered:
 
