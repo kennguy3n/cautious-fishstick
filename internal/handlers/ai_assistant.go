@@ -62,7 +62,7 @@ type assistantResponse struct {
 // policy_recommendation because Phase 4 designates it as the
 // default "ask anything" skill.
 func classifyIntent(query string) string {
-	q := strings.ToLower(query)
+	q := normalizeIntentQuery(query)
 	switch {
 	case containsAny(q, "risk", "risky", "threat", "danger", "compromise"):
 		return "risk_assessment"
@@ -73,6 +73,54 @@ func classifyIntent(query string) string {
 	default:
 		return "policy_recommendation"
 	}
+}
+
+// normalizeIntentQuery lower-cases the query and replaces every
+// non-alphanumeric rune with a single space so the trailing-space
+// keyword guards ("connect ") match a query like "how do I connect?"
+// without also lighting up on "connected" or "connection". Multiple
+// whitespace runs collapse so "set up" still matches even when the
+// user types "set  up" or "set-up".
+func normalizeIntentQuery(query string) string {
+	lower := strings.ToLower(query)
+	var b strings.Builder
+	b.Grow(len(lower) + 2)
+	// Pad with leading/trailing spaces so the "connect " trailing-space
+	// guard hits the end of the string the same way it hits the middle.
+	b.WriteByte(' ')
+	lastSpace := true
+	for _, r := range lower {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastSpace = false
+			continue
+		}
+		if !lastSpace {
+			b.WriteByte(' ')
+			lastSpace = true
+		}
+	}
+	if !lastSpace {
+		b.WriteByte(' ')
+	}
+	return b.String()
+}
+
+// validSkillOverrides is the closed allowlist of skill names the
+// /access/assistant endpoint accepts as an explicit override. Skills
+// outside this set are rejected with 400 rather than forwarded to
+// the agent (which would surface as an opaque 502 "agent reachable
+// but call failed").
+var validSkillOverrides = map[string]struct{}{
+	"risk_assessment":          {},
+	"access_anomaly_detection": {},
+	"connector_setup":          {},
+	"policy_recommendation":    {},
+}
+
+func isValidSkillOverride(skill string) bool {
+	_, ok := validSkillOverrides[skill]
+	return ok
 }
 
 // containsAny returns true if haystack contains any of the
@@ -128,6 +176,13 @@ func (h *AIHandler) Assistant(c *gin.Context) {
 	if skill == "" {
 		skill = classifyIntent(req.Query)
 		intent = skill
+	} else if !isValidSkillOverride(skill) {
+		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
+			Error:   "unknown_skill",
+			Code:    "validation_failed",
+			Message: "skill must be one of risk_assessment, access_anomaly_detection, connector_setup, policy_recommendation",
+		})
+		return
 	}
 
 	// Forward the full request (including the natural-language

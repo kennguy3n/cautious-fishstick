@@ -84,6 +84,19 @@ type Dependencies struct {
 	// May be nil; the middleware is then a no-op and /metrics returns
 	// a minimal "up" gauge so the route stays reachable for k8s probes.
 	Metrics *MetricsRegistry
+
+	// RateLimiter governs per-workspace throttling on the /access/*
+	// and /workspace/* prefixes. Set to nil to disable rate limiting
+	// entirely (useful for handler tests that hammer the router in a
+	// loop). When the field is omitted from a Router(Dependencies{...})
+	// call site, Router constructs a default limiter from
+	// ZTNA_API_RATE_LIMIT_RPS so the production wiring stays unchanged.
+	RateLimiter *RateLimiter
+
+	// DisableRateLimiter forces the rate limiter off even when
+	// RateLimiter is nil. Set this in tests that need an unthrottled
+	// router but don't want to manage a *RateLimiter instance.
+	DisableRateLimiter bool
 }
 
 // Router builds the *gin.Engine that serves the access platform's
@@ -100,7 +113,11 @@ func Router(deps Dependencies) *gin.Engine {
 	r.Use(gin.Recovery())
 	r.Use(JSONLoggerMiddleware())
 	r.Use(MetricsMiddleware(deps.Metrics))
-	r.Use(NewRateLimiter().Middleware())
+	limiter := deps.RateLimiter
+	if limiter == nil && !deps.DisableRateLimiter {
+		limiter = NewRateLimiter()
+	}
+	r.Use(limiter.Middleware())
 	r.Use(JSONValidationMiddleware())
 
 	r.GET("/health", HealthHandler)

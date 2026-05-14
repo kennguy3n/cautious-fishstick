@@ -96,6 +96,13 @@ func (h *histogram) observe(v float64) {
 // labelKey serializes label name/value pairs into a stable map key.
 // The order of (name, value) pairs is preserved because callers pass
 // labels in a fixed order per metric family.
+//
+// The serialization uses `|` as the pair separator and `=` as the
+// name/value separator. Both characters are escaped in the value to
+// keep the encoding round-trippable through splitLabels — without
+// the escape, a value containing `|` (e.g. an arbitrary connector
+// provider string) would silently collide with another labelset
+// and corrupt the Prometheus output.
 func labelKey(pairs ...string) string {
 	if len(pairs)%2 != 0 {
 		panic("labelKey: odd number of arguments")
@@ -107,7 +114,40 @@ func labelKey(pairs ...string) string {
 		}
 		b.WriteString(pairs[i])
 		b.WriteByte('=')
-		b.WriteString(pairs[i+1])
+		b.WriteString(escapeLabelKeyValue(pairs[i+1]))
+	}
+	return b.String()
+}
+
+// labelKeyEscaper escapes `\`, `|`, and `=` in label values so the
+// `|`-separated, `=`-pair-delimited encoding produced by labelKey
+// stays unambiguous regardless of the value contents.
+var labelKeyEscaper = strings.NewReplacer(
+	`\`, `\\`,
+	`|`, `\|`,
+	`=`, `\=`,
+)
+
+func escapeLabelKeyValue(v string) string {
+	return labelKeyEscaper.Replace(v)
+}
+
+// unescapeLabelKeyValue reverses escapeLabelKeyValue. Used by
+// splitLabels to recover the original label value from a labelKey
+// segment.
+func unescapeLabelKeyValue(v string) string {
+	if !strings.ContainsRune(v, '\\') {
+		return v
+	}
+	var b strings.Builder
+	b.Grow(len(v))
+	for i := 0; i < len(v); i++ {
+		if v[i] == '\\' && i+1 < len(v) {
+			b.WriteByte(v[i+1])
+			i++
+			continue
+		}
+		b.WriteByte(v[i])
 	}
 	return b.String()
 }
@@ -300,27 +340,66 @@ func splitLabels(k string) []string {
 	if k == "" {
 		return nil
 	}
-	parts := strings.Split(k, "|")
+	parts := splitLabelKey(k)
 	pairs := make([]string, 0, len(parts)*2)
 	for _, p := range parts {
-		eq := strings.IndexByte(p, '=')
+		eq := indexUnescaped(p, '=')
 		if eq < 0 {
 			continue
 		}
-		pairs = append(pairs, p[:eq], p[eq+1:])
+		pairs = append(pairs, p[:eq], unescapeLabelKeyValue(p[eq+1:]))
 	}
 	return pairs
 }
 
+// splitLabelKey splits a labelKey string on un-escaped `|` so an
+// escaped `\|` inside a value does not start a new pair.
+func splitLabelKey(k string) []string {
+	var out []string
+	start := 0
+	for i := 0; i < len(k); i++ {
+		if k[i] == '\\' && i+1 < len(k) {
+			i++
+			continue
+		}
+		if k[i] == '|' {
+			out = append(out, k[start:i])
+			start = i + 1
+		}
+	}
+	out = append(out, k[start:])
+	return out
+}
+
+// indexUnescaped returns the index of the first un-escaped byte b
+// in s, or -1 if not found.
+func indexUnescaped(s string, b byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			i++
+			continue
+		}
+		if s[i] == b {
+			return i
+		}
+	}
+	return -1
+}
+
+// labelValueEscaper escapes characters that the Prometheus text
+// exposition format requires escaping inside a double-quoted label
+// value (backslash, double-quote, newline). Hoisted to package level
+// because escapeLabelValue is called once per label per bucket per
+// histogram per scrape — re-allocating the Replacer on every call
+// would dominate the /metrics CPU profile on a busy cluster.
+var labelValueEscaper = strings.NewReplacer(
+	`\`, `\\`,
+	`"`, `\"`,
+	"\n", `\n`,
+)
+
 func escapeLabelValue(v string) string {
-	// Prometheus exposition: backslash and double-quote must be
-	// escaped; newline rendered as \n.
-	r := strings.NewReplacer(
-		`\`, `\\`,
-		`"`, `\"`,
-		"\n", `\n`,
-	)
-	return r.Replace(v)
+	return labelValueEscaper.Replace(v)
 }
 
 func sortedKeys[V any](m map[string]V) []string {
@@ -355,6 +434,18 @@ func MetricsHandler(registry *MetricsRegistry) gin.HandlerFunc {
 	}
 }
 
+// metricsSelfInstrumentationSkip lists the paths the middleware
+// must not record into the registry. /metrics is the Prometheus
+// scrape itself (15-30s intervals) and /health is the kube-probe
+// stream — both would dominate the request count and skew the
+// p50/p95 latency histograms with their own overhead. Matching is
+// exact on c.FullPath so a route accidentally registered under
+// /metrics/* is still observed.
+var metricsSelfInstrumentationSkip = map[string]struct{}{
+	"/metrics": {},
+	"/health":  {},
+}
+
 // MetricsMiddleware returns a Gin middleware that observes every
 // request's method + matched route + status into the registry. The
 // matched route (c.FullPath) is preferred over the raw URL so
@@ -371,6 +462,9 @@ func MetricsMiddleware(registry *MetricsRegistry) gin.HandlerFunc {
 		path := c.FullPath()
 		if path == "" {
 			path = "unmatched"
+		}
+		if _, skip := metricsSelfInstrumentationSkip[path]; skip {
+			return
 		}
 		registry.ObserveHTTPRequest(c.Request.Method, path, c.Writer.Status(), time.Since(start))
 	}

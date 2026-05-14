@@ -358,6 +358,12 @@ return nil, fmt.Errorf("access: list access_request_state_history: %w", err)
 
 detail := &AccessRequestDetail{Request: req, History: history}
 
+// Skip the grant lookup entirely unless the request reached a
+// state where Provision could have written an access_grants row.
+// Pending / denied / cancelled requests never have a grant, so
+// the extra round-trip would always miss — not free, given the
+// per-request volume of the Admin UI's triage page.
+if requestStateHasGrant(req.State) {
 var grant models.AccessGrant
 err = s.db.WithContext(ctx).
 Where("request_id = ?", requestID).
@@ -367,13 +373,30 @@ switch {
 case err == nil:
 detail.Grant = &grant
 case errors.Is(err, gorm.ErrRecordNotFound):
-// No grant yet — leave detail.Grant nil. Common for
-// requested / denied / cancelled requests.
+// Provision succeeded but the grant row is gone (revoked,
+// soft-deleted, manually cleaned up). Leave detail.Grant nil.
 default:
 return nil, fmt.Errorf("access: get access_grant for request: %w", err)
 }
+}
 
 return detail, nil
+}
+
+// requestStateHasGrant reports whether the request lifecycle state
+// could possibly have a matching access_grants row. Used by
+// GetRequest to avoid an indexed SELECT on every pending/denied
+// /access/requests/:id GET.
+func requestStateHasGrant(state string) bool {
+	switch state {
+	case models.RequestStateProvisioning,
+		models.RequestStateProvisioned,
+		models.RequestStateActive,
+		models.RequestStateExpired,
+		models.RequestStateRevoked:
+		return true
+	}
+	return false
 }
 
 // transitionRequest is the shared implementation behind Approve / Deny /

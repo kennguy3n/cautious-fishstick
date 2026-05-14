@@ -5,8 +5,20 @@
 # region production deployment; smaller dev clusters can shrink
 # replicaCounts and resource ceilings without further edits.
 
+# -- Override the chart name used in resource names. Empty falls
+# back to .Chart.Name ("shieldnet-access"). Declared explicitly so
+# operators reading values.yaml can discover the override hook
+# without having to read _helpers.tpl.
+nameOverride: ""
+
 # -- Override the namespace name. Set to "" to deploy into the
 # release namespace.
+#
+# WARNING: the default inter-service URLs in .ztnaApi.config.* and
+# .accessWorker.config.* hardcode `shieldnet-access` in their
+# host segment (e.g. http://access-ai-agent.shieldnet-access.svc).
+# If you change `namespace` you MUST update those URLs to match, or
+# inter-service DNS lookups silently fail at boot.
 namespace: shieldnet-access
 createNamespace: true
 
@@ -31,6 +43,20 @@ ztnaApi:
     maxReplicas: 10
     cpuUtilization: 70
     memoryUtilization: 80
+    # Behavior knobs mirror deploy/k8s/ztna-api/hpa.yaml. Scale-down
+    # is conservative (300s stabilisation, 50% per 60s) so a brief
+    # traffic dip does not strip capacity; scale-up is responsive
+    # (30s stabilisation, +100% or +2 pods per 30s, whichever is
+    # larger) so traffic returning hits warm replicas.
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      percentValue: 50
+      periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      percentValue: 100
+      podsValue: 2
+      periodSeconds: 30
   resources:
     requests:
       cpu: "200m"

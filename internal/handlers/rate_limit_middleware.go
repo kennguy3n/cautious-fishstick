@@ -64,6 +64,16 @@ const idleEvictionAfter = 10 * time.Minute
 // and a Prometheus scrape job would otherwise share the same bucket
 // as a real client and either get throttled themselves or quickly
 // burn through the bucket capacity, masking real abuse.
+//
+// /scim/* is intentionally omitted: SCIM endpoints are called by
+// upstream IdP connectors (Okta, Auth0, Azure AD) which already have
+// their own rate budgets and a separate validation pipeline in
+// scim_handler.go. Adding the same throttle here would create a
+// dual-throttle that masks IdP misbehaviour without protecting any
+// resource we couldn't already protect through the IdP's own quotas.
+// Operators worried about a compromised IdP connector token should
+// scope that risk by rotating the SCIM bearer in the IdP, not by
+// extending the rate limiter into /scim/*.
 var rateLimitedPathPrefixes = []string{
 	"/access/",
 	"/workspace/",
@@ -269,6 +279,19 @@ func shouldRateLimit(path string) bool {
 // connector_catalogue_handler.go, ...). If absent we fall back to
 // ClientIP so unauthenticated abuse still gets throttled — the
 // limiter never lets an unidentified caller run unbounded.
+//
+// IMPORTANT: many POST endpoints (POST /access/requests,
+// POST /access/connectors/batch-status, POST /access/reviews) carry
+// `workspace_id` in the JSON body rather than as a query parameter
+// or header. The middleware does NOT consume the request body to
+// inspect that field — reading the body here would force every
+// downstream handler to re-read it from an io.NopCloser tee, which
+// is a meaningful overhead on every request. As a result, those POST
+// flows bucket on ClientIP today. Behind a shared proxy this means
+// multiple tenants can share one bucket. Clients that need per-
+// workspace isolation on POST flows should send the workspace_id as
+// a query parameter OR the X-Workspace-ID header in addition to the
+// body; the handlers tolerate both shapes.
 func identifierFor(c *gin.Context) string {
 	if ws := c.Query("workspace_id"); ws != "" {
 		return "ws:" + ws

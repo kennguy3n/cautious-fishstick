@@ -3,11 +3,8 @@ package access
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
-
-	"gorm.io/gorm"
 
 	"github.com/kennguy3n/cautious-fishstick/internal/models"
 )
@@ -145,12 +142,13 @@ func (s *PolicyService) DiffPolicy(ctx context.Context, workspaceID, policyID st
 // does not block the entire diff endpoint.
 func (s *PolicyService) baselineLiveScope(ctx context.Context, workspaceID, excludePolicyID string) (members []string, resources []string, err error) {
 	var live []models.Policy
+	// GORM's Find returns (empty slice, nil) when no rows match —
+	// gorm.ErrRecordNotFound is only emitted by First/Last/Take.
+	// Any non-nil error here is a real DB failure and propagates.
 	if err := s.db.WithContext(ctx).
 		Where("workspace_id = ? AND is_draft = ? AND is_active = ? AND id <> ?", workspaceID, false, true, excludePolicyID).
 		Find(&live).Error; err != nil {
-		if !isRecordNotFound(err) {
-			return nil, nil, fmt.Errorf("access: select live policies: %w", err)
-		}
+		return nil, nil, fmt.Errorf("access: select live policies: %w", err)
 	}
 	memberSet := make(map[string]struct{})
 	resourceSet := make(map[string]struct{})
@@ -239,12 +237,4 @@ func nonNilStrings(in []string) []string {
 		return []string{}
 	}
 	return in
-}
-
-// isRecordNotFound is a thin wrapper around errors.Is(err,
-// gorm.ErrRecordNotFound) so policy_diff.go reads as a focused
-// service file without inlining gorm semantics across every call
-// site.
-func isRecordNotFound(err error) bool {
-	return errors.Is(err, gorm.ErrRecordNotFound)
 }

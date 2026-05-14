@@ -34,7 +34,7 @@ type AccessGrant struct {
 	ConnectorID        string         `gorm:"type:varchar(26);not null;index" json:"connector_id"`
 	ResourceExternalID string         `gorm:"type:varchar(255);not null" json:"resource_external_id"`
 	Role               string         `gorm:"type:varchar(100);not null" json:"role"`
-	RequestID          *string        `gorm:"type:varchar(26)" json:"request_id,omitempty"`
+	RequestID          *string        `gorm:"type:varchar(26);index" json:"request_id,omitempty"`
 	GrantedAt          time.Time      `gorm:"not null" json:"granted_at"`
 	ExpiresAt          *time.Time     `json:"expires_at,omitempty"`
 	LastUsedAt         *time.Time     `json:"last_used_at,omitempty"`
