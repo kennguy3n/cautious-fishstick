@@ -68,8 +68,14 @@ type JMLService struct {
 	// realmFor maps a workspace ID to its Keycloak realm. Defaults
 	// to identity (the workspace ID is the realm name).
 	realmFor func(workspaceID string) string
-	now      func() time.Time
-	newID    func() string
+	// auditProducer is the optional Phase 11 hook into the
+	// ShieldnetLogEvent audit pipeline. When set, HandleLeaver
+	// publishes a LeaverKillSwitchEvent for each kill-switch layer
+	// it fires. nil means dev / test mode — events are dropped
+	// silently so binaries without a Kafka broker keep working.
+	auditProducer AuditProducer
+	now           func() time.Time
+	newID         func() string
 }
 
 // NewJMLService returns a new service backed by db. db must not be
@@ -124,6 +130,36 @@ func (s *JMLService) SetSSOFederationService(svc *SSOFederationService) {
 // revoke / SCIM deprovision layers are skipped with a log line.
 func (s *JMLService) SetConnectorCredentialsLoader(l *ConnectorCredentialsLoader) {
 	s.credLoader = l
+}
+
+// SetAuditProducer wires the Phase 11 audit producer onto the
+// service. When set, HandleLeaver publishes a
+// LeaverKillSwitchEvent for each kill-switch layer it fires (one
+// per connector for the per-connector layers). Passing nil restores
+// the default "no audit" behaviour. Call this once at boot from
+// cmd/ztna-api; it is NOT safe to call concurrently with
+// HandleLeaver.
+func (s *JMLService) SetAuditProducer(p AuditProducer) {
+	s.auditProducer = p
+}
+
+// emitLeaverEvent is the internal helper HandleLeaver calls to
+// publish one kill-switch audit event. nil producer is a no-op;
+// publish errors log but never block the kill switch.
+func (s *JMLService) emitLeaverEvent(ctx context.Context, ev LeaverKillSwitchEvent) {
+	if s.auditProducer == nil {
+		return
+	}
+	if ev.Timestamp.IsZero() {
+		if s.now != nil {
+			ev.Timestamp = s.now()
+		} else {
+			ev.Timestamp = time.Now().UTC()
+		}
+	}
+	if err := publishLeaverEvent(ctx, s.auditProducer, ev); err != nil {
+		log.Printf("access: leaver audit publish failed for layer %s: %v", ev.Layer, err)
+	}
 }
 
 // SetKeycloakRealmResolver overrides the default workspace-id-is-
@@ -461,13 +497,28 @@ func (s *JMLService) HandleLeaver(ctx context.Context, workspaceID, userID strin
 		if err := s.provisioningSvc.Revoke(ctx, g, nil, nil); err != nil {
 			if errors.Is(err, ErrAlreadyRevoked) {
 				out.Revoked = append(out.Revoked, res)
+				s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+					WorkspaceID: workspaceID, UserID: userID,
+					Layer: LeaverLayerGrantRevoke, ConnectorID: g.ConnectorID,
+					Status: LeaverStatusSuccess,
+				})
 				continue
 			}
 			res.Err = err
 			out.Failed = append(out.Failed, res)
+			s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+				WorkspaceID: workspaceID, UserID: userID,
+				Layer: LeaverLayerGrantRevoke, ConnectorID: g.ConnectorID,
+				Status: LeaverStatusFailed, Error: err.Error(),
+			})
 			continue
 		}
 		out.Revoked = append(out.Revoked, res)
+		s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+			WorkspaceID: workspaceID, UserID: userID,
+			Layer: LeaverLayerGrantRevoke, ConnectorID: g.ConnectorID,
+			Status: LeaverStatusSuccess,
+		})
 	}
 
 	if err := s.removeUserFromAllTeams(ctx, userID); err != nil {
@@ -477,6 +528,16 @@ func (s *JMLService) HandleLeaver(ctx context.Context, workspaceID, userID strin
 		// to Failed so the caller can see the partial state.
 		log.Printf("access: leaver %s: remove from teams: %v", userID, err)
 		out.Failed = append(out.Failed, JMLGrantResult{Err: err})
+		s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+			WorkspaceID: workspaceID, UserID: userID,
+			Layer: LeaverLayerTeamRemove, Status: LeaverStatusFailed,
+			Error: err.Error(),
+		})
+	} else {
+		s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+			WorkspaceID: workspaceID, UserID: userID,
+			Layer: LeaverLayerTeamRemove, Status: LeaverStatusSuccess,
+		})
 	}
 
 	// Phase 11 five-layer leaver kill switch — every step is
@@ -501,6 +562,10 @@ func (s *JMLService) HandleLeaver(ctx context.Context, workspaceID, userID strin
 func (s *JMLService) disableKeycloakUser(ctx context.Context, workspaceID, userID string) {
 	if s.ssoFedSvc == nil {
 		log.Printf("access: leaver %s in workspace %s: keycloak disable is stubbed (no sso federation service wired)", userID, workspaceID)
+		s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+			WorkspaceID: workspaceID, UserID: userID,
+			Layer: LeaverLayerKeycloakDisable, Status: LeaverStatusSkipped,
+		})
 		return
 	}
 	realm := workspaceID
@@ -510,10 +575,25 @@ func (s *JMLService) disableKeycloakUser(ctx context.Context, workspaceID, userI
 	if err := s.ssoFedSvc.DisableKeycloakUser(ctx, realm, userID); err != nil {
 		if errors.Is(err, ErrSSOFederationDisabled) || errors.Is(err, ErrSSOFederationUnsupported) {
 			log.Printf("access: leaver %s in workspace %s: keycloak disable skipped: %v", userID, workspaceID, err)
+			s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+				WorkspaceID: workspaceID, UserID: userID,
+				Layer: LeaverLayerKeycloakDisable, Status: LeaverStatusSkipped,
+				Error: err.Error(),
+			})
 			return
 		}
 		log.Printf("access: leaver %s in workspace %s: keycloak DisableKeycloakUser failed: %v", userID, workspaceID, err)
+		s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+			WorkspaceID: workspaceID, UserID: userID,
+			Layer: LeaverLayerKeycloakDisable, Status: LeaverStatusFailed,
+			Error: err.Error(),
+		})
+		return
 	}
+	s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+		WorkspaceID: workspaceID, UserID: userID,
+		Layer: LeaverLayerKeycloakDisable, Status: LeaverStatusSuccess,
+	})
 }
 
 // revokeSessionsAcrossConnectors loads every connector the user
@@ -523,31 +603,66 @@ func (s *JMLService) disableKeycloakUser(ctx context.Context, workspaceID, userI
 func (s *JMLService) revokeSessionsAcrossConnectors(ctx context.Context, workspaceID, userID string, members map[string]string) {
 	if s.credLoader == nil || s.getConnectorFn == nil {
 		log.Printf("access: leaver %s in workspace %s: session revoke skipped (no credentials loader wired)", userID, workspaceID)
+		s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+			WorkspaceID: workspaceID, UserID: userID,
+			Layer: LeaverLayerSessionRevoke, Status: LeaverStatusSkipped,
+		})
 		return
 	}
 	for connectorID, externalID := range members {
 		cfg, secrets, lerr := s.credLoader.LoadConnectorCredentials(ctx, connectorID)
 		if lerr != nil {
 			log.Printf("access: leaver %s connector %s: load credentials: %v", userID, connectorID, lerr)
+			s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+				WorkspaceID: workspaceID, UserID: userID,
+				Layer: LeaverLayerSessionRevoke, ConnectorID: connectorID,
+				Status: LeaverStatusFailed, Error: lerr.Error(),
+			})
 			continue
 		}
 		provider, perr := s.provisioningSvc.lookupProvider(ctx, connectorID)
 		if perr != nil {
 			log.Printf("access: leaver %s connector %s: lookup provider: %v", userID, connectorID, perr)
+			s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+				WorkspaceID: workspaceID, UserID: userID,
+				Layer: LeaverLayerSessionRevoke, ConnectorID: connectorID,
+				Status: LeaverStatusFailed, Error: perr.Error(),
+			})
 			continue
 		}
 		connector, cerr := s.getConnectorFn(provider)
 		if cerr != nil {
 			log.Printf("access: leaver %s connector %s: get connector %s: %v", userID, connectorID, provider, cerr)
+			s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+				WorkspaceID: workspaceID, UserID: userID,
+				Layer: LeaverLayerSessionRevoke, ConnectorID: connectorID,
+				Status: LeaverStatusFailed, Error: cerr.Error(),
+			})
 			continue
 		}
 		revoker, ok := connector.(SessionRevoker)
 		if !ok {
+			s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+				WorkspaceID: workspaceID, UserID: userID,
+				Layer: LeaverLayerSessionRevoke, ConnectorID: connectorID,
+				Status: LeaverStatusSkipped,
+			})
 			continue
 		}
 		if rerr := revoker.RevokeUserSessions(ctx, cfg, secrets, externalID); rerr != nil {
 			log.Printf("access: leaver %s connector %s: RevokeUserSessions: %v", userID, connectorID, rerr)
+			s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+				WorkspaceID: workspaceID, UserID: userID,
+				Layer: LeaverLayerSessionRevoke, ConnectorID: connectorID,
+				Status: LeaverStatusFailed, Error: rerr.Error(),
+			})
+			continue
 		}
+		s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+			WorkspaceID: workspaceID, UserID: userID,
+			Layer: LeaverLayerSessionRevoke, ConnectorID: connectorID,
+			Status: LeaverStatusSuccess,
+		})
 	}
 }
 
@@ -558,31 +673,66 @@ func (s *JMLService) revokeSessionsAcrossConnectors(ctx context.Context, workspa
 func (s *JMLService) scimDeprovisionAcrossConnectors(ctx context.Context, workspaceID, userID string, members map[string]string) {
 	if s.credLoader == nil || s.getConnectorFn == nil {
 		log.Printf("access: leaver %s in workspace %s: scim deprovision skipped (no credentials loader wired)", userID, workspaceID)
+		s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+			WorkspaceID: workspaceID, UserID: userID,
+			Layer: LeaverLayerSCIMDeprovision, Status: LeaverStatusSkipped,
+		})
 		return
 	}
 	for connectorID, externalID := range members {
 		cfg, secrets, lerr := s.credLoader.LoadConnectorCredentials(ctx, connectorID)
 		if lerr != nil {
 			log.Printf("access: leaver %s connector %s: load credentials: %v", userID, connectorID, lerr)
+			s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+				WorkspaceID: workspaceID, UserID: userID,
+				Layer: LeaverLayerSCIMDeprovision, ConnectorID: connectorID,
+				Status: LeaverStatusFailed, Error: lerr.Error(),
+			})
 			continue
 		}
 		provider, perr := s.provisioningSvc.lookupProvider(ctx, connectorID)
 		if perr != nil {
 			log.Printf("access: leaver %s connector %s: lookup provider: %v", userID, connectorID, perr)
+			s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+				WorkspaceID: workspaceID, UserID: userID,
+				Layer: LeaverLayerSCIMDeprovision, ConnectorID: connectorID,
+				Status: LeaverStatusFailed, Error: perr.Error(),
+			})
 			continue
 		}
 		connector, cerr := s.getConnectorFn(provider)
 		if cerr != nil {
 			log.Printf("access: leaver %s connector %s: get connector %s: %v", userID, connectorID, provider, cerr)
+			s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+				WorkspaceID: workspaceID, UserID: userID,
+				Layer: LeaverLayerSCIMDeprovision, ConnectorID: connectorID,
+				Status: LeaverStatusFailed, Error: cerr.Error(),
+			})
 			continue
 		}
 		scim, ok := connector.(SCIMProvisioner)
 		if !ok {
+			s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+				WorkspaceID: workspaceID, UserID: userID,
+				Layer: LeaverLayerSCIMDeprovision, ConnectorID: connectorID,
+				Status: LeaverStatusSkipped,
+			})
 			continue
 		}
 		if derr := scim.DeleteSCIMResource(ctx, cfg, secrets, "User", externalID); derr != nil {
 			log.Printf("access: leaver %s connector %s: DeleteSCIMResource: %v", userID, connectorID, derr)
+			s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+				WorkspaceID: workspaceID, UserID: userID,
+				Layer: LeaverLayerSCIMDeprovision, ConnectorID: connectorID,
+				Status: LeaverStatusFailed, Error: derr.Error(),
+			})
+			continue
 		}
+		s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+			WorkspaceID: workspaceID, UserID: userID,
+			Layer: LeaverLayerSCIMDeprovision, ConnectorID: connectorID,
+			Status: LeaverStatusSuccess,
+		})
 	}
 }
 
@@ -625,11 +775,25 @@ func (s *JMLService) collectConnectorExternalIDs(ctx context.Context, workspaceI
 func (s *JMLService) disableOpenZitiIdentity(ctx context.Context, workspaceID, userID string) {
 	if s.zitiClient == nil {
 		log.Printf("access: leaver %s in workspace %s: openziti identity disable is stubbed (no client wired)", userID, workspaceID)
+		s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+			WorkspaceID: workspaceID, UserID: userID,
+			Layer: LeaverLayerOpenZitiDisable, Status: LeaverStatusSkipped,
+		})
 		return
 	}
 	if err := s.zitiClient.DisableIdentity(ctx, userID); err != nil {
 		log.Printf("access: leaver %s in workspace %s: openziti DisableIdentity failed: %v", userID, workspaceID, err)
+		s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+			WorkspaceID: workspaceID, UserID: userID,
+			Layer: LeaverLayerOpenZitiDisable, Status: LeaverStatusFailed,
+			Error: err.Error(),
+		})
+		return
 	}
+	s.emitLeaverEvent(ctx, LeaverKillSwitchEvent{
+		WorkspaceID: workspaceID, UserID: userID,
+		Layer: LeaverLayerOpenZitiDisable, Status: LeaverStatusSuccess,
+	})
 }
 
 // driveOneGrant runs a single (connector, resource, role) tuple

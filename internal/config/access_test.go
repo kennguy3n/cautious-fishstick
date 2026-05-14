@@ -94,3 +94,56 @@ func TestLoad_GrantExpiryCheckIntervalOverride(t *testing.T) {
 		t.Fatalf("GrantExpiryCheckInterval = %v; want 5m", cfg.GrantExpiryCheckInterval)
 	}
 }
+
+// TestLoad_OrphanReconcileDelayPerConnectorDefault asserts the
+// Phase 11 batch 6 default per-connector throttle is wired onto
+// the loaded config.
+func TestLoad_OrphanReconcileDelayPerConnectorDefault(t *testing.T) {
+	t.Setenv("ACCESS_ORPHAN_RECONCILE_DELAY_PER_CONNECTOR", "")
+	cfg := Load()
+	if cfg.OrphanReconcileDelayPerConnector != DefaultOrphanReconcileDelayPerConnector {
+		t.Fatalf("OrphanReconcileDelayPerConnector = %v; want %v",
+			cfg.OrphanReconcileDelayPerConnector, DefaultOrphanReconcileDelayPerConnector)
+	}
+	if DefaultOrphanReconcileDelayPerConnector != time.Second {
+		t.Fatalf("DefaultOrphanReconcileDelayPerConnector = %v; want 1s", DefaultOrphanReconcileDelayPerConnector)
+	}
+}
+
+// TestLoad_OrphanReconcileDelayPerConnectorOverride asserts the
+// env-driven override lands on the loaded config.
+func TestLoad_OrphanReconcileDelayPerConnectorOverride(t *testing.T) {
+	t.Setenv("ACCESS_ORPHAN_RECONCILE_DELAY_PER_CONNECTOR", "250ms")
+	cfg := Load()
+	if cfg.OrphanReconcileDelayPerConnector != 250*time.Millisecond {
+		t.Fatalf("OrphanReconcileDelayPerConnector = %v; want 250ms",
+			cfg.OrphanReconcileDelayPerConnector)
+	}
+}
+
+// TestLoad_GrantExpiryWarningHoursDefault asserts the Phase 11
+// batch 6 default look-ahead window is wired onto the loaded
+// config.
+func TestLoad_GrantExpiryWarningHoursDefault(t *testing.T) {
+	t.Setenv("ACCESS_GRANT_EXPIRY_WARNING_HOURS", "")
+	cfg := Load()
+	if cfg.GrantExpiryWarningHours != DefaultGrantExpiryWarningHours {
+		t.Fatalf("GrantExpiryWarningHours = %d; want %d",
+			cfg.GrantExpiryWarningHours, DefaultGrantExpiryWarningHours)
+	}
+	if DefaultGrantExpiryWarningHours != 24 {
+		t.Fatalf("DefaultGrantExpiryWarningHours = %d; want 24",
+			DefaultGrantExpiryWarningHours)
+	}
+}
+
+// TestLoad_GrantExpiryWarningHoursOverride asserts the env-driven
+// override lands on the loaded config.
+func TestLoad_GrantExpiryWarningHoursOverride(t *testing.T) {
+	t.Setenv("ACCESS_GRANT_EXPIRY_WARNING_HOURS", "12")
+	cfg := Load()
+	if cfg.GrantExpiryWarningHours != 12 {
+		t.Fatalf("GrantExpiryWarningHours = %d; want 12",
+			cfg.GrantExpiryWarningHours)
+	}
+}

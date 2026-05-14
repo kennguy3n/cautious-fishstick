@@ -2,6 +2,7 @@ package cron
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -18,6 +19,30 @@ import (
 // substitute a stub.
 type WorkspaceOrphanReconciler interface {
 	ReconcileWorkspace(ctx context.Context, workspaceID string) ([]models.AccessOrphanAccount, error)
+}
+
+// orphanReconcileLog is the JSON-structured log envelope emitted at
+// the end of every per-workspace pass. Operators ingest this into
+// their log aggregator (e.g. Datadog, Splunk) to track reconciler
+// throughput and failure rates without re-parsing free-form lines.
+type orphanReconcileLog struct {
+	Event             string `json:"event"`
+	WorkspaceID       string `json:"workspace_id"`
+	OrphansDetected   int    `json:"orphans_detected"`
+	OrphansNew        int    `json:"orphans_new"`
+	ConnectorsScanned int    `json:"connectors_scanned"`
+	ConnectorsFailed  int    `json:"connectors_failed"`
+	DurationMS        int64  `json:"duration_ms"`
+	Error             string `json:"error,omitempty"`
+}
+
+// reconcilerStatsReader is the optional contract a reconciler can
+// implement to expose per-workspace scan stats (connectors scanned
+// / failed). The production *access.OrphanReconciler does not
+// implement this yet; the scheduler falls back to len(connectors)
+// for ConnectorsScanned when the type assertion fails.
+type reconcilerStatsReader interface {
+	WorkspaceConnectorStats(ctx context.Context, workspaceID string) (scanned, failed int, err error)
 }
 
 // OrphanReconcileNotifier is the optional notification hook the
@@ -65,6 +90,19 @@ func (s *OrphanReconcilerScheduler) SetClock(now func() time.Time) {
 	}
 }
 
+// emitStats writes one orphan_reconcile_summary log line in JSON
+// shape so log-aggregator pipelines can ingest the per-workspace
+// stats without parsing free-form text.
+func (s *OrphanReconcilerScheduler) emitStats(stats orphanReconcileLog) {
+	stats.Event = "orphan_reconcile_summary"
+	raw, err := json.Marshal(stats)
+	if err != nil {
+		log.Printf("cron: orphan_reconciler: stats encode failed: %v", err)
+		return
+	}
+	log.Printf("%s", string(raw))
+}
+
 // Run reconciles every workspace exactly once. Returns the last
 // per-workspace error so callers needing per-row errors should
 // inspect logs.
@@ -82,16 +120,43 @@ func (s *OrphanReconcilerScheduler) Run(ctx context.Context) error {
 
 	var lastErr error
 	for _, ws := range workspaceIDs {
+		start := s.now()
+		connectorsScanned := 0
+		connectorsFailed := 0
+		if statsReader, ok := s.reconciler.(reconcilerStatsReader); ok {
+			if scanned, failed, serr := statsReader.WorkspaceConnectorStats(ctx, ws); serr == nil {
+				connectorsScanned = scanned
+				connectorsFailed = failed
+			}
+		}
+		if connectorsScanned == 0 {
+			var cnt int64
+			if cerr := s.db.WithContext(ctx).Model(&models.AccessConnector{}).
+				Where("workspace_id = ?", ws).Count(&cnt).Error; cerr == nil {
+				connectorsScanned = int(cnt)
+			}
+		}
+
 		rows, err := s.reconciler.ReconcileWorkspace(ctx, ws)
+		dur := s.now().Sub(start)
 		if err != nil {
 			log.Printf("cron: orphan_reconciler: workspace=%s reconcile: %v", ws, err)
+			s.emitStats(orphanReconcileLog{
+				WorkspaceID: ws, OrphansDetected: len(rows), OrphansNew: countNewOrphans(rows),
+				ConnectorsScanned: connectorsScanned, ConnectorsFailed: connectorsFailed + 1,
+				DurationMS: dur.Milliseconds(), Error: err.Error(),
+			})
 			lastErr = err
 			continue
 		}
+		s.emitStats(orphanReconcileLog{
+			WorkspaceID: ws, OrphansDetected: len(rows), OrphansNew: countNewOrphans(rows),
+			ConnectorsScanned: connectorsScanned, ConnectorsFailed: connectorsFailed,
+			DurationMS: dur.Milliseconds(),
+		})
 		if len(rows) == 0 {
 			continue
 		}
-		log.Printf("cron: orphan_reconciler: workspace=%s detected %d unused app accounts", ws, len(rows))
 		if s.notifier != nil {
 			if nerr := s.notifier.NotifyOrphansDetected(ctx, ws, rows); nerr != nil {
 				log.Printf("cron: orphan_reconciler: workspace=%s notify: %v", ws, nerr)
@@ -99,4 +164,18 @@ func (s *OrphanReconcilerScheduler) Run(ctx context.Context) error {
 		}
 	}
 	return lastErr
+}
+
+// countNewOrphans returns the number of orphans whose ID is set
+// (i.e. the reconciler persisted a fresh row). Re-detected orphans
+// also carry an ID, so the counter is best-effort. Dry-run rows
+// have no ID and are excluded.
+func countNewOrphans(rows []models.AccessOrphanAccount) int {
+	n := 0
+	for _, r := range rows {
+		if r.ID != "" {
+			n++
+		}
+	}
+	return n
 }

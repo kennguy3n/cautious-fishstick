@@ -16,8 +16,10 @@ import (
 // fakeOrphanService implements OrphanReconcilerReader for handler tests.
 type fakeOrphanService struct {
 	rows         []models.AccessOrphanAccount
+	dryRunRows   []models.AccessOrphanAccount
 	listCalls    atomic.Int64
 	reconCalls   atomic.Int64
+	dryRunCalls  atomic.Int64
 	revokeCalls  atomic.Int64
 	dismissCalls atomic.Int64
 	ackCalls     atomic.Int64
@@ -42,6 +44,13 @@ func (f *fakeOrphanService) ListOrphans(_ context.Context, workspaceID, status s
 }
 func (f *fakeOrphanService) ReconcileWorkspace(_ context.Context, _ string) ([]models.AccessOrphanAccount, error) {
 	f.reconCalls.Add(1)
+	return f.rows, nil
+}
+func (f *fakeOrphanService) ReconcileWorkspaceDryRun(_ context.Context, _ string) ([]models.AccessOrphanAccount, error) {
+	f.dryRunCalls.Add(1)
+	if f.dryRunRows != nil {
+		return f.dryRunRows, nil
+	}
 	return f.rows, nil
 }
 func (f *fakeOrphanService) RevokeOrphan(_ context.Context, _ string) error {
@@ -114,6 +123,46 @@ func TestOrphanHandler_Reconcile_TriggersWorkspace(t *testing.T) {
 	}
 	if got := fake.reconCalls.Load(); got != 1 {
 		t.Errorf("Reconcile calls = %d; want 1", got)
+	}
+}
+
+// TestOrphanHandler_Reconcile_DryRun asserts dry_run=true routes
+// to ReconcileWorkspaceDryRun and surfaces the dry_run flag on the
+// response.
+func TestOrphanHandler_Reconcile_DryRun(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	fake := &fakeOrphanService{
+		dryRunRows: []models.AccessOrphanAccount{
+			{WorkspaceID: "ws1", ConnectorID: "c1", UserExternalID: "u-dry", Status: models.OrphanStatusDetected, DetectedAt: now},
+		},
+	}
+	r := Router(Dependencies{OrphanReconciler: fake, DisableRateLimiter: true})
+	w := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"workspace_id":"ws1","dry_run":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/access/orphans/reconcile", body)
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s); want 200", w.Code, w.Body.String())
+	}
+	if got := fake.dryRunCalls.Load(); got != 1 {
+		t.Errorf("DryRun calls = %d; want 1", got)
+	}
+	if got := fake.reconCalls.Load(); got != 0 {
+		t.Errorf("Reconcile (non-dry-run) calls = %d; want 0", got)
+	}
+	var body2 struct {
+		Rows   []unusedAccountView `json:"unused_app_accounts"`
+		DryRun bool                `json:"dry_run"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body2); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body2.DryRun {
+		t.Errorf("response dry_run = false; want true")
+	}
+	if len(body2.Rows) != 1 || body2.Rows[0].AppUserID != "u-dry" {
+		t.Errorf("rows = %+v; want one row with app_user_id=u-dry", body2.Rows)
 	}
 }
 

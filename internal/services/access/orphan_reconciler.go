@@ -31,6 +31,17 @@ type OrphanReconciler struct {
 	getConnectorFn  func(provider string) (AccessConnector, error)
 	now             func() time.Time
 	newID           func() string
+	// DryRun — when true, ReconcileWorkspace detects unused app
+	// accounts but does NOT persist them. Callers receive the
+	// detected list so operators can review what would have been
+	// recorded before they run a real sweep. Phase 11 batch 6 hook.
+	DryRun bool
+	// perConnectorDelay throttles per-connector iterations inside
+	// ReconcileWorkspace so an upstream API is not hammered by N
+	// connectors firing concurrently. Defaults to 1s. Set via
+	// SetPerConnectorDelay (config-driven, see
+	// internal/config/access.go::ACCESS_ORPHAN_RECONCILE_DELAY_PER_CONNECTOR).
+	perConnectorDelay time.Duration
 }
 
 // NewOrphanReconciler returns a reconciler bound to db. The
@@ -39,13 +50,26 @@ type OrphanReconciler struct {
 // follow the same construction shape.
 func NewOrphanReconciler(db *gorm.DB, provisioningSvc *AccessProvisioningService, credLoader *ConnectorCredentialsLoader) *OrphanReconciler {
 	return &OrphanReconciler{
-		db:              db,
-		provisioningSvc: provisioningSvc,
-		credLoader:      credLoader,
-		getConnectorFn:  GetAccessConnector,
-		now:             time.Now,
-		newID:           newULID,
+		db:                db,
+		provisioningSvc:   provisioningSvc,
+		credLoader:        credLoader,
+		getConnectorFn:    GetAccessConnector,
+		now:               time.Now,
+		newID:             newULID,
+		perConnectorDelay: time.Second,
 	}
+}
+
+// SetPerConnectorDelay overrides the per-connector throttle.
+// Pass 0 to disable the delay entirely (useful in tests).
+func (r *OrphanReconciler) SetPerConnectorDelay(d time.Duration) {
+	if r == nil {
+		return
+	}
+	if d < 0 {
+		d = 0
+	}
+	r.perConnectorDelay = d
 }
 
 // SetClock overrides the default time source for deterministic
@@ -62,6 +86,23 @@ func (r *OrphanReconciler) SetIDFn(fn func() string) {
 	if fn != nil {
 		r.newID = fn
 	}
+}
+
+// ReconcileWorkspaceDryRun runs the same detection pass as
+// ReconcileWorkspace but without persisting any rows. The returned
+// slice contains in-memory AccessOrphanAccount values populated
+// with the detected upstream account metadata so operators can
+// review what a real sweep would record. The reconciler's DryRun
+// flag is restored on exit so concurrent callers are not affected
+// by this method.
+func (r *OrphanReconciler) ReconcileWorkspaceDryRun(ctx context.Context, workspaceID string) ([]models.AccessOrphanAccount, error) {
+	if r == nil {
+		return nil, fmt.Errorf("%w: orphan reconciler not configured", ErrValidation)
+	}
+	prev := r.DryRun
+	r.DryRun = true
+	defer func() { r.DryRun = prev }()
+	return r.ReconcileWorkspace(ctx, workspaceID)
 }
 
 // ReconcileWorkspace iterates every connector in the workspace,
@@ -98,6 +139,13 @@ func (r *OrphanReconciler) ReconcileWorkspace(ctx context.Context, workspaceID s
 			return out, fmt.Errorf("access: reconcile connector %s: %w", conn.ID, err)
 		}
 		out = append(out, rows...)
+		if i < len(connectors)-1 && r.perConnectorDelay > 0 {
+			select {
+			case <-ctx.Done():
+				return out, ctx.Err()
+			case <-time.After(r.perConnectorDelay):
+			}
+		}
 	}
 	return out, nil
 }
@@ -155,6 +203,19 @@ func (r *OrphanReconciler) reconcileConnector(ctx context.Context, conn *models.
 			continue
 		}
 		if _, ok := known[ident.ExternalID]; ok {
+			continue
+		}
+
+		if r.DryRun {
+			out = append(out, models.AccessOrphanAccount{
+				WorkspaceID:    conn.WorkspaceID,
+				ConnectorID:    conn.ID,
+				UserExternalID: ident.ExternalID,
+				Email:          ident.Email,
+				DisplayName:    ident.DisplayName,
+				Status:         models.OrphanStatusDetected,
+				DetectedAt:     now,
+			})
 			continue
 		}
 
