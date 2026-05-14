@@ -17,6 +17,15 @@ import (
 // none use a password / social strategy, the tenant is considered
 // SSO-only.
 //
+// Phase 11 batch 6 round-4: only `name` and `strategy` are decoded
+// off each connection. The Auth0 API also surfaces an
+// `enabled_clients` field, but it is a JSON array of client-ID
+// strings — decoding it into anything narrower (e.g. *bool) makes
+// json.Decoder.Decode raise UnmarshalTypeError on every real Auth0
+// tenant, so the probe silently fails closed for everybody. We do
+// not consult `enabled_clients` in this check, so it is simply
+// omitted from the struct.
+//
 // Best-effort: a transport or authentication failure returns a
 // non-nil err so callers map the connector to "unknown" rather
 // than "not_enforced".
@@ -45,7 +54,6 @@ func (c *Auth0AccessConnector) CheckSSOEnforcement(ctx context.Context, configRa
 	var conns []struct {
 		Name     string `json:"name"`
 		Strategy string `json:"strategy"`
-		Enabled  *bool  `json:"enabled_clients,omitempty"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&conns); err != nil {
 		return false, "", fmt.Errorf("auth0: decode connections: %w", err)
