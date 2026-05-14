@@ -16,18 +16,26 @@ import (
 // to emit best-effort notifications. The production implementation
 // is an adapter over *notification.NotificationService; tests
 // substitute a stub that captures every call.
+//
+// workspaceID identifies the tenant whose credential is rotating —
+// the access platform routes credential-expiry alerts to that
+// workspace's admin notification channel (Slack webhook / email
+// distribution list) rather than to a specific user, because the
+// "admin" role is not yet a first-class model on the access
+// platform. The adapter in internal/services/access/credential_expiry_notifier_adapter.go
+// fills the gap with the existing NotificationService fan-out.
 type NotificationSender interface {
-	SendCredentialExpiryWarning(ctx context.Context, connectorID, provider string, expiresAt time.Time) error
+	SendCredentialExpiryWarning(ctx context.Context, connectorID, workspaceID, provider string, expiresAt time.Time) error
 }
 
 // NotificationSenderFunc is the function adapter for
 // NotificationSender, identical in spirit to the access package's
 // OpenZitiClientFunc.
-type NotificationSenderFunc func(ctx context.Context, connectorID, provider string, expiresAt time.Time) error
+type NotificationSenderFunc func(ctx context.Context, connectorID, workspaceID, provider string, expiresAt time.Time) error
 
 // SendCredentialExpiryWarning satisfies NotificationSender.
-func (f NotificationSenderFunc) SendCredentialExpiryWarning(ctx context.Context, connectorID, provider string, expiresAt time.Time) error {
-	return f(ctx, connectorID, provider, expiresAt)
+func (f NotificationSenderFunc) SendCredentialExpiryWarning(ctx context.Context, connectorID, workspaceID, provider string, expiresAt time.Time) error {
+	return f(ctx, connectorID, workspaceID, provider, expiresAt)
 }
 
 // CredentialChecker is the Phase 6 background worker that scans
@@ -118,7 +126,7 @@ func (c *CredentialChecker) Run(ctx context.Context) error {
 		if c.notifier == nil {
 			continue
 		}
-		if err := c.notifier.SendCredentialExpiryWarning(ctx, conn.ID, conn.Provider, expiresAt); err != nil {
+		if err := c.notifier.SendCredentialExpiryWarning(ctx, conn.ID, conn.WorkspaceID, conn.Provider, expiresAt); err != nil {
 			log.Printf("cron: credential_checker: notify failed for connector_id=%s: %v", conn.ID, err)
 			lastErr = err
 		}

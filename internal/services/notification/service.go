@@ -41,6 +41,14 @@ const (
 	// transitions to a terminal-ish state the requester cares
 	// about (approved / denied / provisioned / provision_failed).
 	KindRequesterStatus NotificationKind = "requester_status"
+
+	// KindCredentialExpiry is dispatched by the credential-checker
+	// cron when an access connector's credential is about to expire
+	// (or has already expired). The notification is routed at the
+	// workspace level — RecipientUserID is set to the synthetic
+	// "workspace:<id>" address because the access platform does not
+	// yet have an explicit "workspace_admin" user role.
+	KindCredentialExpiry NotificationKind = "credential_expiry"
 )
 
 // Notification is the per-recipient envelope the service hands to a
@@ -224,6 +232,55 @@ func (s *NotificationService) NotifyRequester(ctx context.Context, requestID, re
 			"request_id": requestID,
 		},
 		CreatedAt: s.now(),
+	}
+	out := emptyResult()
+	s.dispatch(ctx, n, out)
+	return out, nil
+}
+
+// NotifyCredentialExpiry emits a credential-expiry notification for
+// the given connector. The recipient is the workspace-level virtual
+// address ("workspace:<id>") because the access platform does not
+// yet model per-user workspace_admin roles; channel implementations
+// (Slack webhook / email distribution list / push) route the
+// workspace address to the configured admin destination.
+//
+// The body distinguishes "expires in N days" from "already expired
+// N days ago" so admin UIs can render either flavour consistently.
+// Returns an emptyResult with no recipients gracefully when
+// workspaceID is empty so callers don't have to nil-check.
+func (s *NotificationService) NotifyCredentialExpiry(ctx context.Context, connectorID, workspaceID, provider string, expiresAt time.Time) (*NotifyResult, error) {
+	if workspaceID == "" {
+		return emptyResult(), fmt.Errorf("notification: workspace_id is required")
+	}
+	now := s.now()
+	delta := expiresAt.Sub(now).Round(time.Hour)
+	var subject, body string
+	if delta >= 0 {
+		subject = fmt.Sprintf("[Access] %s credential rotating soon", provider)
+		body = fmt.Sprintf(
+			"Connector %s (%s) credential expires at %s (in %s). Rotate the credential before expiry to avoid sync interruption.",
+			connectorID, provider, expiresAt.Format(time.RFC3339), delta,
+		)
+	} else {
+		subject = fmt.Sprintf("[Access] %s credential expired", provider)
+		body = fmt.Sprintf(
+			"Connector %s (%s) credential expired at %s (%s ago). Sync pipelines for this connector are likely stalled until the credential is rotated.",
+			connectorID, provider, expiresAt.Format(time.RFC3339), -delta,
+		)
+	}
+	n := Notification{
+		Kind:            KindCredentialExpiry,
+		RecipientUserID: "workspace:" + workspaceID,
+		Subject:         subject,
+		Body:            body,
+		Metadata: map[string]interface{}{
+			"connector_id": connectorID,
+			"workspace_id": workspaceID,
+			"provider":     provider,
+			"expires_at":   expiresAt.Format(time.RFC3339),
+		},
+		CreatedAt: now,
 	}
 	out := emptyResult()
 	s.dispatch(ctx, n, out)

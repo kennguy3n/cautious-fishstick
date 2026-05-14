@@ -130,6 +130,110 @@ func NewConnectorHealthHandler(reader ConnectorHealthReader) *ConnectorHealthHan
 // Register wires the route onto r.
 func (h *ConnectorHealthHandler) Register(r *gin.Engine) {
 	r.GET("/access/connectors/:id/health", h.GetHealth)
+	r.POST("/access/connectors/batch-status", h.PostBatchStatus)
+}
+
+// batchStatusRequest is the JSON body accepted by
+// POST /access/connectors/batch-status.
+type batchStatusRequest struct {
+	ConnectorIDs []string `json:"connector_ids"`
+}
+
+// BatchStatusEntry is the per-connector health result. NotFound is
+// true when the row was deleted between the caller's last list call
+// and this batch lookup; the entry's Health field is nil in that
+// case so admins can grey out the row.
+type BatchStatusEntry struct {
+	ConnectorID string           `json:"connector_id"`
+	NotFound    bool             `json:"not_found,omitempty"`
+	Health      *ConnectorHealth `json:"health,omitempty"`
+	Error       string           `json:"error,omitempty"`
+}
+
+// batchStatusResponse is the JSON shape returned by
+// POST /access/connectors/batch-status.
+type batchStatusResponse struct {
+	Entries []BatchStatusEntry `json:"entries"`
+}
+
+// maxBatchStatusIDs caps the number of IDs a single request may
+// list. The Admin UI's connector list page surfaces at most ~100 per
+// page, so 200 is a comfortable ceiling that still bounds the
+// per-request cost.
+const maxBatchStatusIDs = 200
+
+// PostBatchStatus handles POST /access/connectors/batch-status. It
+// accepts an array of connector IDs and returns each connector's
+// health view in a single response so the Admin UI list page can
+// avoid an N+1 fan-out. Returns 400 for missing / oversized bodies,
+// 503 when the service is unconfigured. Per-entry errors (e.g. one
+// of the listed connectors was deleted) are returned 200 with the
+// row's Error field populated so the rest of the batch isn't lost.
+func (h *ConnectorHealthHandler) PostBatchStatus(c *gin.Context) {
+	var req batchStatusRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
+			Error:   "invalid request body",
+			Code:    "validation_failed",
+			Message: err.Error(),
+		})
+		return
+	}
+	if len(req.ConnectorIDs) == 0 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
+			Error:   "connector_ids is required",
+			Code:    "validation_failed",
+			Message: "connector_ids must contain at least one id",
+		})
+		return
+	}
+	if len(req.ConnectorIDs) > maxBatchStatusIDs {
+		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
+			Error:   "too many connector_ids",
+			Code:    "validation_failed",
+			Message: "connector_ids exceeds the per-request limit",
+		})
+		return
+	}
+
+	// Dedupe while preserving the caller's order so the response
+	// indexes match what the UI sent.
+	seen := make(map[string]struct{}, len(req.ConnectorIDs))
+	ordered := make([]string, 0, len(req.ConnectorIDs))
+	for _, id := range req.ConnectorIDs {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ordered = append(ordered, id)
+	}
+	if len(ordered) == 0 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
+			Error:   "connector_ids must contain at least one non-empty id",
+			Code:    "validation_failed",
+			Message: "connector_ids must contain at least one non-empty id",
+		})
+		return
+	}
+
+	entries := make([]BatchStatusEntry, 0, len(ordered))
+	for _, id := range ordered {
+		entry := BatchStatusEntry{ConnectorID: id}
+		out, err := h.reader.GetConnectorHealth(c.Request.Context(), id)
+		switch {
+		case err == nil:
+			entry.Health = out
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			entry.NotFound = true
+		default:
+			entry.Error = err.Error()
+		}
+		entries = append(entries, entry)
+	}
+	c.JSON(http.StatusOK, batchStatusResponse{Entries: entries})
 }
 
 // GetHealth handles GET /access/connectors/:id/health. Returns 200
