@@ -353,6 +353,122 @@ type errFakeT string
 
 func (e errFakeT) Error() string { return string(e) }
 
+// alreadyRevokedRevoker simulates the race-condition path where
+// another process (operator action, SCIM deprovision, a competing
+// enforcer tick) revoked the grant between our query and our
+// Revoke call. The standard captureRevoker only returns
+// ErrAlreadyRevoked when grant.RevokedAt is non-nil, but the
+// enforcer query filters revoked_at IS NULL so we'd never even
+// fetch such a row. This stub always returns ErrAlreadyRevoked so
+// the test can exercise the idempotent-success branch directly.
+type alreadyRevokedRevoker struct {
+	calls int
+}
+
+func (r *alreadyRevokedRevoker) Revoke(_ context.Context, _ *models.AccessGrant, _, _ map[string]interface{}) error {
+	r.calls++
+	return access.ErrAlreadyRevoked
+}
+
+// TestGrantExpiryEnforcer_AlreadyRevokedIsSkipped is the Phase 11
+// batch 6 round-6 regression for the bug where ErrAlreadyRevoked
+// emitted Status="success" audit events identical to a fresh
+// auto-revoke AND fired a duplicate SendGrantRevokedNotification
+// to the user. The fix gives the race-condition path a distinct
+// Status="skipped" so SIEM consumers can pivot on Status to
+// separate "we revoked it" from "it was already revoked when we
+// got here", and so emitRevokedSideEffects' notifier guard
+// (status == "success") naturally suppresses the duplicate
+// notification. The revoked counter must also stay at zero —
+// the enforcer's tick did not in fact revoke this grant.
+func TestGrantExpiryEnforcer_AlreadyRevokedIsSkipped(t *testing.T) {
+	db := newGrantDB(t)
+	now := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	pastT := now.Add(-1 * time.Hour)
+	seedGrant(t, db, "01HGRANT0ALREADY00000000A", &pastT)
+
+	rev := &alreadyRevokedRevoker{}
+	loader := newStubCredentialsLoader()
+	loader.set("01HCONN00000000000000000A",
+		map[string]interface{}{}, map[string]interface{}{"api_key": "k"}, nil)
+	notifier := &stubGrantExpiryNotifier{}
+	audit := &stubAuditProducer{}
+
+	e := NewGrantExpiryEnforcer(db, rev, loader, 100)
+	e.SetClock(func() time.Time { return now })
+	e.SetNotifier(notifier)
+	e.SetAuditProducer(audit)
+
+	revoked, err := e.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v (want nil because ErrAlreadyRevoked is idempotent)", err)
+	}
+	if revoked != 0 {
+		t.Errorf("revoked = %d; want 0 (the enforcer tick did not revoke; another process did)", revoked)
+	}
+	if rev.calls != 1 {
+		t.Errorf("revoker calls = %d; want 1", rev.calls)
+	}
+
+	// The user-facing notification MUST be suppressed — the user
+	// has either already been notified by whichever process beat
+	// us to the revoke, or the revoke happened out-of-band and a
+	// duplicate "your access was revoked" message would be
+	// misleading.
+	notifier.mu.Lock()
+	if len(notifier.revokeCalls) != 0 {
+		t.Errorf("revoke notify calls = %d; want 0 (ErrAlreadyRevoked must NOT fire SendGrantRevokedNotification)", len(notifier.revokeCalls))
+	}
+	notifier.mu.Unlock()
+
+	// The audit event MUST still fire so SIEM observes the
+	// idempotent skip, with Outcome="skipped" so dashboards
+	// can distinguish it from a fresh auto-revoke.
+	if audit.calls.Load() != 1 {
+		t.Fatalf("audit calls = %d; want 1 (the skipped-revoke audit event)", audit.calls.Load())
+	}
+	audit.mu.Lock()
+	defer audit.mu.Unlock()
+	if len(audit.entries) != 1 || len(audit.entries[0]) != 1 {
+		t.Fatalf("audit batches = %d (entries[0] len = %d); want 1/1", len(audit.entries), func() int {
+			if len(audit.entries) == 0 {
+				return 0
+			}
+			return len(audit.entries[0])
+		}())
+	}
+	entry := audit.entries[0][0]
+	if entry.EventType != "access.grant.expiry" {
+		t.Errorf("event_type = %q; want access.grant.expiry", entry.EventType)
+	}
+	if entry.Action != string(access.GrantExpiryActionRevoked) {
+		t.Errorf("action = %q; want auto_revoked", entry.Action)
+	}
+	if entry.Outcome != "skipped" {
+		t.Errorf("outcome = %q; want skipped (the grant was already revoked when the enforcer got there)", entry.Outcome)
+	}
+	// Serialise the entry to JSON to cover the encoder and
+	// confirm the Status field surfaces in the wire payload.
+	raw, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatalf("serialise audit entry: %v", err)
+	}
+	if want := `"outcome":"skipped"`; !contains(string(raw), want) {
+		t.Errorf("serialised entry missing %q; got %s", want, raw)
+	}
+}
+
+// contains is a tiny helper to avoid pulling strings.Contains
+// into a test file that otherwise has no strings dependency.
+func contains(haystack, needle string) bool {
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
+		}
+	}
+	return false
+}
+
 // TestGrantExpiryEnforcer_NoAuditProducerIsNoOp asserts the
 // enforcer never panics when audit producer / notifier are nil.
 func TestGrantExpiryEnforcer_NoAuditProducerIsNoOp(t *testing.T) {

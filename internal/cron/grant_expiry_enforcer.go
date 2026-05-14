@@ -213,9 +213,22 @@ func (e *GrantExpiryEnforcer) Run(ctx context.Context) (int, error) {
 			continue
 		}
 		if err := e.revoker.Revoke(ctx, grant, entry.cfg, entry.secrets); err != nil {
-			// Treat ErrAlreadyRevoked as idempotent success.
+			// ErrAlreadyRevoked is idempotent — another process
+			// (operator action, the SCIM deprovision kill-switch
+			// layer, a competing enforcer tick) revoked this
+			// grant between our query and our revoke call.
+			// Emit Status="skipped" so SIEM consumers can pivot
+			// on Status to distinguish "we revoked it" from "it
+			// was already revoked when we got here", and so
+			// emitRevokedSideEffects skips the user-facing
+			// notification (gated on Status=="success"). This
+			// matches the RunWarning + LeaverKillSwitchEvent
+			// convention where "skipped" means no work was
+			// performed. The revoked counter intentionally stays
+			// unchanged — the enforcer's tick did not revoke
+			// this grant.
 			if errors.Is(err, access.ErrAlreadyRevoked) {
-				e.emitRevokedSideEffects(ctx, grant, now, "success", "")
+				e.emitRevokedSideEffects(ctx, grant, now, "skipped", "grant already revoked upstream")
 				continue
 			}
 			lastErr = fmt.Errorf("cron: revoke grant %s: %w", grant.ID, err)
