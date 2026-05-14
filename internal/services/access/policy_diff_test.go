@@ -171,6 +171,59 @@ func TestPolicyService_DiffPolicy_DenyShrinksScope(t *testing.T) {
 	}
 }
 
+// TestPolicyService_DiffPolicy_ExcludesInactiveLivePolicies verifies
+// that a disabled (is_active=false) live policy is NOT counted in the
+// Before baseline. An operator paused a live policy precisely so its
+// effects no longer apply — including it in the diff baseline would
+// inflate the Before column and mislead the Admin UI reviewer.
+func TestPolicyService_DiffPolicy_ExcludesInactiveLivePolicies(t *testing.T) {
+	db := newPhase3DB(t)
+	const ws = "01H000000000000000WORKSPACE"
+	seedTeam(t, db, ws, "team-eng", "Engineering", map[string]string{"department": "engineering"})
+	seedTeamMember(t, db, "team-eng", "user-alice")
+	seedResource(t, db, ws, "res-1", "prod-db-01", "ssh-host", nil)
+
+	svc := NewPolicyService(db)
+
+	// Promote a live allow policy that grants engineers SSH access...
+	liveDraft, err := svc.CreateDraft(context.Background(), validDraftInput(t))
+	if err != nil {
+		t.Fatalf("create live draft: %v", err)
+	}
+	if _, err := svc.Simulate(context.Background(), ws, liveDraft.ID); err != nil {
+		t.Fatalf("simulate live: %v", err)
+	}
+	if _, err := svc.Promote(context.Background(), ws, liveDraft.ID, "01H000000000000000ACTORUSR"); err != nil {
+		t.Fatalf("promote live: %v", err)
+	}
+	// ...then disable it.
+	if err := db.Model(&models.Policy{}).
+		Where("id = ?", liveDraft.ID).
+		UpdateColumn("is_active", false).Error; err != nil {
+		t.Fatalf("disable live policy: %v", err)
+	}
+
+	// Diff a deny draft that overlaps the disabled policy's scope.
+	denyInput := validDraftInput(t)
+	denyInput.Name = "engineering ssh deny"
+	denyInput.Action = models.PolicyActionDeny
+	denyDraft, err := svc.CreateDraft(context.Background(), denyInput)
+	if err != nil {
+		t.Fatalf("CreateDraft deny: %v", err)
+	}
+	if _, err := svc.Simulate(context.Background(), ws, denyDraft.ID); err != nil {
+		t.Fatalf("Simulate deny: %v", err)
+	}
+
+	report, err := svc.DiffPolicy(context.Background(), ws, denyDraft.ID)
+	if err != nil {
+		t.Fatalf("DiffPolicy: %v", err)
+	}
+	if diffTestContains(report.Before.Members, "user-alice") {
+		t.Fatalf("Before.Members %v must NOT include user-alice (the only live policy granting access is disabled)", report.Before.Members)
+	}
+}
+
 // TestPolicyService_DiffPolicy_MalformedDraftImpactReturnsError seeds
 // a draft whose draft_impact column is corrupt JSON. The service must
 // surface the decode error rather than silently returning a blank

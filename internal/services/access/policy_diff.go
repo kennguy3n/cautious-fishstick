@@ -146,7 +146,7 @@ func (s *PolicyService) DiffPolicy(ctx context.Context, workspaceID, policyID st
 func (s *PolicyService) baselineLiveScope(ctx context.Context, workspaceID, excludePolicyID string) (members []string, resources []string, err error) {
 	var live []models.Policy
 	if err := s.db.WithContext(ctx).
-		Where("workspace_id = ? AND is_draft = ? AND id <> ?", workspaceID, false, excludePolicyID).
+		Where("workspace_id = ? AND is_draft = ? AND is_active = ? AND id <> ?", workspaceID, false, true, excludePolicyID).
 		Find(&live).Error; err != nil {
 		if !isRecordNotFound(err) {
 			return nil, nil, fmt.Errorf("access: select live policies: %w", err)
