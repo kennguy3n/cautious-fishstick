@@ -313,9 +313,29 @@ func (s *ConnectorManagementService) Disconnect(ctx context.Context, connectorID
 		return fmt.Errorf("access: load connector: %w", err)
 	}
 
-	// Revoke active grants tied to this connector. The provisioning
-	// service handles per-grant transactions; failures are recorded
-	// but do not abort the disconnect.
+	// Revoke active grants tied to this connector. We decrypt the
+	// connector's stored secrets up front so each per-grant Revoke
+	// hits the upstream provider with real credentials instead of
+	// nil; nil credentials cause every real connector
+	// implementation to fail and leave the grant orphaned
+	// (revoked_at IS NULL pointing at a soon-to-be-soft-deleted
+	// connector that lookupProvider then rejects).
+	//
+	// After the per-grant loop runs, any rows that still have
+	// revoked_at IS NULL get a bulk DB-level revoke. This covers
+	// (a) the no-provisioning-service path, (b) per-grant upstream
+	// failures, and (c) the connector decoding failing for a row
+	// that managed to encrypt at Connect time but cannot decrypt
+	// here. The connector is about to be soft-deleted, so leaving
+	// grants pointing at it would make the data model unrecoverable
+	// on the next provisioning sweep.
+	cfg, secrets, credErr := decodeConnectorCredentials(&conn, s.encryptor)
+	if credErr != nil {
+		// Surface the decryption failure so operators see why
+		// upstream revocation is being skipped instead of silently
+		// falling back to a DB-only mark.
+		return credErr
+	}
 	if s.provSvc != nil {
 		var grants []models.AccessGrant
 		if err := s.db.WithContext(ctx).
@@ -326,26 +346,22 @@ func (s *ConnectorManagementService) Disconnect(ctx context.Context, connectorID
 		for i := range grants {
 			grant := &grants[i]
 			// Revoke surfaces ErrAlreadyRevoked on a race; treat as
-			// idempotent success.
-			if err := s.provSvc.Revoke(ctx, grant, nil, nil); err != nil && !errors.Is(err, ErrAlreadyRevoked) {
-				// Continue; per-grant failures land in audit; we
-				// still need to flip the connector row.
+			// idempotent success. Other errors are absorbed by the
+			// bulk safety net below.
+			if err := s.provSvc.Revoke(ctx, grant, cfg, secrets); err != nil && !errors.Is(err, ErrAlreadyRevoked) {
 				_ = err
 			}
 		}
-	} else {
-		// No provisioning service \u2014 fall back to a bulk DB-level
-		// revoke so the data model stays consistent.
-		now := s.now()
-		if err := s.db.WithContext(ctx).
-			Model(&models.AccessGrant{}).
-			Where("connector_id = ? AND revoked_at IS NULL", connectorID).
-			Updates(map[string]interface{}{
-				"revoked_at": now,
-				"updated_at": now,
-			}).Error; err != nil {
-			return fmt.Errorf("access: bulk revoke access_grants: %w", err)
-		}
+	}
+	now := s.now()
+	if err := s.db.WithContext(ctx).
+		Model(&models.AccessGrant{}).
+		Where("connector_id = ? AND revoked_at IS NULL", connectorID).
+		Updates(map[string]interface{}{
+			"revoked_at": now,
+			"updated_at": now,
+		}).Error; err != nil {
+		return fmt.Errorf("access: bulk revoke access_grants: %w", err)
 	}
 
 	if err := s.db.WithContext(ctx).Delete(&conn).Error; err != nil {
