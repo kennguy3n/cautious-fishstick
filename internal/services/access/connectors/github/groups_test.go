@@ -77,12 +77,12 @@ func TestSyncGroups_FailureSurfacesStatus(t *testing.T) {
 }
 
 // TestSyncGroupMembers_HappyPath verifies the connector resolves a
-// numeric team ID to a slug via /orgs/{org}/teams/by-id/{id} then
-// paginates /members.
+// numeric team ID to a slug via the legacy /teams/{id} endpoint and
+// then paginates /orgs/{org}/teams/{slug}/members.
 func TestSyncGroupMembers_HappyPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/orgs/acme/teams/by-id/42":
+		case "/teams/42":
 			_, _ = w.Write([]byte(`{"id":42,"slug":"eng","name":"Engineering"}`))
 		case "/orgs/acme/teams/eng/members":
 			_, _ = w.Write([]byte(`[{"id":101,"login":"alice"},{"id":102,"login":"bob"}]`))
@@ -111,11 +111,11 @@ func TestSyncGroupMembers_HappyPath(t *testing.T) {
 
 // TestSyncGroupMembers_AcceptsSlugDirectly verifies that a
 // non-numeric external ID is treated as the slug already and skips
-// the by-id resolution call.
+// the /teams/{id} resolution call.
 func TestSyncGroupMembers_AcceptsSlugDirectly(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "by-id") {
-			t.Errorf("by-id resolution should not run for slug input: %s", r.URL.Path)
+		if strings.HasPrefix(r.URL.Path, "/teams/") {
+			t.Errorf("team-id resolution should not run for slug input: %s", r.URL.Path)
 		}
 		if r.URL.Path == "/orgs/acme/teams/eng/members" {
 			_, _ = w.Write([]byte(`[{"id":1,"login":"alice"}]`))

@@ -157,14 +157,14 @@ func (c *GitHubAccessConnector) SyncGroupMembers(
 }
 
 // resolveTeamSlug returns the team slug for the given external ID.
-// All-digit IDs are dereferenced via /organizations/{org}/team/{id};
-// non-numeric IDs pass through (already a slug).
-func (c *GitHubAccessConnector) resolveTeamSlug(ctx context.Context, secrets Secrets, org, externalID string) (string, error) {
+// All-digit IDs are dereferenced via the legacy /teams/{team_id}
+// endpoint; non-numeric IDs pass through (already a slug).
+func (c *GitHubAccessConnector) resolveTeamSlug(ctx context.Context, secrets Secrets, _, externalID string) (string, error) {
 	if !isAllDigits(externalID) {
 		return externalID, nil
 	}
-	urlStr := fmt.Sprintf("%s/orgs/%s/teams/by-id/%s",
-		c.baseURL(), url.PathEscape(org), url.PathEscape(externalID))
+	urlStr := fmt.Sprintf("%s/teams/%s",
+		c.baseURL(), url.PathEscape(externalID))
 	req, err := c.newRequest(ctx, secrets, http.MethodGet, urlStr)
 	if err != nil {
 		return "", err
