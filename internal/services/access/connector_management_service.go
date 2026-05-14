@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/datatypes"
@@ -109,12 +110,18 @@ type ConnectInput struct {
 // the ULID of the initial sync_identities access_jobs row. Both are
 // surfaced to the operator so they can poll job progress.
 type ConnectResult struct {
-	ConnectorID  string `json:"connector_id"`
-	JobID        string `json:"job_id"`
-	SSOAlias     string `json:"sso_alias,omitempty"`
-	SSOProvider  string `json:"sso_provider,omitempty"`
-	MissingCaps  []string `json:"missing_capabilities,omitempty"`
-	CredsExpiry  *time.Time `json:"credentials_expires_at,omitempty"`
+	ConnectorID string     `json:"connector_id"`
+	JobID       string     `json:"job_id"`
+	SSOAlias    string     `json:"sso_alias,omitempty"`
+	SSOProvider string     `json:"sso_provider,omitempty"`
+	MissingCaps []string   `json:"missing_capabilities,omitempty"`
+	CredsExpiry *time.Time `json:"credentials_expires_at,omitempty"`
+	// AccessMode is the docs/PROPOSAL.md §13 access mode the platform
+	// classified this connector into at Connect time. One of "tunnel",
+	// "sso_only", "api_only". The admin UI surfaces this so operators
+	// can see at a glance how the platform will reach the resource and,
+	// if needed, override it via PATCH /access/connectors/:id.
+	AccessMode string `json:"access_mode,omitempty"`
 }
 
 // Connect orchestrates the full connector setup lifecycle. The flow
@@ -230,6 +237,34 @@ func (s *ConnectorManagementService) Connect(ctx context.Context, in ConnectInpu
 		return nil, fmt.Errorf("access: marshal config: %w", err)
 	}
 
+	// SSO federation pass — runs BEFORE the access_connectors row
+	// insert so the freshly-inserted row records the correct
+	// AccessMode (per docs/PROPOSAL.md §13). Best-effort: if the
+	// connector does not advertise SSO we leave the federation
+	// result fields empty and fall through to the classifier.
+	// A federation failure logs but does NOT abort Connect —
+	// the operator can re-run after fixing Keycloak.
+	var (
+		ssoAlias        string
+		ssoProvider     string
+		hasSSOMetadata  bool
+		ssoFederationOK bool
+	)
+	if s.ssoSvc != nil && in.SSORealm != "" && in.SSOAlias != "" {
+		meta, mErr := connector.GetSSOMetadata(ctx, in.Config, in.Secrets)
+		if mErr == nil && meta != nil {
+			hasSSOMetadata = true
+			alias, provider, fErr := s.ssoSvc.ConfigureBroker(ctx, in.SSORealm, in.SSOAlias, in.DisplayName, meta)
+			if fErr == nil {
+				ssoAlias = alias
+				ssoProvider = provider
+				ssoFederationOK = true
+			}
+		}
+	}
+
+	accessMode := ClassifyAccessMode(in.ConnectorType, in.Config, hasSSOMetadata, ssoFederationOK)
+
 	now := s.now()
 	row := &models.AccessConnector{
 		ID:                    connectorID,
@@ -240,6 +275,7 @@ func (s *ConnectorManagementService) Connect(ctx context.Context, in ConnectInpu
 		Credentials:           ciphertext,
 		KeyVersion:            kvInt,
 		Status:                models.StatusConnected,
+		AccessMode:            accessMode,
 		CredentialExpiredTime: expiresAt,
 		CreatedAt:             now,
 		UpdatedAt:             now,
@@ -270,21 +306,9 @@ func (s *ConnectorManagementService) Connect(ctx context.Context, in ConnectInpu
 		JobID:       jobID,
 		MissingCaps: missing,
 		CredsExpiry: expiresAt,
-	}
-
-	// SSO federation pass. Best-effort: if the connector does not
-	// advertise SSO we leave the result fields empty. A federation
-	// failure logs but does NOT roll the row back \u2014 the operator
-	// can re-run Connect after fixing Keycloak.
-	if s.ssoSvc != nil && in.SSORealm != "" && in.SSOAlias != "" {
-		meta, mErr := connector.GetSSOMetadata(ctx, in.Config, in.Secrets)
-		if mErr == nil && meta != nil {
-			alias, provider, fErr := s.ssoSvc.ConfigureBroker(ctx, in.SSORealm, in.SSOAlias, in.DisplayName, meta)
-			if fErr == nil {
-				res.SSOAlias = alias
-				res.SSOProvider = provider
-			}
-		}
+		AccessMode:  accessMode,
+		SSOAlias:    ssoAlias,
+		SSOProvider: ssoProvider,
 	}
 
 	return res, nil
@@ -447,6 +471,49 @@ func (s *ConnectorManagementService) RotateCredentials(
 		Updates(updates)
 	if result.Error != nil {
 		return fmt.Errorf("access: update access_connector: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("%w: %s", ErrConnectorRowNotFound, connectorID)
+	}
+	return nil
+}
+
+// UpdateAccessMode is the admin override for the
+// docs/PROPOSAL.md §13 access mode classification. Operators use it
+// from the admin UI when the auto-classifier picked the wrong mode
+// — for example a Salesforce instance that lives behind a private
+// VPN should override to "tunnel" even though Connect saw a public
+// SSO metadata URL.
+//
+// mode must be one of "tunnel" / "sso_only" / "api_only" (see
+// models.IsValidAccessMode). Returns ErrValidation on a malformed
+// mode and ErrConnectorRowNotFound when the connector has been
+// soft-deleted.
+func (s *ConnectorManagementService) UpdateAccessMode(ctx context.Context, connectorID, mode string) error {
+	if connectorID == "" {
+		return fmt.Errorf("%w: connector_id is required", ErrValidation)
+	}
+	mode = strings.TrimSpace(mode)
+	if !models.IsValidAccessMode(mode) {
+		return fmt.Errorf("%w: access_mode must be one of tunnel|sso_only|api_only", ErrValidation)
+	}
+	var conn models.AccessConnector
+	if err := s.db.WithContext(ctx).Where("id = ?", connectorID).First(&conn).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("%w: %s", ErrConnectorRowNotFound, connectorID)
+		}
+		return fmt.Errorf("access: load connector: %w", err)
+	}
+	now := s.now()
+	result := s.db.WithContext(ctx).
+		Model(&models.AccessConnector{}).
+		Where("id = ?", connectorID).
+		Updates(map[string]interface{}{
+			"access_mode": mode,
+			"updated_at":  now,
+		})
+	if result.Error != nil {
+		return fmt.Errorf("access: update access_mode: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("%w: %s", ErrConnectorRowNotFound, connectorID)

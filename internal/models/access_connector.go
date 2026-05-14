@@ -35,6 +35,21 @@ type AccessConnector struct {
 	Credentials           string         `gorm:"type:text" json:"-"`
 	KeyVersion            int            `gorm:"not null;default:1" json:"key_version"`
 	Status                string         `gorm:"type:varchar(50);not null;default:'disconnected'" json:"status"`
+	// AccessMode classifies how the platform reaches the connector
+	// per docs/PROPOSAL.md §13 (Hybrid Access Model). One of:
+	//   - "tunnel"   — private / self-hosted resource fronted by an
+	//                  OpenZiti dataplane tunnel.
+	//   - "sso_only" — SaaS app federated through Keycloak; no API
+	//                  push and no tunnel required.
+	//   - "api_only" — SaaS app reachable directly via the connector's
+	//                  REST API; default for connectors with no native
+	//                  SSO metadata and no private dataplane.
+	// The mode is auto-classified at Connect time and may be
+	// overridden via PATCH /access/connectors/:id. PolicyService.Promote
+	// surfaces this value so the ZTNA business layer can skip the
+	// OpenZiti ServicePolicy write when the resource is sso_only /
+	// api_only.
+	AccessMode            string         `gorm:"column:access_mode;type:varchar(20);not null;default:'api_only'" json:"access_mode"`
 	CredentialExpiredTime *time.Time     `json:"credential_expired_time,omitempty"`
 	DeletedAt             gorm.DeletedAt `gorm:"index" json:"-"`
 	CreatedAt             time.Time      `json:"created_at"`
@@ -55,3 +70,35 @@ const (
 	StatusError        = "error"
 	StatusExpired      = "expired"
 )
+
+// AccessMode enumerates the values stored in AccessConnector.AccessMode per
+// docs/PROPOSAL.md §13 (Hybrid Access Model).
+const (
+	// AccessModeTunnel marks the connector as a private / self-hosted
+	// resource fronted by an OpenZiti dataplane tunnel. PolicyService
+	// promotions for tunnel-mode connectors write the corresponding
+	// OpenZiti ServicePolicy; sso_only / api_only modes skip it.
+	AccessModeTunnel = "tunnel"
+	// AccessModeSSOOnly marks the connector as a SaaS app federated
+	// through Keycloak. No OpenZiti policy is written; no per-grant
+	// API push is required. The connector still participates in
+	// identity sync, access reviews, and the leaver kill switch.
+	AccessModeSSOOnly = "sso_only"
+	// AccessModeAPIOnly marks the connector as a SaaS app reachable
+	// directly via the connector's REST API. No OpenZiti policy is
+	// written. This is the safe default for connectors without
+	// native SSO metadata and without a private dataplane.
+	AccessModeAPIOnly = "api_only"
+)
+
+// IsValidAccessMode reports whether mode is one of the three values
+// defined in docs/PROPOSAL.md §13. Used by the admin PATCH endpoint
+// to reject typos before they reach the DB layer.
+func IsValidAccessMode(mode string) bool {
+	switch mode {
+	case AccessModeTunnel, AccessModeSSOOnly, AccessModeAPIOnly:
+		return true
+	default:
+		return false
+	}
+}

@@ -35,6 +35,7 @@ func (h *ConnectorManagementHandler) Register(r *gin.Engine) {
 	g := r.Group("/access/connectors")
 	g.POST("", h.CreateConnector)
 	g.DELETE("/:id", h.DeleteConnector)
+	g.PATCH("/:id", h.PatchConnector)
 	g.PUT("/:id/secret", h.RotateSecret)
 	g.POST("/:id/sync", h.TriggerSync)
 }
@@ -128,6 +129,53 @@ func (h *ConnectorManagementHandler) RotateSecret(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"connector_id": id, "status": "rotated"})
+}
+
+// connectorPatchBody is the request body for
+// PATCH /access/connectors/:id. The only mutable field today is
+// access_mode (docs/PROPOSAL.md §13). Future Phase 11 follow-ups
+// can extend the body — the handler ignores unknown keys.
+type connectorPatchBody struct {
+	AccessMode *string `json:"access_mode,omitempty"`
+}
+
+// PatchConnector handles PATCH /access/connectors/:id. Currently
+// supports admin override of the connector's docs/PROPOSAL.md §13
+// access_mode (one of tunnel | sso_only | api_only). Returns 200
+// with the connector ID + new mode on success, 400 on a malformed
+// mode, and 500 on a service-level failure.
+func (h *ConnectorManagementHandler) PatchConnector(c *gin.Context) {
+	id := GetStringParam(c, "id")
+	if id == "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
+			Error:   "id path parameter is required",
+			Code:    "validation_failed",
+			Message: "id path parameter is required",
+		})
+		return
+	}
+	var body connectorPatchBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeError(c, http.StatusBadRequest, err)
+		return
+	}
+	if body.AccessMode == nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
+			Error:   "no patchable fields supplied",
+			Code:    "validation_failed",
+			Message: "no patchable fields supplied",
+		})
+		return
+	}
+	mode := *body.AccessMode
+	if err := h.service.UpdateAccessMode(c.Request.Context(), id, mode); err != nil {
+		// writeError maps ErrValidation -> 400 and
+		// ErrConnectorRowNotFound -> 404 via mapServiceError;
+		// anything else surfaces as 500.
+		writeError(c, http.StatusInternalServerError, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"connector_id": id, "access_mode": mode})
 }
 
 // TriggerSync handles POST /access/connectors/:id/sync. Returns 202

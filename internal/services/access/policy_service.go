@@ -75,6 +75,40 @@ type OpenZitiPolicyWriter interface {
 	WriteServicePolicy(ctx context.Context, policy *models.Policy) error
 }
 
+// PolicyPromotionEvent is the richer payload emitted by Promote per
+// docs/PROPOSAL.md §13 (Hybrid Access Model). It wraps the freshly-
+// promoted Policy alongside the access_mode classification of the
+// connectors currently configured in the workspace. Downstream
+// consumers (typically the ZTNA business layer) use the access-mode
+// snapshot to decide whether an OpenZiti ServicePolicy is needed
+// for this policy at all:
+//
+//   - if the workspace has no tunnel-mode connectors there is no
+//     dataplane that needs a ServicePolicy and the writer can no-op;
+//   - if any tunnel-mode connector exists the writer materialises
+//     the ServicePolicy as before.
+//
+// WorkspaceAccessModes is sorted and de-duplicated for stable
+// downstream consumption. Empty means "no access_connectors in the
+// workspace" — the writer should treat this as a no-op rather than
+// a failure.
+type PolicyPromotionEvent struct {
+	Policy               *models.Policy `json:"policy"`
+	WorkspaceAccessModes []string       `json:"workspace_access_modes"`
+}
+
+// OpenZitiPolicyEventWriter is the optional richer variant of
+// OpenZitiPolicyWriter. When the configured writer implements this
+// interface, Promote calls WriteServicePolicyEvent with a
+// PolicyPromotionEvent that carries the workspace's access-mode
+// snapshot alongside the policy. The interface is opt-in so
+// existing writer implementations remain compatible — Promote
+// falls back to WriteServicePolicy when the writer only implements
+// the narrow contract.
+type OpenZitiPolicyEventWriter interface {
+	WriteServicePolicyEvent(ctx context.Context, event *PolicyPromotionEvent) error
+}
+
 // NewPolicyService returns a new service backed by db. db must not be
 // nil. The service constructs a default ImpactResolver and
 // ConflictDetector against the same db; tests can swap them via the
@@ -409,12 +443,65 @@ func (s *PolicyService) Promote(ctx context.Context, workspaceID, policyID, acto
 	// roll back the promotion (the DB row is the source of truth;
 	// the ZTNA business layer reconciles eventually). CreateDraft
 	// and Simulate NEVER reach this branch — Phase 3 exit criterion.
+	//
+	// Phase 11 (docs/PROPOSAL.md §13): when the writer also
+	// implements OpenZitiPolicyEventWriter, hand it the richer
+	// PolicyPromotionEvent that carries the workspace's
+	// access-mode snapshot. Writers that only implement the
+	// narrow OpenZitiPolicyWriter contract continue to receive
+	// just the policy — no Phase-3 callers are broken.
 	if s.zitiWriter != nil {
-		if err := s.zitiWriter.WriteServicePolicy(ctx, &promoted); err != nil {
+		if eventWriter, ok := s.zitiWriter.(OpenZitiPolicyEventWriter); ok {
+			modes, mErr := s.collectWorkspaceAccessModes(ctx, workspaceID)
+			if mErr != nil {
+				log.Printf("access: policy %s: collect workspace access modes: %v", promoted.ID, mErr)
+			}
+			event := &PolicyPromotionEvent{
+				Policy:               &promoted,
+				WorkspaceAccessModes: modes,
+			}
+			if err := eventWriter.WriteServicePolicyEvent(ctx, event); err != nil {
+				log.Printf("access: policy %s: openziti event write failed: %v", promoted.ID, err)
+			}
+		} else if err := s.zitiWriter.WriteServicePolicy(ctx, &promoted); err != nil {
 			log.Printf("access: policy %s: openziti write failed: %v", promoted.ID, err)
 		}
 	}
 	return &promoted, nil
+}
+
+// collectWorkspaceAccessModes returns the sorted, de-duplicated set
+// of access_mode values currently configured on the workspace's
+// access_connectors. Soft-deleted rows are excluded automatically
+// by GORM. An empty result is a valid answer — it means the
+// workspace has no live connectors and downstream consumers should
+// treat the workspace as "no dataplane to materialise".
+func (s *PolicyService) collectWorkspaceAccessModes(ctx context.Context, workspaceID string) ([]string, error) {
+	if s.db == nil || workspaceID == "" {
+		return nil, nil
+	}
+	var rows []string
+	if err := s.db.WithContext(ctx).
+		Model(&models.AccessConnector{}).
+		Where("workspace_id = ?", workspaceID).
+		Distinct("access_mode").
+		Order("access_mode ASC").
+		Pluck("access_mode", &rows).Error; err != nil {
+		return nil, fmt.Errorf("access: pluck workspace access_mode: %w", err)
+	}
+	out := make([]string, 0, len(rows))
+	seen := make(map[string]struct{}, len(rows))
+	for _, m := range rows {
+		if m == "" {
+			continue
+		}
+		if _, ok := seen[m]; ok {
+			continue
+		}
+		seen[m] = struct{}{}
+		out = append(out, m)
+	}
+	return out, nil
 }
 
 // TestAccess answers "Can user X access resource Y under draft policy
