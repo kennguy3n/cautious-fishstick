@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,6 +28,8 @@ type fakeOrphanService struct {
 	revokeErr    error
 	dismissErr   error
 	ackErr       error
+	reconErr     error
+	dryRunErr    error
 }
 
 func (f *fakeOrphanService) ListOrphans(_ context.Context, workspaceID, status string) ([]models.AccessOrphanAccount, error) {
@@ -44,14 +48,14 @@ func (f *fakeOrphanService) ListOrphans(_ context.Context, workspaceID, status s
 }
 func (f *fakeOrphanService) ReconcileWorkspace(_ context.Context, _ string) ([]models.AccessOrphanAccount, error) {
 	f.reconCalls.Add(1)
-	return f.rows, nil
+	return f.rows, f.reconErr
 }
 func (f *fakeOrphanService) ReconcileWorkspaceDryRun(_ context.Context, _ string) ([]models.AccessOrphanAccount, error) {
 	f.dryRunCalls.Add(1)
 	if f.dryRunRows != nil {
-		return f.dryRunRows, nil
+		return f.dryRunRows, f.dryRunErr
 	}
-	return f.rows, nil
+	return f.rows, f.dryRunErr
 }
 func (f *fakeOrphanService) RevokeOrphan(_ context.Context, _ string) error {
 	f.revokeCalls.Add(1)
@@ -163,6 +167,112 @@ func TestOrphanHandler_Reconcile_DryRun(t *testing.T) {
 	}
 	if len(body2.Rows) != 1 || body2.Rows[0].AppUserID != "u-dry" {
 		t.Errorf("rows = %+v; want one row with app_user_id=u-dry", body2.Rows)
+	}
+}
+
+// TestOrphanHandler_Reconcile_PartialFailure_WetRun asserts that when
+// the reconciler returns rows from successful connectors alongside an
+// aggregated error from failed connectors (the round-9 best-effort
+// contract — see docs/ARCHITECTURE.md §12.2), the handler surfaces
+// the rows with HTTP 200 and exposes the aggregated error via the
+// "partial_failure" field rather than discarding the partial set with
+// a 500. Without this, operators relying on POST /access/orphans/
+// reconcile would lose the set of orphans surfaced by every healthy
+// connector whenever a single connector in the workspace flaked.
+func TestOrphanHandler_Reconcile_PartialFailure_WetRun(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	fake := &fakeOrphanService{
+		rows: []models.AccessOrphanAccount{
+			{ID: "o1", WorkspaceID: "ws1", ConnectorID: "google_workspace", UserExternalID: "u-good", Status: models.OrphanStatusDetected, DetectedAt: now},
+		},
+		reconErr: errors.New("connector slack: upstream 503"),
+	}
+	r := Router(Dependencies{OrphanReconciler: fake, DisableRateLimiter: true})
+	w := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"workspace_id":"ws1"}`)
+	req := httptest.NewRequest(http.MethodPost, "/access/orphans/reconcile", body)
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s); want 200 (partial-failure rows must surface)", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Rows           []unusedAccountView `json:"unused_app_accounts"`
+		DryRun         bool                `json:"dry_run"`
+		PartialFailure string              `json:"partial_failure"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Rows) != 1 || resp.Rows[0].ID != "o1" {
+		t.Errorf("rows = %+v; want one row with id=o1", resp.Rows)
+	}
+	if resp.DryRun {
+		t.Errorf("response dry_run = true; want false")
+	}
+	if !strings.Contains(resp.PartialFailure, "slack") {
+		t.Errorf("partial_failure = %q; want it to surface the aggregated connector error", resp.PartialFailure)
+	}
+}
+
+// TestOrphanHandler_Reconcile_PartialFailure_DryRun mirrors the
+// wet-run partial-failure assertion for the dry-run path. Dry-run is
+// the more impactful gap because the rows are not persisted anywhere
+// — if the handler discarded them on error, the operator would lose
+// the only copy of the preview from the connectors that succeeded.
+func TestOrphanHandler_Reconcile_PartialFailure_DryRun(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	fake := &fakeOrphanService{
+		dryRunRows: []models.AccessOrphanAccount{
+			{WorkspaceID: "ws1", ConnectorID: "google_workspace", UserExternalID: "u-dry-good", Status: models.OrphanStatusDetected, DetectedAt: now},
+		},
+		dryRunErr: errors.New("connector slack: upstream 503"),
+	}
+	r := Router(Dependencies{OrphanReconciler: fake, DisableRateLimiter: true})
+	w := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"workspace_id":"ws1","dry_run":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/access/orphans/reconcile", body)
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s); want 200 (dry-run preview must survive partial failure)", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Rows           []unusedAccountView `json:"unused_app_accounts"`
+		DryRun         bool                `json:"dry_run"`
+		PartialFailure string              `json:"partial_failure"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Rows) != 1 || resp.Rows[0].AppUserID != "u-dry-good" {
+		t.Errorf("rows = %+v; want one row with app_user_id=u-dry-good", resp.Rows)
+	}
+	if !resp.DryRun {
+		t.Errorf("response dry_run = false; want true")
+	}
+	if !strings.Contains(resp.PartialFailure, "slack") {
+		t.Errorf("partial_failure = %q; want it to surface the aggregated connector error", resp.PartialFailure)
+	}
+}
+
+// TestOrphanHandler_Reconcile_TotalFailure_NoRows asserts the
+// no-rows-and-error path still returns 500. This is the residual case
+// where the partial-failure 200 contract does not apply because there
+// is nothing useful to surface to the caller.
+func TestOrphanHandler_Reconcile_TotalFailure_NoRows(t *testing.T) {
+	fake := &fakeOrphanService{
+		rows:     nil,
+		reconErr: errors.New("connector google_workspace: upstream 503"),
+	}
+	r := Router(Dependencies{OrphanReconciler: fake, DisableRateLimiter: true})
+	w := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"workspace_id":"ws1"}`)
+	req := httptest.NewRequest(http.MethodPost, "/access/orphans/reconcile", body)
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d (%s); want 500 when there are no rows to surface", w.Code, w.Body.String())
 	}
 }
 
