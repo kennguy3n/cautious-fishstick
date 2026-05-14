@@ -100,8 +100,10 @@ func (s *AccessProvisioningService) Provision(
 	}
 
 	// Resolve the connector first so we fail fast on
-	// ErrConnectorNotFound without dirtying state. This means an unknown
-	// provider key never leaves the request in "provisioning".
+	// ErrConnectorRowNotFound (missing access_connectors row) or
+	// ErrConnectorNotFound (provider not registered in the factory)
+	// without dirtying state. This means a stale connector_id or an
+	// unknown provider key never leaves the request in "provisioning".
 	provider, err := s.lookupProvider(ctx, request.ConnectorID)
 	if err != nil {
 		return err
@@ -275,9 +277,12 @@ func (s *AccessProvisioningService) Revoke(
 }
 
 // lookupProvider resolves a connector_id to its provider key by reading
-// the access_connectors row. Returns ErrConnectorNotFound when no row
-// matches — this matches the registry-layer error so callers see one
-// failure mode for "we cannot reach the connector".
+// the access_connectors row. Returns ErrConnectorRowNotFound when no
+// row matches (the request points at a connector that has been deleted
+// between approval and provisioning). The registry-layer
+// ErrConnectorNotFound is a separate failure (provider package was
+// not blank-imported into the binary) and maps to 503; this DB-miss
+// case maps to 404.
 func (s *AccessProvisioningService) lookupProvider(ctx context.Context, connectorID string) (string, error) {
 	if connectorID == "" {
 		return "", fmt.Errorf("%w: connector_id is required", ErrValidation)
@@ -288,7 +293,7 @@ func (s *AccessProvisioningService) lookupProvider(ctx context.Context, connecto
 		Where("id = ?", connectorID).
 		First(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", fmt.Errorf("%w: %s", ErrConnectorNotFound, connectorID)
+			return "", fmt.Errorf("%w: %s", ErrConnectorRowNotFound, connectorID)
 		}
 		return "", fmt.Errorf("access: select access_connector: %w", err)
 	}

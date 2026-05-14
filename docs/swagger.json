@@ -112,6 +112,23 @@
           { "name": "status", "in": "query", "required": false, "schema": { "type": "string" } }
         ],
         "responses": { "200": { "description": "OK" }, "400": { "description": "workspace_id required" } }
+      },
+      "post": {
+        "summary": "Connect a new access connector — validates, probes, encrypts, persists, and enqueues an initial sync_identities job",
+        "tags": ["access-connectors"],
+        "responses": {
+          "201": { "description": "Created" },
+          "400": { "description": "Validation failed / unknown provider" },
+          "409": { "description": "Duplicate connector for (workspace, provider, connector_type)" }
+        }
+      }
+    },
+    "/access/connectors/{id}": {
+      "delete": {
+        "summary": "Soft-delete an access connector — revokes active grants and deregisters SSO",
+        "tags": ["access-connectors"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Connector not found" } }
       }
     },
     "/access/connectors/{id}/health": {
@@ -120,6 +137,29 @@
         "tags": ["access-connectors"],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "OK" }, "404": { "description": "Connector not found" } }
+      }
+    },
+    "/access/connectors/{id}/secret": {
+      "put": {
+        "summary": "Rotate connector credentials — re-validates, re-encrypts, and atomically updates the secrets column",
+        "tags": ["access-connectors"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK" },
+          "400": { "description": "Validation failed" },
+          "404": { "description": "Connector not found" }
+        }
+      }
+    },
+    "/access/connectors/{id}/sync": {
+      "post": {
+        "summary": "Trigger an immediate sync_identities job for the supplied connector",
+        "tags": ["access-connectors"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "202": { "description": "Job enqueued" },
+          "404": { "description": "Connector not found" }
+        }
       }
     },
     "/access/reviews": {

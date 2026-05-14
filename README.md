@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/kennguy3n/cautious-fishstick/actions/workflows/ci.yml/badge.svg)](https://github.com/kennguy3n/cautious-fishstick/actions/workflows/ci.yml) [![Python CI](https://github.com/kennguy3n/cautious-fishstick/actions/workflows/python-ci.yml/badge.svg)](https://github.com/kennguy3n/cautious-fishstick/actions/workflows/python-ci.yml)
 
-> **Status:** Phases 0, 6, 7, 8 ✅ shipped. Phase 10 🟡 partial (197/50 advanced caps, 200/200 audit logs, 185/200 SSO brokers). Phases 1–5 backend complete — only Admin UI surfaces remain. Phase 9 SDK contracts defined, full implementation pending. See [`docs/PROGRESS.md`](docs/PROGRESS.md) for details.
+> **Status:** Phases 0, 6, 7, 8 ✅ shipped. Phase 10 🟡 partial (197/50 advanced caps, 200/200 audit logs, 185/200 SSO brokers). Phases 1–5 backend complete — only Admin UI surfaces remain. Phase 9 SDK contracts + real HTTP-client implementations (iOS / Android / Desktop) landed; Admin UI integration + package-registry publishing remain. Connector Management API (`POST/DELETE/PUT/POST /access/connectors[...]`), real worker handler upgrades (`access_sync_identities` with tombstone-safety + manager links, `access_list_entitlements` persistence), real cron jobs (identity-sync scheduler, draft-policy staleness checker, grant-expiry enforcer), and the `docker/` + `docker-compose.yml` stack all shipped in PR #67. See [`docs/PROGRESS.md`](docs/PROGRESS.md) for details.
 
 The ShieldNet 360 Access Platform is the access management product within the SN360 ecosystem. It is a multi-tenant platform that lets small and medium-sized businesses connect, manage, and secure access to **200+ cloud platforms, SaaS applications, and identity systems** from a single control plane.
 
@@ -68,6 +68,25 @@ CI runs the Go pipeline on every push and PR; the Python pipeline runs only when
 
 ---
 
+## How to run the platform
+
+The repo ships a `docker-compose.yml` that brings up the full backend (Postgres, Redis, `ztna-api`, `access-connector-worker`, `access-workflow-engine`, `access-ai-agent`) with real healthchecks. From the repo root:
+
+```bash
+docker compose up --build --wait
+```
+
+This builds each Go service from `docker/Dockerfile.*` (multi-stage `golang:1.25-alpine` → `gcr.io/distroless/static-debian12:nonroot`) and the Python `access-ai-agent` from `cmd/access-ai-agent/Dockerfile`. Defaults wire to:
+
+- `ztna-api` on `:8080`
+- `access-workflow-engine` on `:8082`
+- `access-ai-agent` on `:8090`
+- Postgres on `:5432`, Redis on `:6379`
+
+Tear down with `docker compose down -v` (the `-v` flag also drops the `postgres-data` volume).
+
+---
+
 ## Project structure
 
 ```
@@ -75,7 +94,8 @@ cautious-fishstick/
 ├── sdk/                           # Phase 2 / Phase 9 client integration surface (REST-only, no on-device inference)
 │   ├── ios/                       # Swift Package — `AccessSDKClient` protocol + `Models.swift` + `Tests/ShieldNetAccessTests/ContractTests.swift` + minimal `Package.swift`. Mirrors PROPOSAL.md §11.4 (`createRequest` / `listRequests` / `approveRequest` / `denyRequest` / `cancelRequest` / `listGrants` / `explainPolicy` / `suggestResources`). No `CoreML` / `MLX` imports.
 │   ├── android/                   # Kotlin library — `AccessSDKClient` interface + `AccessRequest` / `AccessGrant` / `PolicyExplanation` / `Suggestion` data classes + `ContractTest.kt`. No `org.tensorflow.lite` / `ai.onnxruntime` imports.
-│   └── desktop/                   # Electron extension — `AccessIPC` TypeScript interface + channel-name constants in `AccessIPCChannel` + request / response payloads + `src/__tests__/contract.test.ts` + minimal `package.json` / `tsconfig.json`. No `onnxruntime` / native inference binaries.
+│   └── desktop/                   # Electron extension — `AccessIPC` TypeScript interface + channel-name constants in `AccessIPCChannel` + request / response payloads + `src/__tests__/contract.test.ts` + minimal `package.json` / `tsconfig.json`. No `onnxruntime` / native inference binaries. Phase 9 adds real `URLSessionAccessSDKClient` (iOS) / `OkHttpAccessSDKClient` (Android) / `registerAccessIPC` + `registerAccessRenderer` (Desktop) plus minimal sample apps under `sdk/ios/Example` and `sdk/android/example`.
+├── docker/                        # Multi-stage Dockerfiles (`golang:1.25-alpine` build → `gcr.io/distroless/static-debian12:nonroot` runtime) for `ztna-api`, `access-connector-worker`, `access-workflow-engine`. Compose stack in repo-root `docker-compose.yml`.
 ├── cmd/
 │   ├── ztna-api/                  # HTTP API binary (Gin server on ZTNA_API_LISTEN_ADDR, default :8080)
 │   ├── access-connector-worker/   # Queue worker (Phase 0 stub)

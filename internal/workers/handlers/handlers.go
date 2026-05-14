@@ -54,7 +54,23 @@ type ConnectorResolver func(provider string) (access.AccessConnector, error)
 // access_connectors row for a job. The production implementation
 // reads the row through the supplied DB; tests override it to pin
 // (config, secrets) without touching the DB.
-type ConnectorAccessor func(ctx context.Context, db *gorm.DB, connectorID string) (provider string, config, secrets map[string]interface{}, err error)
+type ConnectorAccessor func(ctx context.Context, db *gorm.DB, connectorID string, decrypt CredentialDecryptor) (provider string, config, secrets map[string]interface{}, err error)
+
+// CredentialDecryptor is the narrow contract DefaultLoadConnector
+// uses to turn an access_connectors.Credentials ciphertext blob into
+// plaintext JSON. The production implementation is an AES-GCM
+// decryptor wired in by cmd/access-connector-worker / cmd/ztna-api
+// from internal/pkg/credentials. Tests substitute a transparent
+// passthrough that simply returns the ciphertext bytes unmodified —
+// this is NOT a mock, it is a real decryption hook whose semantics
+// happen to be the identity function so seed data can be inserted as
+// plaintext JSON.
+//
+// aad is the additional-authenticated-data bound to the ciphertext
+// (the access_connectors.ID, per internal/pkg/credentials). keyVersion
+// pins which org DEK version was used at encryption time so the
+// decryptor can pick the right key when DEKs rotate.
+type CredentialDecryptor func(ciphertext []byte, aad []byte, keyVersion string) ([]byte, error)
 
 // JobContext bundles the dependencies a handler needs. The first
 // four fields (DB, Resolve, LoadConn, Now) are required for every
@@ -63,12 +79,19 @@ type ConnectorAccessor func(ctx context.Context, db *gorm.DB, connectorID string
 // AuditProducer is only required by the AccessAudit handler (Task
 // 17); other handlers ignore it. Leaving it nil for non-audit
 // callers is safe.
+//
+// Decrypt is consumed by DefaultLoadConnector to turn the encrypted
+// credentials column into the plaintext (secrets) map handed to the
+// connector. When nil, DefaultLoadConnector falls back to treating
+// the column as plaintext JSON (the legacy Phase 6 scaffold
+// behaviour preserved for tests that seed plaintext rows).
 type JobContext struct {
 	DB            *gorm.DB
 	Resolve       ConnectorResolver
 	LoadConn      ConnectorAccessor
 	Now           func() time.Time
 	AuditProducer access.AuditProducer
+	Decrypt       CredentialDecryptor
 }
 
 // ErrMissingDependency surfaces when a handler runs with a partial
@@ -80,7 +103,14 @@ var ErrMissingDependency = errors.New("handlers: job context missing dependencie
 // scaffold treats the encrypted credentials column as already-
 // decrypted JSON so tests can exercise the dispatch logic without
 // the production credential-manager wiring.
-func DefaultLoadConnector(ctx context.Context, db *gorm.DB, connectorID string) (string, map[string]interface{}, map[string]interface{}, error) {
+//
+// When decrypt is non-nil, DefaultLoadConnector uses it to turn the
+// access_connectors.Credentials ciphertext (treated as a JSON
+// string of the persisted ciphertext encoding) into plaintext
+// before JSON-unmarshalling. The AAD is the connector ULID,
+// matching internal/pkg/credentials. When decrypt is nil the column
+// is read as plaintext JSON — the existing test fixture path.
+func DefaultLoadConnector(ctx context.Context, db *gorm.DB, connectorID string, decrypt CredentialDecryptor) (string, map[string]interface{}, map[string]interface{}, error) {
 	var conn models.AccessConnector
 	if err := db.WithContext(ctx).Where("id = ?", connectorID).First(&conn).Error; err != nil {
 		return "", nil, nil, fmt.Errorf("handlers: load connector %s: %w", connectorID, err)
@@ -93,10 +123,16 @@ func DefaultLoadConnector(ctx context.Context, db *gorm.DB, connectorID string) 
 	}
 	secrets := map[string]interface{}{}
 	if conn.Credentials != "" {
-		// Phase 6 scaffold: decryption is wired by the production
-		// binary. The default loader treats the column as a JSON
-		// blob so unit tests can seed plaintext secrets directly.
-		if err := json.Unmarshal([]byte(conn.Credentials), &secrets); err != nil {
+		plaintext := []byte(conn.Credentials)
+		if decrypt != nil {
+			keyVersion := fmt.Sprintf("%d", conn.KeyVersion)
+			pt, err := decrypt(plaintext, []byte(conn.ID), keyVersion)
+			if err != nil {
+				return "", nil, nil, fmt.Errorf("handlers: decrypt credentials for %s: %w", connectorID, err)
+			}
+			plaintext = pt
+		}
+		if err := json.Unmarshal(plaintext, &secrets); err != nil {
 			return "", nil, nil, fmt.Errorf("handlers: decode credentials for %s: %w", connectorID, err)
 		}
 	}
@@ -112,7 +148,7 @@ func DefaultLoadConnector(ctx context.Context, db *gorm.DB, connectorID string) 
 // running → completed | failed). This mirrors the SN360 worker
 // pattern: a crash mid-dispatch leaves the row in `running`, which
 // the next sweeper restarts via its own pending probe.
-func runJob(ctx context.Context, jc JobContext, jobID string, dispatch func(ctx context.Context, conn access.AccessConnector, config, secrets map[string]interface{}, payload []byte) error) error {
+func runJob(ctx context.Context, jc JobContext, jobID string, dispatch func(ctx context.Context, conn access.AccessConnector, job *models.AccessJob, config, secrets map[string]interface{}) error) error {
 	if jc.DB == nil || jc.Resolve == nil || jc.LoadConn == nil {
 		return ErrMissingDependency
 	}
@@ -137,7 +173,7 @@ func runJob(ctx context.Context, jc JobContext, jobID string, dispatch func(ctx 
 		return fmt.Errorf("handlers: mark running: %w", err)
 	}
 
-	provider, cfg, secrets, err := jc.LoadConn(ctx, jc.DB, job.ConnectorID)
+	provider, cfg, secrets, err := jc.LoadConn(ctx, jc.DB, job.ConnectorID, jc.Decrypt)
 	if err != nil {
 		return finalize(ctx, jc, jobID, err)
 	}
@@ -146,7 +182,7 @@ func runJob(ctx context.Context, jc JobContext, jobID string, dispatch func(ctx 
 		return finalize(ctx, jc, jobID, err)
 	}
 
-	dispatchErr := dispatch(ctx, conn, cfg, secrets, []byte(job.Payload))
+	dispatchErr := dispatch(ctx, conn, &job, cfg, secrets)
 	return finalize(ctx, jc, jobID, dispatchErr)
 }
 

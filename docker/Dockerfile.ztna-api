@@ -1,0 +1,35 @@
+# Multi-stage build for the ztna-api service. The build stage pulls
+# the project module cache, compiles a static (CGO_ENABLED=0) binary
+# under /out/ztna-api, then a distroless runtime stage runs the binary
+# as a non-root user. This matches the SN360 deployment pattern in
+# docs/PROPOSAL.md §10.2.
+
+# syntax=docker/dockerfile:1.7
+
+FROM golang:1.25-alpine AS build
+WORKDIR /src
+
+# Pull module deps in a dedicated layer so a code-only change does
+# not re-download the entire module cache.
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod download
+
+COPY . .
+
+# Static binary. -trimpath + -ldflags="-s -w" strip absolute paths and
+# debug symbols for a smaller image; CGO_ENABLED=0 lets us land on
+# distroless static.
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/ztna-api ./cmd/ztna-api
+
+FROM gcr.io/distroless/static-debian12:nonroot AS runtime
+USER nonroot:nonroot
+COPY --from=build /out/ztna-api /ztna-api
+EXPOSE 8080
+ENTRYPOINT ["/ztna-api"]

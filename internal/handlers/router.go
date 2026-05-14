@@ -61,6 +61,13 @@ type Dependencies struct {
 	// registered when wired.
 	ConnectorListReader ConnectorListReader
 
+	// ConnectorManagementService backs POST /access/connectors, DELETE
+	// /access/connectors/:id, PUT /access/connectors/:id/secret and
+	// POST /access/connectors/:id/sync (per docs/ARCHITECTURE.md §2).
+	// May be nil in dev binaries that read connectors out of a static
+	// fixture; the routes are only registered when wired.
+	ConnectorManagementService *access.ConnectorManagementService
+
 	// GrantEntitlementsReader backs GET /access/grants/:id/entitlements.
 	// May be nil; the entitlements sub-route is only registered when
 	// wired so dev binaries without a credential manager keep serving
@@ -125,6 +132,11 @@ func Router(deps Dependencies) *gin.Engine {
 	if deps.ConnectorListReader != nil {
 		clh := NewConnectorListHandler(deps.ConnectorListReader)
 		clh.Register(r)
+	}
+
+	if deps.ConnectorManagementService != nil {
+		cmh := NewConnectorManagementHandler(deps.ConnectorManagementService)
+		cmh.Register(r)
 	}
 
 	return r

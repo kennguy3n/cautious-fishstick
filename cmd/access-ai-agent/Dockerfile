@@ -19,13 +19,18 @@ ENV PYTHONUNBUFFERED=1 \
 
 USER agent
 
-EXPOSE 8765
+# Container listens on 8090 to match docker-compose.yml and the
+# ACCESS_AI_AGENT_BASE_URL ztna-api wires (`http://access-ai-agent:8090`).
+# Standalone dev runs (`python main.py`) still default to 8765 per
+# cmd/access-ai-agent/README.md — the port is only fixed here because
+# the image runs inside the compose stack.
+EXPOSE 8090
 
 # Healthcheck the dispatcher's GET /healthz route. 5s timeout is a
 # loose bound — the agent serves /healthz from a stdlib handler with
 # no I/O.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request, sys; \
-sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=5).status==200 else 1)"
+sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=5).status==200 else 1)"
 
-CMD ["python", "main.py", "--host", "0.0.0.0", "--port", "8765"]
+CMD ["python", "main.py", "--host", "0.0.0.0", "--port", "8090"]

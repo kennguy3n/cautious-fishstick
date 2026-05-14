@@ -47,8 +47,13 @@ func mapServiceError(err error, status int) (int, string) {
 		errors.Is(err, access.ErrRequestNotFound),
 		errors.Is(err, access.ErrReviewNotFound),
 		errors.Is(err, access.ErrDecisionNotFound),
-		errors.Is(err, access.ErrGrantNotFound):
+		errors.Is(err, access.ErrGrantNotFound),
+		errors.Is(err, access.ErrConnectorRowNotFound):
 		return http.StatusNotFound, "not_found"
+	case errors.Is(err, access.ErrUnknownProvider):
+		return http.StatusBadRequest, "validation_failed"
+	case errors.Is(err, access.ErrConnectorAlreadyExists):
+		return http.StatusConflict, "conflict"
 	case errors.Is(err, access.ErrPolicyAlreadyPromoted),
 		errors.Is(err, access.ErrPolicyNotSimulated),
 		errors.Is(err, access.ErrPolicyNotDraft),
@@ -59,6 +64,13 @@ func mapServiceError(err error, status int) (int, string) {
 		return http.StatusConflict, "conflict"
 	case errors.Is(err, access.ErrConnectorNotFound),
 		errors.Is(err, access.ErrProvisioningUnavailable):
+		// ErrConnectorNotFound is the registry-layer "provider not
+		// blank-imported into the binary" failure — a deployment
+		// misconfiguration, not a missing user-facing resource.
+		// Surface it as 503 (alongside ErrProvisioningUnavailable)
+		// so operators see a loud platform-health error rather than
+		// a quiet 404. The DB-row-missing case has its own sentinel
+		// (ErrConnectorRowNotFound, mapped to 404 above).
 		return http.StatusServiceUnavailable, "unavailable"
 	}
 	return status, "internal_error"
