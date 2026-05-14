@@ -254,7 +254,7 @@ func (s *NotificationService) NotifyCredentialExpiry(ctx context.Context, connec
 		return emptyResult(), fmt.Errorf("notification: workspace_id is required")
 	}
 	now := s.now()
-	delta := expiresAt.Sub(now).Round(time.Hour)
+	delta := expiresAt.Sub(now)
 	var subject, body string
 	if delta >= 0 {
 		subject = fmt.Sprintf("[Access] %s credential rotating soon", provider)

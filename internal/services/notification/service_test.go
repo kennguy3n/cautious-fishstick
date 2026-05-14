@@ -203,3 +203,53 @@ func TestNotificationService_NilNotifierFiltered(t *testing.T) {
 		t.Errorf("captured = %d; want 1 (nil notifiers must be filtered out)", got)
 	}
 }
+
+// TestNotifyCredentialExpiry_BoundarySelectsCorrectBranch asserts the
+// service picks the "expired" branch for any expiresAt in the past
+// and the "rotating soon" branch for any expiresAt in the future,
+// including sub-hour deltas. Regression for an earlier bug where a
+// duration rounded to the nearest hour collapsed sub-hour negative
+// deltas to 0s and routed already-expired credentials through the
+// "rotating soon" branch.
+func TestNotifyCredentialExpiry_BoundarySelectsCorrectBranch(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name       string
+		expiresAt  time.Time
+		wantBranch string // "rotating soon" or "expired"
+	}{
+		{"expired_20m_ago", now.Add(-20 * time.Minute), "expired"},
+		{"expired_1s_ago", now.Add(-time.Second), "expired"},
+		{"already_expired_2d_ago", now.Add(-48 * time.Hour), "expired"},
+		{"future_20m", now.Add(20 * time.Minute), "rotating soon"},
+		{"future_25h", now.Add(25 * time.Hour), "rotating soon"},
+		{"at_now", now, "rotating soon"}, // delta == 0 → caller still has time to rotate
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mem := &InMemoryNotifier{}
+			svc := NewNotificationService(mem)
+			svc.SetNow(func() time.Time { return now })
+
+			_, err := svc.NotifyCredentialExpiry(context.Background(), "c1", "w1", "okta", tc.expiresAt)
+			if err != nil {
+				t.Fatalf("NotifyCredentialExpiry: %v", err)
+			}
+			captured := mem.Captured()
+			if len(captured) != 1 {
+				t.Fatalf("captured = %d; want 1", len(captured))
+			}
+			got := captured[0]
+			wantSubject := "[Access] okta credential rotating soon"
+			if tc.wantBranch == "expired" {
+				wantSubject = "[Access] okta credential expired"
+			}
+			if got.Subject != wantSubject {
+				t.Errorf("Subject = %q; want %q", got.Subject, wantSubject)
+			}
+		})
+	}
+}
