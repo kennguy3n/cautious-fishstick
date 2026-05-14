@@ -55,11 +55,18 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build and start the access stack
-        # `up --build --wait` exits non-zero unless every service with a
-        # healthcheck reports healthy, so this catches both Dockerfile
-        # breakages and missing inter-service wiring (e.g. the ztna-api
-        # → access-ai-agent dependency declared in docker-compose.yml).
-        run: docker compose up --build --wait --wait-timeout 300
+        # `up -d --build --wait` exits non-zero unless every named
+        # service with a healthcheck reports healthy, so this catches
+        # Dockerfile breakages and missing inter-service wiring (e.g.
+        # the ztna-api → access-ai-agent dependency declared in
+        # docker-compose.yml). We deliberately scope `--wait` to the
+        # three long-running services with health endpoints —
+        # access-connector-worker is a queue consumer that exits with
+        # code 0 after draining and has no healthcheck, so including
+        # it would race `--wait` against worker shutdown.
+        run: |
+          docker compose up -d --build --wait --wait-timeout 300 \
+            ztna-api access-workflow-engine access-ai-agent
 
       - name: Probe ztna-api /health
         run: |
