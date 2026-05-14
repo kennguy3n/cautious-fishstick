@@ -176,17 +176,21 @@ func (s *OrphanReconcilerScheduler) Run(ctx context.Context) error {
 				DurationMS: dur.Milliseconds(), Error: err.Error(),
 			})
 			lastErr = err
-			continue
+		} else {
+			s.emitStats(orphanReconcileLog{
+				WorkspaceID: ws, OrphansDetected: len(rows), OrphansNew: countNewOrphans(rows),
+				ConnectorsScanned: connectorsScanned, ConnectorsFailed: connectorsFailed,
+				DurationMS: dur.Milliseconds(),
+			})
 		}
-		s.emitStats(orphanReconcileLog{
-			WorkspaceID: ws, OrphansDetected: len(rows), OrphansNew: countNewOrphans(rows),
-			ConnectorsScanned: connectorsScanned, ConnectorsFailed: connectorsFailed,
-			DurationMS: dur.Milliseconds(),
-		})
-		if len(rows) == 0 {
-			continue
-		}
-		if s.notifier != nil {
+		// Best-effort across connectors (see docs/ARCHITECTURE.md
+		// §12.2): orphans surfaced by successful connectors must be
+		// dispatched to the notifier even when other connectors in the
+		// same workspace failed. The reconciler persists those rows
+		// before returning the aggregated error, so skipping the
+		// notification here would silently drop alerts operators rely
+		// on for flaky-connector workspaces.
+		if s.notifier != nil && len(rows) > 0 {
 			if nerr := s.notifier.NotifyOrphansDetected(ctx, ws, rows); nerr != nil {
 				log.Printf("cron: orphan_reconciler: workspace=%s notify: %v", ws, nerr)
 			}

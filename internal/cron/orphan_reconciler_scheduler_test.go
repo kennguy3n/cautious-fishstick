@@ -32,17 +32,19 @@ func (s *stubOrphanReconciler) ReconcileWorkspace(_ context.Context, workspaceID
 	s.mu.Lock()
 	s.calledWS = append(s.calledWS, workspaceID)
 	s.mu.Unlock()
+	var rows []models.AccessOrphanAccount
+	var err error
+	if s.out != nil {
+		if r, ok := s.out[workspaceID]; ok {
+			rows = r
+		}
+	}
 	if s.err != nil {
 		if e, ok := s.err[workspaceID]; ok {
-			return nil, e
+			err = e
 		}
 	}
-	if s.out != nil {
-		if rows, ok := s.out[workspaceID]; ok {
-			return rows, nil
-		}
-	}
-	return nil, nil
+	return rows, err
 }
 
 // statsStubReconciler combines stubOrphanReconciler with the
@@ -339,5 +341,81 @@ func TestOrphanReconcilerScheduler_EmitsPerRunScannedFailedFromReconciler(t *tes
 	}
 	if !found {
 		t.Errorf("no orphan_reconcile_summary entry for ws-partial in:\n%s", logged)
+	}
+}
+
+// TestOrphanReconcilerScheduler_NotifierFiresOnPartialFailure asserts
+// that when the reconciler is best-effort across connectors and
+// returns both orphan rows (from successful connectors) AND an
+// aggregated error (from failed connectors), the scheduler still
+// dispatches the notifier for the surfaced rows. Skipping the
+// notifier on the error branch would silently drop alerts operators
+// rely on for workspaces with any flaky connector — see the round-9
+// regression discussion in docs/ARCHITECTURE.md §12.2.
+func TestOrphanReconcilerScheduler_NotifierFiresOnPartialFailure(t *testing.T) {
+	db := newReconcilerSchedDB(t)
+	seedConnectorForWS(t, db, "01HCONN0PARTIALFAIL00001", "ws-partial-notify", "okta")
+	seedConnectorForWS(t, db, "01HCONN0PARTIALFAIL00002", "ws-partial-notify", "google_workspace")
+
+	// Reconciler returns both rows AND error: orphans from the
+	// successful connector(s) are persisted and surfaced, alongside
+	// an aggregated error from the failing connector. This is the
+	// post-round-9 best-effort contract.
+	rec := &stubOrphanReconciler{
+		out: map[string][]models.AccessOrphanAccount{
+			"ws-partial-notify": {
+				{ID: "o-partial-1", WorkspaceID: "ws-partial-notify"},
+				{ID: "o-partial-2", WorkspaceID: "ws-partial-notify"},
+			},
+		},
+		err: map[string]error{
+			"ws-partial-notify": errors.New("connector google_workspace: upstream 503"),
+		},
+	}
+	notifier := &stubOrphanNotifier{}
+	sched := NewOrphanReconcilerScheduler(db, rec)
+	sched.SetNotifier(notifier)
+
+	if err := sched.Run(context.Background()); err == nil {
+		t.Fatalf("Run returned nil; want propagated aggregated error")
+	}
+
+	if got := notifier.calls.Load(); got != 1 {
+		t.Errorf("notifier calls = %d; want 1 (partial-failure rows must still notify)", got)
+	}
+	notifier.mu.Lock()
+	defer notifier.mu.Unlock()
+	if notifier.gotRows != 2 {
+		t.Errorf("notifier saw %d rows; want 2 (rows from successful connectors must reach the notifier)", notifier.gotRows)
+	}
+	if len(notifier.gotWS) != 1 || notifier.gotWS[0] != "ws-partial-notify" {
+		t.Errorf("notifier saw workspaces %v; want [ws-partial-notify]", notifier.gotWS)
+	}
+}
+
+// TestOrphanReconcilerScheduler_NotifierSkippedWhenNoRowsOnError
+// asserts the inverse: on the error branch with no rows surfaced,
+// the notifier must NOT be invoked. This guards against a future
+// regression where a refactor of the partial-failure fix
+// inadvertently dispatches empty notifications on every error.
+func TestOrphanReconcilerScheduler_NotifierSkippedWhenNoRowsOnError(t *testing.T) {
+	db := newReconcilerSchedDB(t)
+	seedConnectorForWS(t, db, "01HCONN0EMPTYERR00000001", "ws-empty-err", "okta")
+
+	rec := &stubOrphanReconciler{
+		err: map[string]error{
+			"ws-empty-err": errors.New("all connectors failed"),
+		},
+	}
+	notifier := &stubOrphanNotifier{}
+	sched := NewOrphanReconcilerScheduler(db, rec)
+	sched.SetNotifier(notifier)
+
+	if err := sched.Run(context.Background()); err == nil {
+		t.Fatalf("Run returned nil; want propagated error")
+	}
+
+	if got := notifier.calls.Load(); got != 0 {
+		t.Errorf("notifier calls = %d; want 0 (no rows surfaced → notifier must stay silent)", got)
 	}
 }
