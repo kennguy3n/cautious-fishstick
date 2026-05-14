@@ -34,6 +34,8 @@ func newReviewEngine(t *testing.T) (http.Handler, *access.AccessReviewService) {
 	return r, svc
 }
 
+
+
 func startCampaignBody() map[string]interface{} {
 	return map[string]interface{}{
 		"workspace_id":         "01H000000000000000WORKSPACE",
@@ -121,6 +123,84 @@ func TestAccessReviewHandler_SubmitDecision_InvalidDecisionReturns409(t *testing
 	})
 	if w.Code != http.StatusConflict {
 		t.Fatalf("status = %d body=%s; want 409 (ErrInvalidDecision)", w.Code, w.Body.String())
+	}
+}
+
+func TestAccessReviewHandler_SubmitBulkDecisions_HappyPath(t *testing.T) {
+	r, _ := newReviewEngine(t)
+	startW := doJSON(t, r, http.MethodPost, "/access/reviews", startCampaignBody())
+	var env struct {
+		Review models.AccessReview `json:"review"`
+	}
+	decodeJSON(t, startW, &env)
+
+	bulkBody := map[string]interface{}{
+		"decided_by": "01H000000000000000ACTORUSRID",
+		"decisions": []map[string]interface{}{
+			{"grant_id": "01H00000000000000GRANT0001", "decision": "certify"},
+		},
+	}
+	w := doJSON(t, r, http.MethodPost, "/access/reviews/"+env.Review.ID+"/decisions/bulk", bulkBody)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s; want 200", w.Code, w.Body.String())
+	}
+	var resp struct {
+		ReviewID string                     `json:"review_id"`
+		Summary  access.BulkDecisionSummary `json:"summary"`
+		Results  []access.BulkDecisionResult `json:"results"`
+	}
+	decodeJSON(t, w, &resp)
+	if resp.Summary.Total != 1 || resp.Summary.Succeeded != 1 || resp.Summary.Failed != 0 {
+		t.Fatalf("summary = %+v; want 1/1/0", resp.Summary)
+	}
+	if len(resp.Results) != 1 || !resp.Results[0].Success {
+		t.Fatalf("results = %+v; want one success row", resp.Results)
+	}
+}
+
+func TestAccessReviewHandler_SubmitBulkDecisions_PartialFailure(t *testing.T) {
+	r, _ := newReviewEngine(t)
+	startW := doJSON(t, r, http.MethodPost, "/access/reviews", startCampaignBody())
+	var env struct {
+		Review models.AccessReview `json:"review"`
+	}
+	decodeJSON(t, startW, &env)
+
+	bulkBody := map[string]interface{}{
+		"decided_by": "01H000000000000000ACTORUSRID",
+		"decisions": []map[string]interface{}{
+			{"grant_id": "01H00000000000000GRANT0001", "decision": "certify"},
+			{"grant_id": "01H00000000000000UNKNOWN0", "decision": "certify"},
+		},
+	}
+	w := doJSON(t, r, http.MethodPost, "/access/reviews/"+env.Review.ID+"/decisions/bulk", bulkBody)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s; want 200 (per-row failures)", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Summary access.BulkDecisionSummary  `json:"summary"`
+		Results []access.BulkDecisionResult `json:"results"`
+	}
+	decodeJSON(t, w, &resp)
+	if resp.Summary.Total != 2 || resp.Summary.Succeeded != 1 || resp.Summary.Failed != 1 {
+		t.Fatalf("summary = %+v; want 2/1/1", resp.Summary)
+	}
+	if !resp.Results[0].Success {
+		t.Fatal("first row should succeed")
+	}
+	if resp.Results[1].Success || resp.Results[1].Error == "" {
+		t.Fatal("second row should fail with non-empty error")
+	}
+}
+
+func TestAccessReviewHandler_SubmitBulkDecisions_EmptyArrayReturns400(t *testing.T) {
+	r, _ := newReviewEngine(t)
+	w := doJSON(t, r, http.MethodPost, "/access/reviews/some-id/decisions/bulk", map[string]interface{}{
+		"decided_by": "01H000000000000000ACTORUSRID",
+		"decisions":  []map[string]interface{}{},
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s; want 400", w.Code, w.Body.String())
 	}
 }
 
