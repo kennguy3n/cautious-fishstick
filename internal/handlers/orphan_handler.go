@@ -18,6 +18,7 @@ import (
 type OrphanReconcilerReader interface {
 	ListOrphans(ctx context.Context, workspaceID, status string) ([]models.AccessOrphanAccount, error)
 	ReconcileWorkspace(ctx context.Context, workspaceID string) ([]models.AccessOrphanAccount, error)
+	ReconcileWorkspaceDryRun(ctx context.Context, workspaceID string) ([]models.AccessOrphanAccount, error)
 	RevokeOrphan(ctx context.Context, orphanID string) error
 	DismissOrphan(ctx context.Context, orphanID string) error
 	AcknowledgeOrphan(ctx context.Context, orphanID string) error
@@ -107,17 +108,30 @@ func (h *OrphanHandler) List(c *gin.Context) {
 }
 
 // Reconcile handles POST /access/orphans/reconcile. Triggers an
-// on-demand reconciliation for the supplied workspace.
+// on-demand reconciliation for the supplied workspace. When the
+// optional "dry_run" body field is true, the handler returns the
+// detected unused app accounts without persisting them — useful
+// for operators who want to review what a sweep would record
+// before kicking off a full run.
 func (h *OrphanHandler) Reconcile(c *gin.Context) {
 	var body struct {
 		WorkspaceID string `json:"workspace_id"`
+		DryRun      bool   `json:"dry_run"`
 	}
 	_ = c.ShouldBindJSON(&body)
 	if body.WorkspaceID == "" {
 		writeError(c, http.StatusBadRequest, errors.New("workspace_id is required"))
 		return
 	}
-	rows, err := h.svc.ReconcileWorkspace(c.Request.Context(), body.WorkspaceID)
+	var (
+		rows []models.AccessOrphanAccount
+		err  error
+	)
+	if body.DryRun {
+		rows, err = h.svc.ReconcileWorkspaceDryRun(c.Request.Context(), body.WorkspaceID)
+	} else {
+		rows, err = h.svc.ReconcileWorkspace(c.Request.Context(), body.WorkspaceID)
+	}
 	if err != nil {
 		writeError(c, http.StatusInternalServerError, err)
 		return
@@ -126,7 +140,10 @@ func (h *OrphanHandler) Reconcile(c *gin.Context) {
 	for _, r := range rows {
 		out = append(out, newUnusedAccountView(r))
 	}
-	c.JSON(http.StatusOK, gin.H{"unused_app_accounts": out})
+	c.JSON(http.StatusOK, gin.H{
+		"unused_app_accounts": out,
+		"dry_run":             body.DryRun,
+	})
 }
 
 // Revoke handles POST /access/orphans/:id/revoke.

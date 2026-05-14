@@ -1,6 +1,6 @@
 # ShieldNet 360 Access Platform — Progress Tracker
 
-Status: **In progress | ~96%** — Phases 0, 6–9 shipped; Phases 1–5 backend complete (Admin UI remains); Phase 10 advanced caps shipped for 194 / 200 connectors (6 n/a), audit logs for 198 / 200 (2 n/a), and SSO federation for 104 / 200 (96 n/a — providers without native SSO metadata APIs).
+Status: **In progress | ~97%** — Phases 0, 6–9 shipped; Phases 1–5 backend complete (Admin UI remains); Phase 10 advanced caps shipped for 194 / 200 connectors (6 n/a), audit logs for 198 / 200 (2 n/a), and SSO federation for 104 / 200 (96 n/a — providers without native SSO metadata APIs). Phase 11 hybrid access model in final hardening: kill-switch audit trail, orphan reconciler hardening, grant-expiry notifications + warning sweep, and 14 `SessionRevoker` / 12 `SSOEnforcementChecker` connectors all shipped.
 
 For canonical phase definitions see [`PHASES.md`](PHASES.md). For the design contract see [`PROPOSAL.md`](PROPOSAL.md). For the unified connector view see [`LISTCONNECTORS.md`](LISTCONNECTORS.md).
 
@@ -282,10 +282,13 @@ Path is the target directory under `internal/services/access/connectors/` once t
 | Admin UI surfaces | ⏳ | Phases 1–5 admin surfaces (Connector Marketplace, Access Requests, Policy Simulator, AI Assistant chat, Access Reviews dashboard) live in [`ztna-frontend`](https://github.com/uneycom/ztna-frontend). Backend REST API is final. |
 | Hybrid access model (Phase 11) | ✅ | Per-connector `access_mode` (`tunnel` / `sso_only` / `api_only`) with auto-classification at Connect time and `PATCH` override. `PolicyService.Promote` propagates the mode so the ZTNA business layer can skip OpenZiti writes for SaaS-only rows. |
 | Unused-app-account reconciler (Phase 11) | ✅ | `OrphanReconciler` cross-references upstream `SyncIdentities` against the IdP pivot, persists rows to `access_orphan_accounts`, and exposes `GET /access/orphans` + revoke / dismiss / acknowledge / reconcile endpoints. Cron runs daily inside `access-connector-worker`. |
-| SSO-only enforcement verification (Phase 11) | 🟡 | `SSOEnforcementChecker` capability + top-6 implementations (Salesforce, Google Workspace, Okta, Slack, GitHub, Microsoft). Surfaced through the connector health endpoint. |
-| Session revocation (Phase 11) | 🟡 | `SessionRevoker` capability + top-7 implementations (Okta, Google Workspace, Microsoft, Salesforce, Slack, Auth0, GitHub). Invoked from the enhanced leaver flow. |
+| SSO-only enforcement verification (Phase 11) | 🟡 | `SSOEnforcementChecker` capability + 12 implementations (Salesforce, Google Workspace, Okta, Slack, GitHub, Microsoft, Auth0, Ping Identity, Zendesk, BambooHR, Workday, HubSpot). Surfaced through the connector health endpoint. |
+| Session revocation (Phase 11) | 🟡 | `SessionRevoker` capability + 14 implementations (Okta, Google Workspace, Microsoft, Salesforce, Slack, Auth0, GitHub, Zoom, Zendesk, HubSpot, Dropbox, Jira/Atlassian, Notion, BambooHR). Invoked from the enhanced leaver flow. |
 | Five-layer leaver kill switch (Phase 11) | ✅ | `JMLService.HandleLeaver` now revokes grants → removes memberships → disables Keycloak user → revokes upstream sessions → SCIM-deprovisions → disables OpenZiti identity. All steps best-effort and idempotent. |
+| Kill-switch audit trail (Phase 11) | ✅ | Each kill-switch layer (`grant_revoke`, `team_remove`, `keycloak_disable`, `session_revoke`, `scim_deprovision`, `openziti_disable`) emits a `LeaverKillSwitchEvent` onto the same `ShieldnetLogEvent v1` Kafka envelope used by the audit pipeline. Wired via `JMLService.SetAuditProducer`. |
+| Unused-app-account reconciler hardening (Phase 11) | ✅ | `OrphanReconciler` exposes `ReconcileWorkspaceDryRun` (also `POST /access/orphans/reconcile` with `"dry_run": true`) — dry-run is threaded as a per-call parameter so concurrent HTTP requests cannot race on shared state. Plus a configurable per-connector throttle (`ACCESS_ORPHAN_RECONCILE_DELAY_PER_CONNECTOR`, default 1s) and structured `orphan_reconcile_summary` JSON log lines from `OrphanReconcilerScheduler` so operators can ingest stats per workspace. |
 | Automatic grant expiry enforcement (Phase 11) | ✅ | `GrantExpiryEnforcer` cron ticks every `ACCESS_GRANT_EXPIRY_CHECK_INTERVAL` (default 1h) and replays the Phase 5 revoke path for every expired grant. |
+| Grant expiry notifications + warning sweep (Phase 11) | ✅ | After each auto-revoke the enforcer fires `SendGrantRevokedNotification`; a separate `RunWarning` sweep emits `SendGrantExpiryWarning` for grants expiring within `ACCESS_GRANT_EXPIRY_WARNING_HOURS` (default 24h). Per-grant `GrantExpiryEvent` audit events are emitted via the same `AuditProducer` for both flows. The warning sweep dedups via `models.AccessGrant.LastWarnedAt` (migration 015) so repeated ticks within the window cannot spam the user with N duplicate notifications. The worker binary's `WireCronJobs` plumbs the `GrantExpiryNotifier` + `AuditProducer` directly onto the enforcer and `StartCronJobs` ticks both `Run` and `RunWarning` so neither feature is dead code in the binary. |
 
 ---
 
@@ -317,10 +320,11 @@ Newest first. Each entry is a 1–2 sentence summary; PR links carry the detail.
 
 | Date | What | PR |
 |------|------|----|
-| 2026-05-14 | Phase 11 — Hybrid Access Model: per-connector access_mode classification, unused-app-account reconciler, SSO-only enforcement verification, session revocation across top-7 connectors, five-layer leaver kill switch, automatic grant-expiry enforcement, plus full docs sync. | this PR |
-| 2026-05-14 | API hardening + connector enhancements: rate limiting, request validation, credential rotation alerts, `GroupSyncer` for top-5 connectors, delta-sync hardening, health webhooks, batch status endpoint, OpenAPI audit. | this PR |
-| 2026-05-14 | SDK publishing manifests + per-platform integration guides; Phase 9 closes at ✅ shipped. | this PR |
-| 2026-05-14 | Post-PR-#67 documentation audit — promote audit-only Tier-5 connectors to ✅ and update overall progress. | this PR |
+| 2026-05-14 | Phase 11 batch 6 — Hybrid Access Model hardening: 7 new `SessionRevoker` connectors (Zoom, Zendesk, HubSpot, Dropbox, Jira/Atlassian, Notion, BambooHR), 6 new `SSOEnforcementChecker` connectors (Auth0, Ping Identity, Zendesk, BambooHR, Workday, HubSpot), kill-switch audit trail emission, orphan reconciler dry-run + per-connector throttle + structured stats logging, grant-expiry notifications + warning sweep + audit events, plus full docs sync. | this PR |
+| 2026-05-14 | Phase 11 — Hybrid Access Model: per-connector access_mode classification, unused-app-account reconciler, SSO-only enforcement verification, session revocation across top-7 connectors, five-layer leaver kill switch, automatic grant-expiry enforcement, plus full docs sync. | #77 |
+| 2026-05-14 | API hardening + connector enhancements: rate limiting, request validation, credential rotation alerts, `GroupSyncer` for top-5 connectors, delta-sync hardening, health webhooks, batch status endpoint, OpenAPI audit. | #76 |
+| 2026-05-14 | SDK publishing manifests + per-platform integration guides; Phase 9 closes at ✅ shipped. | #75 |
+| 2026-05-14 | Post-PR-#67 documentation audit — promote audit-only Tier-5 connectors to ✅ and update overall progress. | #74 |
 | 2026-05-13 | Real-implementation sprint — Connector Management API, real worker handler upgrades, three real cron jobs, real SDK HTTP clients, real integration tests, real Dockerfiles + docker-compose. | #67 |
 | 2026-05-13 | Post-development documentation audit, README status block cleanup. | #65 |
 | 2026-05-13 | Phase 4 SDK AI query satisfaction; Phase 6 promotion to ✅ shipped. | #65 |

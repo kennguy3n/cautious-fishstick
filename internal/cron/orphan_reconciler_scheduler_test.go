@@ -1,8 +1,12 @@
 package cron
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -127,6 +131,75 @@ func TestOrphanReconcilerScheduler_FiresNotifierForNewOrphans(t *testing.T) {
 	defer notifier.mu.Unlock()
 	if notifier.gotRows != 2 {
 		t.Errorf("notifier saw %d rows; want 2", notifier.gotRows)
+	}
+}
+
+// TestOrphanReconcilerScheduler_EmitsStructuredStats asserts the
+// scheduler emits one JSON orphan_reconcile_summary log line per
+// workspace with the expected fields populated.
+func TestOrphanReconcilerScheduler_EmitsStructuredStats(t *testing.T) {
+	db := newReconcilerSchedDB(t)
+	seedConnectorForWS(t, db, "01HCONN0ORPHANSTATS00001", "ws-stats", "okta")
+	seedConnectorForWS(t, db, "01HCONN0ORPHANSTATS00002", "ws-stats", "google_workspace")
+
+	rec := &stubOrphanReconciler{
+		out: map[string][]models.AccessOrphanAccount{
+			"ws-stats": {{ID: "o1", WorkspaceID: "ws-stats"}, {ID: "o2", WorkspaceID: "ws-stats"}, {ID: "o3", WorkspaceID: "ws-stats"}},
+		},
+	}
+	sched := NewOrphanReconcilerScheduler(db, rec)
+
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	if err := sched.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, `"event":"orphan_reconcile_summary"`) {
+		t.Fatalf("log output missing orphan_reconcile_summary envelope:\n%s", logged)
+	}
+
+	// Decode the first orphan_reconcile_summary line.
+	var found bool
+	for _, line := range strings.Split(logged, "\n") {
+		idx := strings.Index(line, "{")
+		if idx < 0 {
+			continue
+		}
+		payload := line[idx:]
+		var entry struct {
+			Event             string `json:"event"`
+			WorkspaceID       string `json:"workspace_id"`
+			OrphansDetected   int    `json:"orphans_detected"`
+			OrphansNew        int    `json:"orphans_new"`
+			ConnectorsScanned int    `json:"connectors_scanned"`
+		}
+		if err := json.Unmarshal([]byte(payload), &entry); err != nil {
+			continue
+		}
+		if entry.Event != "orphan_reconcile_summary" {
+			continue
+		}
+		found = true
+		if entry.WorkspaceID != "ws-stats" {
+			t.Errorf("workspace_id = %q; want ws-stats", entry.WorkspaceID)
+		}
+		if entry.OrphansDetected != 3 {
+			t.Errorf("orphans_detected = %d; want 3", entry.OrphansDetected)
+		}
+		if entry.OrphansNew != 3 {
+			t.Errorf("orphans_new = %d; want 3", entry.OrphansNew)
+		}
+		if entry.ConnectorsScanned != 2 {
+			t.Errorf("connectors_scanned = %d; want 2", entry.ConnectorsScanned)
+		}
+	}
+	if !found {
+		t.Errorf("did not find any decodable orphan_reconcile_summary entries in:\n%s", logged)
 	}
 }
 

@@ -237,4 +237,48 @@
 
 `n/a` entries reflect providers where the capability does not exist by design (Generic SAML / Generic OIDC have no identity API; HIBP, BitSight, VirusTotal, Wazuh are audit-only; many niche providers have no native SSO metadata endpoint). The effective coverage column reflects connectors where the capability is either shipped or doesn't apply.
 
+## Phase 11 optional capabilities
+
+The following optional capability interfaces are not part of every connector — they are only implemented where the upstream provider exposes the underlying API. They are surfaced through the connector-health endpoint and consumed by the leaver kill switch and SSO-only enforcement flows.
+
+### `session_revoke` — `SessionRevoker.RevokeUserSessions`
+
+Best-effort upstream session termination wired into `JMLService.HandleLeaver`. Empty `userExternalID` returns a validation error; 404 / user-not-found is treated as idempotent success; transport / 5xx errors are logged but never block the leaver flow.
+
+| # | Provider | Path | Upstream API |
+|---|----------|------|--------------|
+| 1 | Okta | `okta/` | `POST /api/v1/users/{id}/sessions` |
+| 2 | Google Workspace | `google_workspace/` | `POST admin.directory.v1.users/{id}/signOut` |
+| 3 | Microsoft | `microsoft/` | `POST /users/{id}/revokeSignInSessions` |
+| 4 | Salesforce | `salesforce/` | `POST /services/oauth2/revoke` per session |
+| 5 | Slack | `slack/` | `admin.users.session.reset` |
+| 6 | Auth0 | `auth0/` | `DELETE /api/v2/users/{id}/sessions` |
+| 7 | GitHub | `github/` | `DELETE /admin/users/{username}/authorizations` |
+| 8 | Zoom | `zoom/` | `DELETE /v2/users/{userId}/token` |
+| 9 | Zendesk | `zendesk/` | `DELETE /api/v2/users/{id}/sessions.json` |
+| 10 | HubSpot | `hubspot/` | `DELETE /settings/v3/users/{userId}` |
+| 11 | Dropbox | `dropbox/` | `POST /2/team/members/revoke_device_sessions` |
+| 12 | Jira/Atlassian | `jira/` | `POST /users/{accountId}/manage/lifecycle/disable` (Atlassian Admin lifecycle) |
+| 13 | Notion | `notion/` | `PATCH /v1/users/{user_id}` (deactivate) |
+| 14 | BambooHR | `bamboohr/` | `PUT /v1/employees/{id}/terminateEmployee` |
+
+### `sso_enforcement` — `SSOEnforcementChecker.CheckSSOEnforcement`
+
+Returns `(enforced bool, details string, err error)`. Transport / auth failures return `err` so the health-endpoint maps them to `"unknown"` (never `"not_enforced"`).
+
+| # | Provider | Path | Upstream API |
+|---|----------|------|--------------|
+| 1 | Salesforce | `salesforce/` | `services/data/.../sobjects/SamlSsoConfig` |
+| 2 | Google Workspace | `google_workspace/` | `admin.directory.v1.customers.userinvitations` |
+| 3 | Okta | `okta/` | `/api/v1/policies?type=SIGN_ON` |
+| 4 | Slack | `slack/` | `team.info` + `sso.is_enforced` |
+| 5 | GitHub | `github/` | `GET /orgs/{org}/credential-authorizations` |
+| 6 | Microsoft | `microsoft/` | `policies/authenticationMethodsPolicy` |
+| 7 | Auth0 | `auth0/` | `GET /api/v2/connections` |
+| 8 | Ping Identity | `ping_identity/` | `GET /environments/{envId}/signOnPolicies` + `GET .../signOnPolicies/{policyId}/actions` (rejects LOGIN-fallback actions) |
+| 9 | Zendesk | `zendesk/` | `GET /api/v2/account/settings.json` |
+| 10 | BambooHR | `bamboohr/` | `GET /v1/meta/security` |
+| 11 | Workday | `workday/` | REST API authentication-policy endpoint |
+| 12 | HubSpot | `hubspot/` | `GET /settings/v3/users/provisioning` |
+
 For the per-feature platform status table see [`PROGRESS.md`](./PROGRESS.md) §2. For phase-level milestones see [`PHASES.md`](./PHASES.md).

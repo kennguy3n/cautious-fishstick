@@ -70,6 +70,20 @@ const (
 	// keeps the reconciler cheap to run.
 	DefaultOrphanReconcileInterval = 24 * time.Hour
 
+	// DefaultOrphanReconcileDelayPerConnector is the throttle the
+	// reconciler waits between connector iterations inside a single
+	// workspace pass. 1s keeps every connector's SyncIdentities one
+	// after the other so upstream APIs are not hammered when a
+	// workspace has many connectors.
+	DefaultOrphanReconcileDelayPerConnector = 1 * time.Second
+
+	// DefaultGrantExpiryWarningHours is the look-ahead window for
+	// the grant-expiry warning sweep. Grants whose expires_at falls
+	// within this window are flagged in a "your access expires
+	// soon" notification so users can request renewal before the
+	// auto-revoke pass. Phase 11 batch 6 hook.
+	DefaultGrantExpiryWarningHours = 24
+
 	// DefaultAuditLogTopic is the Kafka topic the access-audit
 	// producer publishes ShieldnetLogEvent v1 envelopes to.
 	DefaultAuditLogTopic = "access_audit_logs"
@@ -130,6 +144,17 @@ type Access struct {
 	// OrphanReconciler.ReconcileWorkspace. Defaults to
 	// DefaultOrphanReconcileInterval.
 	OrphanReconcileInterval time.Duration
+
+	// OrphanReconcileDelayPerConnector is the throttle the
+	// reconciler waits between connector iterations inside a
+	// single workspace pass. Defaults to
+	// DefaultOrphanReconcileDelayPerConnector.
+	OrphanReconcileDelayPerConnector time.Duration
+
+	// GrantExpiryWarningHours is the look-ahead window (in hours)
+	// for the grant-expiry warning sweep. Defaults to
+	// DefaultGrantExpiryWarningHours.
+	GrantExpiryWarningHours int
 
 	// GrantExpiryCheckInterval is the cadence at which the
 	// access-connector-worker walks access_grants for expired rows
@@ -196,7 +221,9 @@ func Load() *Access {
 		CredentialExpiryWarningDays: getIntEnv("ACCESS_CREDENTIAL_EXPIRY_WARNING_DAYS", DefaultCredentialExpiryWarningDays),
 		CredentialCheckerInterval:   getDurationEnv("ACCESS_CREDENTIAL_CHECKER_INTERVAL", DefaultCredentialCheckerInterval),
 		GrantExpiryCheckInterval:    getDurationEnv("ACCESS_GRANT_EXPIRY_CHECK_INTERVAL", DefaultGrantExpiryCheckInterval),
+		GrantExpiryWarningHours:     getIntEnv("ACCESS_GRANT_EXPIRY_WARNING_HOURS", DefaultGrantExpiryWarningHours),
 		OrphanReconcileInterval:     getDurationEnv("ACCESS_ORPHAN_RECONCILE_INTERVAL", DefaultOrphanReconcileInterval),
+		OrphanReconcileDelayPerConnector: getDurationEnv("ACCESS_ORPHAN_RECONCILE_DELAY_PER_CONNECTOR", DefaultOrphanReconcileDelayPerConnector),
 		NotificationSMTPHost:        getEnv("NOTIFICATION_SMTP_HOST"),
 		NotificationSMTPPort:        getIntEnv("NOTIFICATION_SMTP_PORT", 587),
 		NotificationSMTPFrom:        getEnv("NOTIFICATION_SMTP_FROM"),

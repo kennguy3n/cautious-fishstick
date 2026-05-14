@@ -235,8 +235,18 @@ type CronJobs struct {
 	// passed. Phase 11 (docs/PROPOSAL.md §13). nil when the binary
 	// boots without a provisioning service or credentials loader
 	// wired (the early-scaffold path).
-	GrantExpiryEnforcer     *cron.GrantExpiryEnforcer
-	GrantExpiryInterval     time.Duration
+	GrantExpiryEnforcer *cron.GrantExpiryEnforcer
+	GrantExpiryInterval time.Duration
+	// GrantExpiryWarningInterval is the cadence at which the worker
+	// runs the look-ahead "your access expires in N hours" sweep
+	// (cron.GrantExpiryEnforcer.RunWarning). It defaults to the
+	// same value as GrantExpiryInterval — the dedup pivot
+	// (models.AccessGrant.LastWarnedAt) collapses repeated ticks
+	// to a single notification per grant, so running the warning
+	// sweep on the same cadence as the revoke sweep is safe and
+	// keeps the operator config surface narrow. Phase 11 batch 6
+	// round-7.
+	GrantExpiryWarningInterval time.Duration
 	// OrphanReconcilerScheduler walks every workspace and asks the
 	// orphan reconciler to find upstream SaaS users with no IdP
 	// pivot. Phase 11 (docs/PROPOSAL.md §13.4). nil when the binary
@@ -257,6 +267,21 @@ type CronJobs struct {
 // usefully run without both: revoke needs decrypted credentials
 // loaded per-connector via the loader.
 //
+// grantExpiryNotifier and auditProducer are the Phase 11 batch 6
+// hooks for the grant-expiry pipeline:
+//   - grantExpiryNotifier surfaces "your access has been revoked"
+//     and "your access expires in N hours" notifications to the
+//     affected user (cron.GrantExpiryNotifier).
+//   - auditProducer publishes access.grant.expiry SIEM events for
+//     every revoke/warn outcome.
+//
+// Both may be nil — the enforcer falls back to its built-in
+// "skipped" status for any unwired hook so SIEM consumers can
+// still distinguish "we tried and it succeeded" from "we never
+// tried" without a panic. Wiring is plumbed here rather than left
+// to the caller so the wiring gap that hid these features in the
+// scaffold cannot reappear (Phase 11 batch 6 round-7).
+//
 // The returned CronJobs is safe to consume from a single goroutine
 // per cron — none of the workers share mutable state.
 func WireCronJobs(
@@ -265,6 +290,8 @@ func WireCronJobs(
 	notifier cron.NotificationSender,
 	revoker cron.GrantRevoker,
 	loader cron.ConnectorCredentialsLoader,
+	grantExpiryNotifier cron.GrantExpiryNotifier,
+	auditProducer access.AuditProducer,
 	orphanReconciler cron.WorkspaceOrphanReconciler,
 	cfg config.Access,
 ) CronJobs {
@@ -285,10 +312,31 @@ func WireCronJobs(
 	}
 	if db != nil && revoker != nil && loader != nil {
 		jobs.GrantExpiryEnforcer = cron.NewGrantExpiryEnforcer(db, revoker, loader, 0)
+		// Apply the configured warning-window override here so the
+		// ACCESS_GRANT_EXPIRY_WARNING_HOURS env var actually reaches
+		// the enforcer in production. Without this call the
+		// constructor's 24h default wins and operator overrides are
+		// silently dropped. Phase 11 batch 6.
+		jobs.GrantExpiryEnforcer.SetWarningHours(cfg.GrantExpiryWarningHours)
+		// Phase 11 batch 6 round-7: wire the notifier and audit
+		// producer onto the enforcer so the "your access expired"
+		// notification + access.grant.expiry SIEM audit events
+		// reach the right hooks in production. SetNotifier /
+		// SetAuditProducer both tolerate nil (the enforcer falls
+		// back to Status="skipped"), so the scaffold path where
+		// both arguments are nil still boots without panicking.
+		jobs.GrantExpiryEnforcer.SetNotifier(grantExpiryNotifier)
+		jobs.GrantExpiryEnforcer.SetAuditProducer(auditProducer)
 		jobs.GrantExpiryInterval = cfg.GrantExpiryCheckInterval
 		if jobs.GrantExpiryInterval <= 0 {
 			jobs.GrantExpiryInterval = config.DefaultGrantExpiryCheckInterval
 		}
+		// The look-ahead warning sweep runs on its own ticker so a
+		// future operator can throttle it independently of the
+		// revoke sweep. The default matches the revoke cadence —
+		// the LastWarnedAt dedup pivot collapses duplicates per
+		// grant so a 1h cadence is safe.
+		jobs.GrantExpiryWarningInterval = jobs.GrantExpiryInterval
 	}
 	if db != nil && orphanReconciler != nil {
 		jobs.OrphanReconcilerScheduler = cron.NewOrphanReconcilerScheduler(db, orphanReconciler)
@@ -298,6 +346,53 @@ func WireCronJobs(
 		}
 	}
 	return jobs
+}
+
+// StartCronJobs launches every configured CronJobs entry on its
+// own goroutine via runCron. Each goroutine ticks at the per-cron
+// interval and stops when ctx is cancelled; per-tick errors are
+// logged but never abort the loop.
+//
+// The helper is the single seam where new crons land into the
+// runtime so future-non-scaffold main() does not have to remember
+// to call runCron for each cron manually. Phase 11 batch 6 round-7
+// added jobs.GrantExpiryWarningInterval + the RunWarning call site
+// here so the look-ahead sweep is no longer dead code in the
+// worker binary.
+//
+// Nil-safe: jobs entries that are nil are simply skipped, so the
+// scaffold path that constructs an empty CronJobs is a no-op
+// rather than a panic.
+func StartCronJobs(ctx context.Context, jobs CronJobs) {
+	if jobs.Anomaly != nil {
+		go runCron(ctx, "anomaly-scanner", jobs.AnomalyInterval, jobs.Anomaly.Run)
+	}
+	if jobs.CredentialChecker != nil {
+		go runCron(ctx, "credential-checker", jobs.CredentialCheckInterval, jobs.CredentialChecker.Run)
+	}
+	if jobs.GrantExpiryEnforcer != nil {
+		// The revoke sweep wraps Run so we can collapse the
+		// (revoked int, err error) return into the err-only
+		// contract runCron expects. The revoked count is already
+		// surfaced via the audit pipeline so dropping it on the
+		// floor here is fine.
+		go runCron(ctx, "grant-expiry-enforcer", jobs.GrantExpiryInterval, func(ctx context.Context) error {
+			_, err := jobs.GrantExpiryEnforcer.Run(ctx)
+			return err
+		})
+		// The look-ahead warning sweep runs on its own ticker so
+		// operators can tune the cadence independently. The
+		// LastWarnedAt dedup pivot collapses duplicates across
+		// repeated ticks so running both sweeps on the same
+		// cadence is safe. Phase 11 batch 6 round-7.
+		go runCron(ctx, "grant-expiry-warning", jobs.GrantExpiryWarningInterval, func(ctx context.Context) error {
+			_, err := jobs.GrantExpiryEnforcer.RunWarning(ctx)
+			return err
+		})
+	}
+	if jobs.OrphanReconcilerScheduler != nil {
+		go runCron(ctx, "orphan-reconciler", jobs.OrphanReconcileInterval, jobs.OrphanReconcilerScheduler.Run)
+	}
 }
 
 // runCron drives the supplied job on a fixed-interval ticker until
@@ -321,6 +416,35 @@ func runCron(ctx context.Context, name string, interval time.Duration, run func(
 			}
 		}
 	}
+}
+
+// BuildOrphanReconciler constructs the Phase 11 orphan reconciler
+// and applies the configured per-connector throttle. The setter
+// call is hoisted out of WireCronJobs so the concrete
+// *access.OrphanReconciler is the pointer the throttle lands on —
+// WireCronJobs only sees the narrower WorkspaceOrphanReconciler
+// interface and cannot reach SetPerConnectorDelay. Returns nil
+// when any required dependency is nil (the scaffold path) so
+// callers can still hand the value straight to WireCronJobs,
+// which simply omits the orphan cron in that case.
+//
+// The env-driven knob ACCESS_ORPHAN_RECONCILE_DELAY_PER_CONNECTOR
+// (decoded into cfg.OrphanReconcileDelayPerConnector by
+// internal/config/access.go) is applied here; without this call
+// the constructor's 1s default would win and operator overrides
+// would be silently dropped.
+func BuildOrphanReconciler(
+	db *gorm.DB,
+	provisioningSvc *access.AccessProvisioningService,
+	credLoader *access.ConnectorCredentialsLoader,
+	cfg config.Access,
+) *access.OrphanReconciler {
+	if db == nil || provisioningSvc == nil || credLoader == nil {
+		return nil
+	}
+	r := access.NewOrphanReconciler(db, provisioningSvc, credLoader)
+	r.SetPerConnectorDelay(cfg.OrphanReconcileDelayPerConnector)
+	return r
 }
 
 // BuildAuditProducer constructs the audit producer for the worker
@@ -408,8 +532,46 @@ func main() {
 	// The current scaffold runs without a DB so both are nil — the
 	// GrantExpiryEnforcer is omitted by WireCronJobs in that case
 	// and the binary still boots.
-	jobs := WireCronJobs(nil, nil, credNotifier, nil, nil, nil, *cfg)
+	// Phase 11 batch 6: the orphan reconciler is constructed via
+	// BuildOrphanReconciler (rather than passing nil inline) so the
+	// ACCESS_ORPHAN_RECONCILE_DELAY_PER_CONNECTOR knob is applied
+	// to the concrete pointer before the value is handed to
+	// WireCronJobs as the WorkspaceOrphanReconciler interface.
+	// The helper returns nil in the scaffold path (db / provisioning
+	// service / credentials loader are all nil here) so the orphan
+	// cron is still omitted by WireCronJobs.
+	//
+	// Phase 11 batch 6 round-8: the helper returns a concrete
+	// *access.OrphanReconciler. Assigning a nil typed pointer
+	// directly to a cron.WorkspaceOrphanReconciler-typed variable
+	// would produce a non-nil interface value carrying a nil
+	// dynamic pointer, defeating WireCronJobs' `orphanReconciler !=
+	// nil` guard (the classic Go nil-interface trap). The branch
+	// is currently masked by the parallel `db != nil` guard, but
+	// fixing the wiring at the source means any future caller that
+	// passes a real db with a nil reconciler still skips the orphan
+	// cron rather than panicking on a nil-pointer deref. We assign
+	// to the interface variable only when the concrete pointer is
+	// non-nil so the interface stays a properly-nil interface in
+	// the scaffold path.
+	orphanReconcilerImpl := BuildOrphanReconciler(nil, nil, nil, *cfg)
+	var orphanReconciler cron.WorkspaceOrphanReconciler
+	if orphanReconcilerImpl != nil {
+		orphanReconciler = orphanReconcilerImpl
+	}
 	auditProducer := BuildAuditProducer(*cfg)
+	// Phase 11 batch 6 round-7: the grant-expiry notifier hook is
+	// not yet wired in the scaffold path (no production
+	// NotificationService method exists for grant-revoke yet).
+	// Passing nil here exercises the SetNotifier(nil) branch in
+	// WireCronJobs — the enforcer falls back to Status="skipped"
+	// so the wiring is observable in SIEM without a panic. When
+	// the notification service grows SendGrantRevokedNotification
+	// / SendGrantExpiryWarning methods, the adapter lands in
+	// internal/services/access/ and is wired here exactly like
+	// credNotifier above.
+	var grantExpiryNotifier cron.GrantExpiryNotifier
+	jobs := WireCronJobs(nil, nil, credNotifier, nil, nil, grantExpiryNotifier, auditProducer, orphanReconciler, *cfg)
 	// T28 — connector health webhook dispatcher. The dispatcher
 	// short-circuits to a no-op when the URL is unset so dev
 	// binaries can run without external infrastructure; the boot

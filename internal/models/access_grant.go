@@ -38,6 +38,17 @@ type AccessGrant struct {
 	GrantedAt          time.Time      `gorm:"not null" json:"granted_at"`
 	ExpiresAt          *time.Time     `json:"expires_at,omitempty"`
 	LastUsedAt         *time.Time     `json:"last_used_at,omitempty"`
+	// LastWarnedAt is the timestamp at which the grant-expiry
+	// look-ahead sweep (cron.GrantExpiryEnforcer.RunWarning) last
+	// fired a "your access expires in N hours" notification for
+	// this grant. The cron uses this field as the dedup pivot —
+	// repeated ticks within the configured warning window
+	// (ACCESS_GRANT_EXPIRY_WARNING_HOURS) skip grants where
+	// LastWarnedAt is recent so a 12h-from-expiry grant gets one
+	// warning, not twelve. Nil means "never warned" so the very
+	// first tick in the window always fires. Phase 11 batch 6
+	// round-7 hook.
+	LastWarnedAt       *time.Time     `json:"last_warned_at,omitempty"`
 	RevokedAt          *time.Time     `gorm:"index" json:"revoked_at,omitempty"`
 	DeletedAt          gorm.DeletedAt `gorm:"index" json:"-"`
 	CreatedAt          time.Time      `json:"created_at"`

@@ -207,8 +207,11 @@ grant-expiry enforcement (docs/PROPOSAL.md §13).
 ### WS3 — SSO-only enforcement verification
 
 - [x] `SSOEnforcementChecker` optional capability interface.
-- [x] Top-6 implementations (Salesforce, Google Workspace, Okta,
-  Slack, GitHub, Microsoft) with happy + failure tests.
+- [x] **12 connectors** implement the interface today: Salesforce,
+  Google Workspace, Okta, Slack, GitHub, Microsoft (top-6) and
+  Auth0, Ping Identity, Zendesk, BambooHR, Workday, HubSpot
+  (Phase 11 batch 6). Every implementation ships with httptest-driven
+  happy + failure tests.
 - [x] Health endpoint surfaces `sso_enforcement_status`.
 - [x] Orphan reconciler re-checks SSO enforcement on `sso_only`
   connectors daily.
@@ -216,8 +219,12 @@ grant-expiry enforcement (docs/PROPOSAL.md §13).
 ### WS4 — Session revocation
 
 - [x] `SessionRevoker` optional capability interface.
-- [x] Top-7 implementations (Okta, Google Workspace, Microsoft,
-  Salesforce, Slack, Auth0, GitHub) with happy + failure tests.
+- [x] **14 connectors** implement the interface today: Okta,
+  Google Workspace, Microsoft, Salesforce, Slack, Auth0, GitHub
+  (top-7) and Zoom, Zendesk, HubSpot, Dropbox, Jira/Atlassian,
+  Notion, BambooHR (Phase 11 batch 6). Every implementation is
+  best-effort, treats 404 / user-not-found as idempotent success,
+  and ships with httptest-driven happy + failure tests.
 - [x] `SSOFederationService.DisableKeycloakUser` +
   `KeycloakClient.UpdateUser` added with tests.
 
@@ -232,6 +239,14 @@ grant-expiry enforcement (docs/PROPOSAL.md §13).
   memberships are removed.
 - [x] All layers are best-effort; failures in one do not block the
   next. Idempotent on re-run.
+- [x] Each layer emits a `LeaverKillSwitchEvent` onto the
+  `AuditProducer` (`ShieldnetLogEvent v1` envelope) so downstream
+  SIEM / SOAR pipelines can ingest per-layer outcomes. Wired via
+  `JMLService.SetAuditProducer`; nil producer is a no-op so
+  dev / test binaries keep working without Kafka. Verified by
+  `internal/services/access/jml_leaver_audit_test.go` and
+  `leaver_killswitch_integration_test.go`
+  (the `//go:build integration` variant).
 
 ### WS6 — Grant expiry enforcer
 
@@ -240,6 +255,36 @@ grant-expiry enforcement (docs/PROPOSAL.md §13).
   1h) and `access-connector-worker` wiring.
 - [x] httptest-driven tests verifying expired grants get revoked and
   non-expired grants do not.
+- [x] On every successful revoke the enforcer fires
+  `SendGrantRevokedNotification` via the optional
+  `GrantExpiryNotifier` so the affected user is told their access
+  has expired and been revoked.
+- [x] `RunWarning` look-ahead sweep emits
+  `SendGrantExpiryWarning` for grants expiring within
+  `ACCESS_GRANT_EXPIRY_WARNING_HOURS` (default `24h`) so users can
+  request renewal before access goes dark.
+- [x] Every revoke / warning emits a `GrantExpiryEvent` on the
+  `AuditProducer` (`access.grant.expiry` event-type,
+  `auto_revoked` / `warned` action) so downstream SIEM pipelines
+  can correlate.
+
+### WS8 — Hardening (Phase 11 batch 6)
+
+- [x] `OrphanReconciler.ReconcileWorkspaceDryRun` plus `POST /access/orphans/reconcile`
+  body field `dry_run` so operators can preview unused-app-account
+  detections without persisting rows. Dry-run is passed per-call so
+  concurrent dry/wet requests cannot race on shared state.
+- [x] Per-connector throttle
+  (`ACCESS_ORPHAN_RECONCILE_DELAY_PER_CONNECTOR`, default `1s`) so
+  the reconciler does not hammer upstream APIs.
+- [x] `OrphanReconcilerScheduler` emits structured JSON
+  `orphan_reconcile_summary` log lines per workspace
+  (`orphans_detected`, `orphans_new`, `connectors_scanned`,
+  `connectors_failed`, `duration_ms`) for log-aggregator ingest.
+- [x] Integration tests with `//go:build integration` tag for the
+  leaver kill-switch (`leaver_killswitch_integration_test.go`) and
+  the orphan reconciler
+  (`orphan_reconciler_integration_test.go`).
 
 ### WS7 — Documentation
 

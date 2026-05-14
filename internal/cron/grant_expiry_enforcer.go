@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"gorm.io/gorm"
@@ -38,6 +39,21 @@ type ConnectorCredentialsLoader interface {
 	LoadConnectorCredentials(ctx context.Context, connectorID string) (config map[string]interface{}, secrets map[string]interface{}, err error)
 }
 
+// GrantExpiryNotifier is the optional hook GrantExpiryEnforcer
+// calls to surface auto-revoke and look-ahead warning events to
+// the affected grant holder. The production implementation wraps
+// the same NotificationService used by the credential checker;
+// tests substitute a stub that captures every call.
+type GrantExpiryNotifier interface {
+	// SendGrantRevokedNotification surfaces an "Your access to
+	// {resource} has expired and been revoked" notification to the
+	// affected user. resourceID is the access_grants.resource_id.
+	SendGrantRevokedNotification(ctx context.Context, workspaceID, userID, connectorID, resourceID string, expiresAt time.Time) error
+	// SendGrantExpiryWarning surfaces a "Your access to {resource}
+	// expires in {N} hours" pre-revoke notification.
+	SendGrantExpiryWarning(ctx context.Context, workspaceID, userID, connectorID, resourceID string, expiresAt time.Time, hoursAhead int) error
+}
+
 // GrantExpiryEnforcer is the Phase 6 background cron job that
 // scans access_grants for rows whose expires_at has passed and
 // revokes each one through the supplied GrantRevoker. Runs on the
@@ -51,12 +67,25 @@ type ConnectorCredentialsLoader interface {
 // are loaded per-connector via the supplied
 // ConnectorCredentialsLoader so the revoke call hits the upstream
 // provider with the real per-org config + secrets.
+//
+// Phase 11 batch 6 extensions (best-effort, never block revoke):
+//   - On every successful revoke the enforcer fires
+//     SendGrantRevokedNotification via the optional GrantExpiryNotifier.
+//   - Per-grant audit events are published to the optional
+//     access.AuditProducer for downstream SIEM ingestion.
+//   - RunWarning runs a separate sweep that fires
+//     SendGrantExpiryWarning for grants expiring in the next
+//     warningHours window so users can request renewal before the
+//     access goes dark.
 type GrantExpiryEnforcer struct {
-	db        *gorm.DB
-	revoker   GrantRevoker
-	loader    ConnectorCredentialsLoader
-	batchSize int
-	now       func() time.Time
+	db            *gorm.DB
+	revoker       GrantRevoker
+	loader        ConnectorCredentialsLoader
+	batchSize     int
+	now           func() time.Time
+	notifier      GrantExpiryNotifier
+	auditProducer access.AuditProducer
+	warningHours  int
 }
 
 // NewGrantExpiryEnforcer returns an enforcer bound to db that
@@ -76,11 +105,12 @@ func NewGrantExpiryEnforcer(db *gorm.DB, revoker GrantRevoker, loader ConnectorC
 		batchSize = 100
 	}
 	return &GrantExpiryEnforcer{
-		db:        db,
-		revoker:   revoker,
-		loader:    loader,
-		batchSize: batchSize,
-		now:       time.Now,
+		db:           db,
+		revoker:      revoker,
+		loader:       loader,
+		batchSize:    batchSize,
+		now:          time.Now,
+		warningHours: 24,
 	}
 }
 
@@ -90,6 +120,63 @@ func (e *GrantExpiryEnforcer) SetClock(now func() time.Time) {
 	if now != nil {
 		e.now = now
 	}
+}
+
+// SetNotifier wires the optional Phase 11 batch 6 notification
+// hook. nil is a no-op; pass nil to disable notifications.
+func (e *GrantExpiryEnforcer) SetNotifier(n GrantExpiryNotifier) {
+	e.notifier = n
+}
+
+// SetAuditProducer wires the optional audit producer onto the
+// enforcer. nil is a no-op; in dev / test the enforcer simply
+// skips audit emission.
+func (e *GrantExpiryEnforcer) SetAuditProducer(p access.AuditProducer) {
+	e.auditProducer = p
+}
+
+// SetWarningHours configures the look-ahead window used by
+// RunWarning. <= 0 falls back to 24 (one day).
+func (e *GrantExpiryEnforcer) SetWarningHours(h int) {
+	if h <= 0 {
+		h = 24
+	}
+	e.warningHours = h
+}
+
+// WarningHours returns the currently configured look-ahead window
+// (in hours) used by RunWarning. Exposed so the worker binary and
+// its tests can assert the SetWarningHours wiring landed on the
+// enforcer with the operator-supplied
+// ACCESS_GRANT_EXPIRY_WARNING_HOURS value rather than the
+// constructor's 24h default.
+func (e *GrantExpiryEnforcer) WarningHours() int {
+	if e == nil {
+		return 0
+	}
+	return e.warningHours
+}
+
+// Notifier returns the currently wired GrantExpiryNotifier (or
+// nil when the hook is unwired). Exposed so the worker binary's
+// wiring tests can assert SetNotifier landed on the enforcer
+// without exercising a full revoke / warning sweep.
+func (e *GrantExpiryEnforcer) Notifier() GrantExpiryNotifier {
+	if e == nil {
+		return nil
+	}
+	return e.notifier
+}
+
+// AuditProducer returns the currently wired access.AuditProducer
+// (or nil when unwired). Exposed so the worker binary's wiring
+// tests can assert SetAuditProducer landed on the enforcer
+// without exercising a full revoke / warning sweep.
+func (e *GrantExpiryEnforcer) AuditProducer() access.AuditProducer {
+	if e == nil {
+		return nil
+	}
+	return e.auditProducer
 }
 
 // Run scans the access_grants table for unrevoked rows with
@@ -148,14 +235,201 @@ func (e *GrantExpiryEnforcer) Run(ctx context.Context) (int, error) {
 			continue
 		}
 		if err := e.revoker.Revoke(ctx, grant, entry.cfg, entry.secrets); err != nil {
-			// Treat ErrAlreadyRevoked as idempotent success.
+			// ErrAlreadyRevoked is idempotent — another process
+			// (operator action, the SCIM deprovision kill-switch
+			// layer, a competing enforcer tick) revoked this
+			// grant between our query and our revoke call.
+			// Emit Status="skipped" so SIEM consumers can pivot
+			// on Status to distinguish "we revoked it" from "it
+			// was already revoked when we got here", and so
+			// emitRevokedSideEffects skips the user-facing
+			// notification (gated on Status=="success"). This
+			// matches the RunWarning + LeaverKillSwitchEvent
+			// convention where "skipped" means no work was
+			// performed. The revoked counter intentionally stays
+			// unchanged — the enforcer's tick did not revoke
+			// this grant.
 			if errors.Is(err, access.ErrAlreadyRevoked) {
+				e.emitRevokedSideEffects(ctx, grant, now, "skipped", "grant already revoked upstream")
 				continue
 			}
 			lastErr = fmt.Errorf("cron: revoke grant %s: %w", grant.ID, err)
+			e.emitRevokedSideEffects(ctx, grant, now, "failed", err.Error())
 			continue
 		}
+		e.emitRevokedSideEffects(ctx, grant, now, "success", "")
 		revoked++
 	}
 	return revoked, lastErr
+}
+
+// emitRevokedSideEffects fires the best-effort Phase 11 batch 6
+// side effects: user notification + audit event. Failures are
+// logged via log.Printf but never propagated; the cron pipeline
+// must keep marching even when the SIEM is down.
+func (e *GrantExpiryEnforcer) emitRevokedSideEffects(ctx context.Context, grant *models.AccessGrant, now time.Time, status, errMsg string) {
+	if grant == nil {
+		return
+	}
+	expiresAt := now
+	if grant.ExpiresAt != nil {
+		expiresAt = *grant.ExpiresAt
+	}
+	if status == "success" && e.notifier != nil {
+		if err := e.notifier.SendGrantRevokedNotification(ctx, grant.WorkspaceID, grant.UserID, grant.ConnectorID, grant.ResourceExternalID, expiresAt); err != nil {
+			log.Printf("cron: grant_expiry_enforcer: revoke notify grant=%s: %v", grant.ID, err)
+		}
+	}
+	if e.auditProducer != nil {
+		ev := access.GrantExpiryEvent{
+			WorkspaceID: grant.WorkspaceID,
+			UserID:      grant.UserID,
+			GrantID:     grant.ID,
+			ConnectorID: grant.ConnectorID,
+			ResourceID:  grant.ResourceExternalID,
+			Action:      access.GrantExpiryActionRevoked,
+			Status:      status,
+			Error:       errMsg,
+			ExpiresAt:   expiresAt,
+			Timestamp:   now,
+		}
+		if err := access.PublishGrantExpiryEvent(ctx, e.auditProducer, ev); err != nil {
+			log.Printf("cron: grant_expiry_enforcer: audit emit grant=%s: %v", grant.ID, err)
+		}
+	}
+}
+
+// RunWarning fires the Phase 11 batch 6 look-ahead sweep: it
+// scans for unrevoked grants whose expires_at falls within the
+// configured warning window and emits a best-effort
+// SendGrantExpiryWarning notification + audit event. Returns the
+// number of grants the sweep surfaced; per-grant failures are
+// non-fatal and surfaced via lastErr.
+func (e *GrantExpiryEnforcer) RunWarning(ctx context.Context) (int, error) {
+	if e == nil || e.db == nil {
+		return 0, errors.New("cron: grant_expiry_enforcer missing db")
+	}
+	now := e.now()
+	window := e.warningHours
+	if window <= 0 {
+		window = 24
+	}
+	cutoff := now.Add(time.Duration(window) * time.Hour)
+
+	// Dedup window: a grant warned within the last `window` hours is
+	// skipped so a 12h-from-expiry grant gets one notification, not
+	// twelve under the default 1h tick / 24h warning window. The
+	// LastWarnedAt column is stamped after a successful notification
+	// (see end of loop below), so the very first tick in the window
+	// always fires for a fresh grant. Phase 11 batch 6 round-7.
+	dedupWindow := time.Duration(window) * time.Hour
+	// Phase 11 batch 6 round-8: push the dedup filter into the SQL
+	// WHERE clause so already-warned grants never count against the
+	// batch budget. Before this change, the application-level skip
+	// at the top of the per-grant loop fired only after LIMIT had
+	// already chopped the result set — meaning a workspace with
+	// 100+ already-warned grants in the window would consume the
+	// entire batch on rows that get continue'd, and unwarned grants
+	// beyond position N never received a notification. The
+	// equivalent application-level guard remains as a
+	// belt-and-suspenders check so unit tests that exercise the
+	// loop with hand-crafted in-memory rows still skip correctly.
+	dedupCutoff := now.Add(-dedupWindow)
+
+	var grants []models.AccessGrant
+	if err := e.db.WithContext(ctx).
+		Where(
+			"revoked_at IS NULL AND expires_at IS NOT NULL AND expires_at > ? AND expires_at <= ? AND (last_warned_at IS NULL OR last_warned_at < ?)",
+			now, cutoff, dedupCutoff,
+		).
+		Limit(e.batchSize).
+		Find(&grants).Error; err != nil {
+		return 0, fmt.Errorf("cron: list soon-to-expire grants: %w", err)
+	}
+
+	var (
+		warned  int
+		lastErr error
+	)
+	for i := range grants {
+		g := &grants[i]
+		// Skip grants that were already warned within the current
+		// window. This is the dedup pivot — without it, every tick
+		// in the (1h cadence × 24h window) configuration would
+		// re-warn the same grant up to 24 times before expiry.
+		if g.LastWarnedAt != nil && now.Sub(*g.LastWarnedAt) < dedupWindow {
+			continue
+		}
+		expiresAt := now
+		if g.ExpiresAt != nil {
+			expiresAt = *g.ExpiresAt
+		}
+		hoursAhead := int(expiresAt.Sub(now).Hours())
+		if hoursAhead < 0 {
+			hoursAhead = 0
+		}
+		// Audit-event emission is decoupled from notifier success
+		// so SIEM still observes warning attempts even when the
+		// notification channel is broken. This mirrors
+		// emitRevokedSideEffects which audits both success and
+		// failure outcomes. When the notifier hook is unwired
+		// (dev / test mode, or pre-rollout), the audit event is
+		// emitted with Status="skipped" — matching the
+		// LeaverKillSwitchEvent convention so downstream SIEM
+		// pivots on Status cannot confuse "we tried and it
+		// succeeded" with "we never tried."
+		var (
+			notifyStatus string
+			notifyErrMsg string
+			notified     bool
+		)
+		switch {
+		case e.notifier == nil:
+			notifyStatus = "skipped"
+		default:
+			if err := e.notifier.SendGrantExpiryWarning(ctx, g.WorkspaceID, g.UserID, g.ConnectorID, g.ResourceExternalID, expiresAt, hoursAhead); err != nil {
+				lastErr = fmt.Errorf("cron: warn grant %s: %w", g.ID, err)
+				notifyStatus = "failed"
+				notifyErrMsg = err.Error()
+			} else {
+				notifyStatus = "success"
+				notified = true
+			}
+		}
+		if e.auditProducer != nil {
+			ev := access.GrantExpiryEvent{
+				WorkspaceID: g.WorkspaceID,
+				UserID:      g.UserID,
+				GrantID:     g.ID,
+				ConnectorID: g.ConnectorID,
+				ResourceID:  g.ResourceExternalID,
+				Action:      access.GrantExpiryActionWarned,
+				Status:      notifyStatus,
+				Error:       notifyErrMsg,
+				ExpiresAt:   expiresAt,
+				Timestamp:   now,
+			}
+			if err := access.PublishGrantExpiryEvent(ctx, e.auditProducer, ev); err != nil {
+				log.Printf("cron: grant_expiry_enforcer: audit warn grant=%s: %v", g.ID, err)
+			}
+		}
+		if notified {
+			// Stamp LastWarnedAt so subsequent ticks within the
+			// dedup window skip this grant. Best-effort: a DB
+			// failure here is logged but does not undo the
+			// notification (the user has already received it).
+			// The next tick will re-fetch the row and, if the
+			// stamp landed, dedup correctly; if it didn't, the
+			// user gets at most one extra warning.
+			stamp := now
+			if err := e.db.WithContext(ctx).
+				Model(&models.AccessGrant{}).
+				Where("id = ?", g.ID).
+				Update("last_warned_at", stamp).Error; err != nil {
+				log.Printf("cron: grant_expiry_enforcer: stamp last_warned_at grant=%s: %v", g.ID, err)
+			}
+			warned++
+		}
+	}
+	return warned, lastErr
 }
