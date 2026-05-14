@@ -1,0 +1,28 @@
+# Kustomize entry-point for the ShieldNet Access K8s stack. Applies
+# every component in this directory in dependency order: namespace
+# first, then ztna-api (public surface), then the three internal
+# services. Use as:
+#
+#   kubectl apply -k deploy/k8s/
+#
+# For Helm-based deployment, see deploy/helm/shieldnet-access/.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - ztna-api/deployment.yaml
+  - ztna-api/service.yaml
+  - ztna-api/configmap.yaml
+  - ztna-api/hpa.yaml
+  - access-worker/deployment.yaml
+  - access-worker/configmap.yaml
+  - access-workflow/deployment.yaml
+  - access-workflow/service.yaml
+  - access-workflow/configmap.yaml
+  - access-ai-agent/deployment.yaml
+  - access-ai-agent/service.yaml
+  - access-ai-agent/configmap.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: shieldnet-access

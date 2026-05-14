@@ -1,0 +1,10 @@
+# Shared namespace for every ShieldNet Access component. The
+# per-service manifests under deploy/k8s/<service>/ all assume the
+# namespace already exists; apply this first when bootstrapping a
+# fresh cluster.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: shieldnet-access
+  labels:
+    app.kubernetes.io/part-of: shieldnet-access

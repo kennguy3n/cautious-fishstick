@@ -1,0 +1,111 @@
+# Deployment for access-connector-worker — the Redis-queue consumer
+# that runs connector sync, provision, and revoke jobs. Sizing
+# follows the SN360 worker profile: cpu=2 mem=400Mi,
+# GOMEMLIMIT=360MiB GOGC=75. Higher CPU than ztna-api because
+# connector sync is bursty (one full resync can saturate a core for
+# minutes) and the GC budget runs tighter because each worker
+# processes thousands of identity diffs in memory.
+#
+# No Service: workers are headless queue consumers. Scale by
+# changing `replicas` here.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: access-worker
+  namespace: shieldnet-access
+  labels:
+    app.kubernetes.io/name: access-worker
+    app.kubernetes.io/part-of: shieldnet-access
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 3
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: access-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: access-worker
+        app.kubernetes.io/part-of: shieldnet-access
+        app.kubernetes.io/component: worker
+    spec:
+      serviceAccountName: access-worker
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: access-worker
+          image: ghcr.io/kennguy3n/cautious-fishstick/access-worker:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: GOMEMLIMIT
+              value: "360MiB"
+            - name: GOGC
+              value: "75"
+            - name: ACCESS_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: access-worker-secrets
+                  key: database-url
+            - name: ACCESS_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: access-worker-secrets
+                  key: redis-url
+            - name: ACCESS_FULL_RESYNC_INTERVAL
+              valueFrom:
+                configMapKeyRef:
+                  name: access-worker-config
+                  key: full-resync-interval
+                  optional: true
+            - name: ACCESS_CREDENTIAL_CHECKER_INTERVAL
+              valueFrom:
+                configMapKeyRef:
+                  name: access-worker-config
+                  key: credential-checker-interval
+                  optional: true
+            - name: ACCESS_CREDENTIAL_EXPIRY_WARNING_DAYS
+              valueFrom:
+                configMapKeyRef:
+                  name: access-worker-config
+                  key: credential-expiry-warning-days
+                  optional: true
+            - name: ACCESS_KAFKA_BROKERS
+              valueFrom:
+                configMapKeyRef:
+                  name: access-worker-config
+                  key: kafka-brokers
+                  optional: true
+          resources:
+            requests:
+              cpu: "1000m"
+              memory: "400Mi"
+            limits:
+              cpu: "2000m"
+              memory: "400Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: access-worker
+  namespace: shieldnet-access
+  labels:
+    app.kubernetes.io/name: access-worker
+    app.kubernetes.io/part-of: shieldnet-access

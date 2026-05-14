@@ -1,0 +1,30 @@
+# Cluster-internal Service for access-ai-agent. Only ztna-api
+# reaches it (via ACCESS_AI_AGENT_BASE_URL with an X-API-Key
+# header). Not exposed publicly per docs/PROPOSAL.md §10.3.
+apiVersion: v1
+kind: Service
+metadata:
+  name: access-ai-agent
+  namespace: shieldnet-access
+  labels:
+    app.kubernetes.io/name: access-ai-agent
+    app.kubernetes.io/part-of: shieldnet-access
+    app.kubernetes.io/component: ai-agent
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: access-ai-agent
+  ports:
+    - name: http
+      port: 8090
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: access-ai-agent
+  namespace: shieldnet-access
+  labels:
+    app.kubernetes.io/name: access-ai-agent
+    app.kubernetes.io/part-of: shieldnet-access

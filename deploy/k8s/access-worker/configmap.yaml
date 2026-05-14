@@ -1,0 +1,27 @@
+# Non-sensitive runtime configuration for access-connector-worker.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: access-worker-config
+  namespace: shieldnet-access
+  labels:
+    app.kubernetes.io/name: access-worker
+    app.kubernetes.io/part-of: shieldnet-access
+data:
+  full-resync-interval: "168h"
+  credential-checker-interval: "1h"
+  credential-expiry-warning-days: "7"
+  kafka-brokers: ""
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: access-worker-secrets
+  namespace: shieldnet-access
+  labels:
+    app.kubernetes.io/name: access-worker
+    app.kubernetes.io/part-of: shieldnet-access
+type: Opaque
+stringData:
+  database-url: "postgres://access:CHANGE_ME@postgres:5432/access?sslmode=require"
+  redis-url: "redis://redis:6379/0"

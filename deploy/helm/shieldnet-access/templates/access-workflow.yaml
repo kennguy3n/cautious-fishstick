@@ -1,0 +1,175 @@
+{{- if .Values.accessWorkflow.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: access-workflow
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shieldnet-access.labels" . | nindent 4 }}
+    app.kubernetes.io/name: access-workflow
+    app.kubernetes.io/component: workflow-engine
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: access-workflow-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shieldnet-access.labels" . | nindent 4 }}
+    app.kubernetes.io/name: access-workflow
+data:
+  smtp-host: {{ .Values.accessWorkflow.config.smtpHost | quote }}
+  smtp-port: {{ .Values.accessWorkflow.config.smtpPort | quote }}
+  smtp-from: {{ .Values.accessWorkflow.config.smtpFrom | quote }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: access-workflow-secrets
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shieldnet-access.labels" . | nindent 4 }}
+    app.kubernetes.io/name: access-workflow
+type: Opaque
+stringData:
+  database-url: {{ .Values.accessWorkflow.secrets.databaseUrl | quote }}
+  redis-url: {{ .Values.accessWorkflow.secrets.redisUrl | quote }}
+  smtp-username: {{ .Values.accessWorkflow.secrets.smtpUsername | quote }}
+  smtp-password: {{ .Values.accessWorkflow.secrets.smtpPassword | quote }}
+  slack-webhook-url: {{ .Values.accessWorkflow.secrets.slackWebhookUrl | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: access-workflow
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shieldnet-access.labels" . | nindent 4 }}
+    app.kubernetes.io/name: access-workflow
+    app.kubernetes.io/component: workflow-engine
+spec:
+  type: {{ .Values.accessWorkflow.service.type }}
+  selector:
+    {{- include "shieldnet-access.selectorLabels" (dict "name" "access-workflow" "ctx" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.accessWorkflow.service.port }}
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: access-workflow
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shieldnet-access.labels" . | nindent 4 }}
+    app.kubernetes.io/name: access-workflow
+    app.kubernetes.io/component: workflow-engine
+spec:
+  replicas: {{ .Values.accessWorkflow.replicaCount }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "shieldnet-access.selectorLabels" (dict "name" "access-workflow" "ctx" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "shieldnet-access.labels" . | nindent 8 }}
+        {{- include "shieldnet-access.selectorLabels" (dict "name" "access-workflow" "ctx" .) | nindent 8 }}
+        app.kubernetes.io/component: workflow-engine
+    spec:
+      serviceAccountName: access-workflow
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: access-workflow
+          image: {{ include "shieldnet-access.image" (dict "service" "access-workflow" "tag" .Values.image.accessWorkflowTag "ctx" .) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8082
+              protocol: TCP
+          env:
+            - name: ACCESS_WORKFLOW_ENGINE_LISTEN_ADDR
+              value: ":8082"
+            {{- range $k, $v := .Values.accessWorkflow.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            - name: ACCESS_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: access-workflow-secrets
+                  key: database-url
+            - name: ACCESS_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: access-workflow-secrets
+                  key: redis-url
+            - name: NOTIFICATION_SMTP_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: access-workflow-config
+                  key: smtp-host
+                  optional: true
+            - name: NOTIFICATION_SMTP_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: access-workflow-config
+                  key: smtp-port
+                  optional: true
+            - name: NOTIFICATION_SMTP_FROM
+              valueFrom:
+                configMapKeyRef:
+                  name: access-workflow-config
+                  key: smtp-from
+                  optional: true
+            - name: NOTIFICATION_SMTP_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: access-workflow-secrets
+                  key: smtp-username
+                  optional: true
+            - name: NOTIFICATION_SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: access-workflow-secrets
+                  key: smtp-password
+                  optional: true
+            - name: NOTIFICATION_SLACK_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: access-workflow-secrets
+                  key: slack-webhook-url
+                  optional: true
+          resources:
+            {{- toYaml .Values.accessWorkflow.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 6
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+{{- end }}

@@ -1,0 +1,28 @@
+ShieldNet Access {{ .Chart.AppVersion }} installed in namespace {{ .Values.namespace }}.
+
+Services exposed inside the cluster:
+  - ztna-api          → http://ztna-api.{{ .Values.namespace }}.svc.cluster.local:{{ .Values.ztnaApi.service.port }}
+  - access-workflow   → http://access-workflow.{{ .Values.namespace }}.svc.cluster.local:{{ .Values.accessWorkflow.service.port }}
+  - access-ai-agent   → http://access-ai-agent.{{ .Values.namespace }}.svc.cluster.local:{{ .Values.accessAiAgent.service.port }}
+
+The access-connector-worker has no Service (headless queue
+consumer). Scale by changing accessWorker.replicaCount.
+
+Per docs/PROPOSAL.md §10.3, only ztna-api should be exposed
+publicly. Configure your ingress controller (Nginx / ALB / etc.) to
+route the public hostname at the ztna-api Service above.
+
+Before running in production, override the placeholder Secret
+values in values.yaml:
+  - ztnaApi.secrets.databaseUrl / redisUrl / aiAgentApiKey
+  - accessWorker.secrets.databaseUrl / redisUrl
+  - accessWorkflow.secrets.databaseUrl / redisUrl
+  - accessAiAgent.secrets.apiKey  (MUST match ztnaApi.secrets.aiAgentApiKey)
+
+Recommended: feed these through External Secrets Operator or
+sealed-secrets rather than committing them to values.yaml.
+
+To verify the deployment:
+  kubectl -n {{ .Values.namespace }} rollout status deploy/ztna-api
+  kubectl -n {{ .Values.namespace }} port-forward svc/ztna-api {{ .Values.ztnaApi.service.port }}
+  curl http://localhost:{{ .Values.ztnaApi.service.port }}/health

@@ -1,0 +1,103 @@
+# Deployment for access-ai-agent — Python A2A skill server hosting
+# the five Tier-1 access skills (risk assessment, anomaly detection,
+# policy recommendation, connector setup, review automation).
+# Cluster-internal only per docs/PROPOSAL.md §10.3; ztna-api dials
+# this via ACCESS_AI_AGENT_BASE_URL with an X-API-Key shared secret.
+#
+# Resources are sized per docs/ARCHITECTURE.md §11: "AI agent server
+# is sized per model load and scales horizontally." The defaults
+# here assume the in-tree skills run with a remote LLM (no local
+# model load); operators bumping memory to host a local model
+# should raise both the request and the limit.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: access-ai-agent
+  namespace: shieldnet-access
+  labels:
+    app.kubernetes.io/name: access-ai-agent
+    app.kubernetes.io/part-of: shieldnet-access
+    app.kubernetes.io/component: ai-agent
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: access-ai-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: access-ai-agent
+        app.kubernetes.io/part-of: shieldnet-access
+        app.kubernetes.io/component: ai-agent
+    spec:
+      serviceAccountName: access-ai-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: access-ai-agent
+          image: ghcr.io/kennguy3n/cautious-fishstick/access-ai-agent:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8090
+              protocol: TCP
+          env:
+            - name: ACCESS_AI_AGENT_LISTEN_ADDR
+              value: "0.0.0.0:8090"
+            - name: ACCESS_AI_AGENT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: access-ai-agent-secrets
+                  key: api-key
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: access-ai-agent-secrets
+                  key: openai-api-key
+                  optional: true
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: access-ai-agent-secrets
+                  key: anthropic-api-key
+                  optional: true
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 6
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

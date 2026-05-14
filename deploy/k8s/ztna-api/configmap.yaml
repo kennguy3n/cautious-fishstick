@@ -1,0 +1,35 @@
+# Non-sensitive runtime configuration for ztna-api. The
+# ACCESS_DATABASE_URL, ACCESS_REDIS_URL, and ACCESS_AI_AGENT_API_KEY
+# values are stored in the companion Secret (ztna-api-secrets);
+# everything safely visible to cluster-readers lives here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ztna-api-config
+  namespace: shieldnet-access
+  labels:
+    app.kubernetes.io/name: ztna-api
+    app.kubernetes.io/part-of: shieldnet-access
+data:
+  ai-agent-base-url: "http://access-ai-agent.shieldnet-access.svc.cluster.local:8090"
+  workflow-engine-base-url: "http://access-workflow.shieldnet-access.svc.cluster.local:8082"
+  kafka-brokers: ""
+  audit-log-topic: "access-audit-log"
+---
+# The Secret is provided here as a placeholder so operators can see
+# the keys ztna-api expects. The real values are populated out of
+# band (sealed-secrets, External Secrets Operator, or kubectl create
+# secret) — never commit production credentials.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ztna-api-secrets
+  namespace: shieldnet-access
+  labels:
+    app.kubernetes.io/name: ztna-api
+    app.kubernetes.io/part-of: shieldnet-access
+type: Opaque
+stringData:
+  database-url: "postgres://access:CHANGE_ME@postgres:5432/access?sslmode=require"
+  redis-url: "redis://redis:6379/0"
+  ai-agent-api-key: "CHANGE_ME"
