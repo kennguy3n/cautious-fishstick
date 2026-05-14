@@ -108,8 +108,13 @@ cautious-fishstick/
 │       └── tests/                 # pytest happy-path + error-path per skill + dispatcher e2e
 ├── internal/
 │   ├── config/                                 # Phase 4 env-driven access platform config (ACCESS_AI_AGENT_*, ACCESS_FULL_RESYNC_INTERVAL, ...)
-│   ├── cron/                                   # Phase 5 background workers
-│   │   └── campaign_scheduler.go               # CampaignScheduler — starts due AccessReview campaigns
+│   ├── cron/                                   # Phase 1 / 3 / 5 / 6 / 7 background workers
+│   │   ├── campaign_scheduler.go               # Phase 5 CampaignScheduler — starts due AccessReview campaigns
+│   │   ├── identity_sync_scheduler.go          # Phase 1 IdentitySyncScheduler (PR #67) — enqueues access_jobs.sync_identities for connectors whose last access_sync_state.updated_at is older than ACCESS_FULL_RESYNC_INTERVAL
+│   │   ├── draft_staleness_checker.go          # Phase 3 DraftPolicyStalenessChecker (PR #67) — marks policies.stale=true once a draft passes ACCESS_DRAFT_POLICY_STALE_AFTER
+│   │   ├── grant_expiry_enforcer.go            # Phase 5 GrantExpiryEnforcer (PR #67) — walks access_grants.expires_at <= now() and revokes via AccessProvisioningService
+│   │   ├── credential_checker.go               # Phase 7 CredentialChecker — flags connectors whose credential_expired_time is within ACCESS_CREDENTIAL_EXPIRY_WARN_DAYS
+│   │   └── anomaly_scanner.go                  # Phase 6 AnomalyScanner — periodic AnomalyDetectionService.ScanWorkspace fan-out
 │   ├── handlers/                               # Gin HTTP handler layer (Phase 2–6)
 │   │   ├── router.go                           # Router + Dependencies (DI for services)
 │   │   ├── helpers.go                          # GetStringParam / GetPtrStringQuery (no direct c.Param/c.Query)
