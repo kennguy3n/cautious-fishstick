@@ -85,3 +85,21 @@ HTTP error responses follow the canonical envelope from `internal/handlers/error
 ## Versioning
 
 The contracts ship as `0.x` while Phase 9 is in flight. The major version locks once `PHASES.md` Phase 9 hits `✅ shipped` and the SDKs are published to the internal package / Maven / npm registries.
+
+### Published artifacts
+
+| Platform | Registry | Coordinates | Tag prefix | Current version | Publishing instructions |
+|----------|----------|-------------|------------|-----------------|--------------------------|
+| iOS | SwiftPM via Git (`kennguy3n/cautious-fishstick`) | `.package(url: "https://github.com/kennguy3n/cautious-fishstick.git", from: "0.1.0")` | `sdk-ios-v` | `0.1.0` | [`sdk/ios/PUBLISHING.md`](../sdk/ios/PUBLISHING.md) |
+| Android | GitHub Packages Maven (`https://maven.pkg.github.com/kennguy3n/cautious-fishstick`) | `com.shieldnet360.access:access-sdk:0.1.0` | `sdk-android-v` | `0.1.0` | [`sdk/android/PUBLISHING.md`](../sdk/android/PUBLISHING.md) |
+| Desktop | GitHub Packages npm (`https://npm.pkg.github.com/`, scope `@shieldnet360`) | `@shieldnet360/access-extension@0.1.0` | `sdk-desktop-v` | `0.1.0` | [`sdk/desktop/PUBLISHING.md`](../sdk/desktop/PUBLISHING.md) |
+
+Release tags trigger the per-platform release workflow in `.github/workflows/sdk-{ios,android,desktop}-release.yml`. Each workflow validates the manifest, runs the contract tests, asserts a matching `CHANGELOG.md` entry, and publishes the artifact to the registry above.
+
+### Integration guides
+
+Per-platform host-app integration guides (installation, configuration, every method on `AccessSDKClient`, error handling, the "no on-device inference" contract, sample-app pointers):
+
+- iOS: [`docs/guides/ios-integration.md`](guides/ios-integration.md)
+- Android: [`docs/guides/android-integration.md`](guides/android-integration.md)
+- Desktop: [`docs/guides/desktop-integration.md`](guides/desktop-integration.md)

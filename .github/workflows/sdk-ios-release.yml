@@ -1,0 +1,67 @@
+name: SDK / iOS release
+
+on:
+  push:
+    tags:
+      - 'sdk-ios-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Validate Swift package & publish GitHub Release
+    runs-on: macos-14
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Derive version
+        id: version
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          version="${tag#sdk-ios-v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "sdk-ios-release: tag '$tag' does not match sdk-ios-vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          fi
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Validate Package.swift
+        run: swift package describe --package-path sdk/ios
+
+      - name: Run Swift contract tests
+        run: swift test --package-path sdk/ios
+
+      - name: Extract changelog body
+        id: changelog
+        run: |
+          version='${{ steps.version.outputs.version }}'
+          changelog="sdk/ios/CHANGELOG.md"
+          if [[ ! -f "$changelog" ]]; then
+            echo "sdk-ios-release: missing $changelog" >&2
+            exit 1
+          fi
+          awk -v ver="$version" '
+            $0 ~ "^## "ver"( |$|—)" { capture=1; next }
+            capture && $0 ~ "^## " { capture=0 }
+            capture { print }
+          ' "$changelog" >release-body.md
+          if [[ ! -s release-body.md ]]; then
+            echo "sdk-ios-release: no changelog entry for $version in $changelog" >&2
+            exit 1
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create '${{ steps.version.outputs.tag }}' \
+            --title 'iOS Access SDK ${{ steps.version.outputs.version }}' \
+            --notes-file release-body.md
