@@ -237,6 +237,14 @@ import (
 )
 
 func main() {
+	// `--healthcheck` is a self-probe mode used by the docker-compose
+	// healthcheck command (the distroless runtime image has no curl).
+	for _, arg := range os.Args[1:] {
+		if arg == "--healthcheck" || arg == "-healthcheck" {
+			os.Exit(runHealthcheck())
+		}
+	}
+
 	log.Printf("access-workflow-engine: starting; registered access connectors: %v", access.ListRegisteredProviders())
 
 	db, dbDescription, err := openDatabase()
@@ -343,6 +351,32 @@ func runEscalationChecker(ctx context.Context, db *gorm.DB, escalator workflow_e
 			}
 		}
 	}
+}
+
+// runHealthcheck issues a short-timeout GET against the local
+// /health endpoint and reports the exit code the docker-compose
+// healthcheck should observe. The listen address is read from the
+// same env var the main server uses so port overrides work
+// transparently.
+func runHealthcheck() int {
+	addr := os.Getenv("ACCESS_WORKFLOW_ENGINE_LISTEN_ADDR")
+	if addr == "" {
+		addr = ":8082"
+	}
+	port := addr
+	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
+		port = addr[idx:]
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get("http://127.0.0.1" + port + "/health")
+	if err != nil {
+		return 1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
 }
 
 // buildNotifiers wires production notification.Notifier instances from
