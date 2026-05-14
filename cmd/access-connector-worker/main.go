@@ -231,6 +231,18 @@ type CronJobs struct {
 	AnomalyInterval         time.Duration
 	CredentialChecker       *cron.CredentialChecker
 	CredentialCheckInterval time.Duration
+	// GrantExpiryEnforcer revokes access_grants whose expires_at has
+	// passed. Phase 11 (docs/PROPOSAL.md §13). nil when the binary
+	// boots without a provisioning service or credentials loader
+	// wired (the early-scaffold path).
+	GrantExpiryEnforcer     *cron.GrantExpiryEnforcer
+	GrantExpiryInterval     time.Duration
+	// OrphanReconcilerScheduler walks every workspace and asks the
+	// orphan reconciler to find upstream SaaS users with no IdP
+	// pivot. Phase 11 (docs/PROPOSAL.md §13.4). nil when the binary
+	// boots without a reconciler wired.
+	OrphanReconcilerScheduler *cron.OrphanReconcilerScheduler
+	OrphanReconcileInterval   time.Duration
 }
 
 // WireCronJobs constructs the worker-binary cron set from the
@@ -239,9 +251,23 @@ type CronJobs struct {
 // boots, just without that cron). cfg drives the per-cron
 // intervals; zero values fall back to the package-level defaults.
 //
+// revoker / loader may be nil — when either is nil the Phase 11
+// GrantExpiryEnforcer cron is omitted but the rest of the cron set
+// still wires. The two are bundled because the enforcer cannot
+// usefully run without both: revoke needs decrypted credentials
+// loaded per-connector via the loader.
+//
 // The returned CronJobs is safe to consume from a single goroutine
 // per cron — none of the workers share mutable state.
-func WireCronJobs(db *gorm.DB, scanner cron.WorkspaceScanner, notifier cron.NotificationSender, cfg config.Access) CronJobs {
+func WireCronJobs(
+	db *gorm.DB,
+	scanner cron.WorkspaceScanner,
+	notifier cron.NotificationSender,
+	revoker cron.GrantRevoker,
+	loader cron.ConnectorCredentialsLoader,
+	orphanReconciler cron.WorkspaceOrphanReconciler,
+	cfg config.Access,
+) CronJobs {
 	jobs := CronJobs{}
 	if db != nil && scanner != nil {
 		jobs.Anomaly = cron.NewAnomalyScanner(db, scanner)
@@ -255,6 +281,20 @@ func WireCronJobs(db *gorm.DB, scanner cron.WorkspaceScanner, notifier cron.Noti
 		jobs.CredentialCheckInterval = cfg.CredentialCheckerInterval
 		if jobs.CredentialCheckInterval <= 0 {
 			jobs.CredentialCheckInterval = config.DefaultCredentialCheckerInterval
+		}
+	}
+	if db != nil && revoker != nil && loader != nil {
+		jobs.GrantExpiryEnforcer = cron.NewGrantExpiryEnforcer(db, revoker, loader, 0)
+		jobs.GrantExpiryInterval = cfg.GrantExpiryCheckInterval
+		if jobs.GrantExpiryInterval <= 0 {
+			jobs.GrantExpiryInterval = config.DefaultGrantExpiryCheckInterval
+		}
+	}
+	if db != nil && orphanReconciler != nil {
+		jobs.OrphanReconcilerScheduler = cron.NewOrphanReconcilerScheduler(db, orphanReconciler)
+		jobs.OrphanReconcileInterval = cfg.OrphanReconcileInterval
+		if jobs.OrphanReconcileInterval <= 0 {
+			jobs.OrphanReconcileInterval = config.DefaultOrphanReconcileInterval
 		}
 	}
 	return jobs
@@ -362,7 +402,13 @@ func main() {
 	// at boot rather than at the first credential rotation.
 	cfg := config.Load()
 	credNotifier := BuildCredentialExpiryNotifier(*cfg)
-	jobs := WireCronJobs(nil, nil, credNotifier, *cfg)
+	// Phase 11 (docs/PROPOSAL.md §13): the production binary will
+	// pass a real *access.AccessProvisioningService as the revoker
+	// and a real *access.ConnectorCredentialsLoader as the loader.
+	// The current scaffold runs without a DB so both are nil — the
+	// GrantExpiryEnforcer is omitted by WireCronJobs in that case
+	// and the binary still boots.
+	jobs := WireCronJobs(nil, nil, credNotifier, nil, nil, nil, *cfg)
 	auditProducer := BuildAuditProducer(*cfg)
 	// T28 — connector health webhook dispatcher. The dispatcher
 	// short-circuits to a no-op when the URL is unset so dev

@@ -64,3 +64,33 @@ func TestAIConfigured_NilReceiverReturnsFalse(t *testing.T) {
 		t.Fatal("nil-receiver AIConfigured returned true")
 	}
 }
+
+// TestLoad_GrantExpiryCheckIntervalDefault covers the Phase 11
+// (docs/PROPOSAL.md §13) default: when ACCESS_GRANT_EXPIRY_CHECK_INTERVAL
+// is unset the loaded config exposes DefaultGrantExpiryCheckInterval
+// (1 hour) so the worker schedules grant-expiry sweeps without
+// requiring operator action.
+func TestLoad_GrantExpiryCheckIntervalDefault(t *testing.T) {
+	t.Setenv("ACCESS_GRANT_EXPIRY_CHECK_INTERVAL", "")
+	cfg := Load()
+	if cfg.GrantExpiryCheckInterval != DefaultGrantExpiryCheckInterval {
+		t.Fatalf("GrantExpiryCheckInterval = %v; want %v",
+			cfg.GrantExpiryCheckInterval, DefaultGrantExpiryCheckInterval)
+	}
+	if DefaultGrantExpiryCheckInterval != time.Hour {
+		t.Fatalf("DefaultGrantExpiryCheckInterval = %v; want 1h (Phase 11 contract)",
+			DefaultGrantExpiryCheckInterval)
+	}
+}
+
+// TestLoad_GrantExpiryCheckIntervalOverride asserts an operator
+// override via env var lands on the loaded config so deployments
+// can tune the cadence down (e.g. 5m for JIT-heavy workloads) or
+// up (e.g. 6h for batch workloads).
+func TestLoad_GrantExpiryCheckIntervalOverride(t *testing.T) {
+	t.Setenv("ACCESS_GRANT_EXPIRY_CHECK_INTERVAL", "5m")
+	cfg := Load()
+	if cfg.GrantExpiryCheckInterval != 5*time.Minute {
+		t.Fatalf("GrantExpiryCheckInterval = %v; want 5m", cfg.GrantExpiryCheckInterval)
+	}
+}

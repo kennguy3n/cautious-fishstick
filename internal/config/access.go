@@ -52,6 +52,24 @@ const (
 	// horizon.
 	DefaultCredentialCheckerInterval = 24 * time.Hour
 
+	// DefaultGrantExpiryCheckInterval is the cadence at which the
+	// access-connector-worker scans access_grants for rows whose
+	// expires_at has passed and pushes a revoke to the upstream
+	// connector. Phase 11 (docs/PROPOSAL.md §13) introduces grant-
+	// expiry enforcement as the automated counterpart to the
+	// reviewer-driven Phase 5 revoke flow; one hour is the right
+	// default for a JIT "15-minute grant" workload — the worst-case
+	// time-to-revoke after expiry is bounded by the tick interval.
+	DefaultGrantExpiryCheckInterval = 1 * time.Hour
+
+	// DefaultOrphanReconcileInterval is the cadence at which the
+	// access-connector-worker walks every workspace through the
+	// orphan-account reconciler. 24h is the right default for a
+	// Phase 11 surface that surfaces "unused app accounts" to
+	// operators — it matches the daily anomaly-scan cadence and
+	// keeps the reconciler cheap to run.
+	DefaultOrphanReconcileInterval = 24 * time.Hour
+
 	// DefaultAuditLogTopic is the Kafka topic the access-audit
 	// producer publishes ShieldnetLogEvent v1 envelopes to.
 	DefaultAuditLogTopic = "access_audit_logs"
@@ -106,6 +124,19 @@ type Access struct {
 	// access-connector-worker scans access_connectors for credential
 	// expiry. Defaults to DefaultCredentialCheckerInterval.
 	CredentialCheckerInterval time.Duration
+
+	// OrphanReconcileInterval is the cadence at which the
+	// access-connector-worker walks every workspace through
+	// OrphanReconciler.ReconcileWorkspace. Defaults to
+	// DefaultOrphanReconcileInterval.
+	OrphanReconcileInterval time.Duration
+
+	// GrantExpiryCheckInterval is the cadence at which the
+	// access-connector-worker walks access_grants for expired rows
+	// and revokes each one through the upstream connector. Phase 11
+	// (docs/PROPOSAL.md §13) automation. Defaults to
+	// DefaultGrantExpiryCheckInterval.
+	GrantExpiryCheckInterval time.Duration
 
 	// Notification SMTP knobs power the email Notifier. All five
 	// must be set for the notifier to dispatch real emails; if SMTPHost
@@ -164,6 +195,8 @@ func Load() *Access {
 		AnomalyScanInterval:         getDurationEnv("ACCESS_ANOMALY_SCAN_INTERVAL", DefaultAnomalyScanInterval),
 		CredentialExpiryWarningDays: getIntEnv("ACCESS_CREDENTIAL_EXPIRY_WARNING_DAYS", DefaultCredentialExpiryWarningDays),
 		CredentialCheckerInterval:   getDurationEnv("ACCESS_CREDENTIAL_CHECKER_INTERVAL", DefaultCredentialCheckerInterval),
+		GrantExpiryCheckInterval:    getDurationEnv("ACCESS_GRANT_EXPIRY_CHECK_INTERVAL", DefaultGrantExpiryCheckInterval),
+		OrphanReconcileInterval:     getDurationEnv("ACCESS_ORPHAN_RECONCILE_INTERVAL", DefaultOrphanReconcileInterval),
 		NotificationSMTPHost:        getEnv("NOTIFICATION_SMTP_HOST"),
 		NotificationSMTPPort:        getIntEnv("NOTIFICATION_SMTP_PORT", 587),
 		NotificationSMTPFrom:        getEnv("NOTIFICATION_SMTP_FROM"),
