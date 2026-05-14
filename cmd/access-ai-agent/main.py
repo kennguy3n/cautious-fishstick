@@ -159,10 +159,37 @@ def build_handler(api_key: str) -> type:
     return cls
 
 
+def _resolve_listen_addr() -> tuple[str, int]:
+    # ACCESS_AI_AGENT_LISTEN_ADDR is the canonical env var the
+    # docker-compose stack and Helm chart set — it carries the same
+    # `host:port` shape as Go services' *_LISTEN_ADDR knobs. Falls
+    # back to AGENT_HOST / AGENT_PORT so standalone dev runs and
+    # tests that pre-date the env var keep working.
+    raw = os.environ.get("ACCESS_AI_AGENT_LISTEN_ADDR", "").strip()
+    if raw:
+        host, _, port_s = raw.rpartition(":")
+        if not host or not port_s:
+            raise ValueError(
+                f"ACCESS_AI_AGENT_LISTEN_ADDR must be host:port, got {raw!r}"
+            )
+        try:
+            port = int(port_s)
+        except ValueError as e:
+            raise ValueError(
+                f"ACCESS_AI_AGENT_LISTEN_ADDR port {port_s!r} is not an integer"
+            ) from e
+        return host, port
+    return (
+        os.environ.get("AGENT_HOST", "127.0.0.1"),
+        int(os.environ.get("AGENT_PORT", "8765")),
+    )
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="access-ai-agent A2A skill server")
-    p.add_argument("--host", default=os.environ.get("AGENT_HOST", "127.0.0.1"))
-    p.add_argument("--port", type=int, default=int(os.environ.get("AGENT_PORT", "8765")))
+    default_host, default_port = _resolve_listen_addr()
+    p.add_argument("--host", default=default_host)
+    p.add_argument("--port", type=int, default=default_port)
     p.add_argument("--log-level", default=os.environ.get("AGENT_LOG_LEVEL", "INFO"))
     return p.parse_args(argv)
 
