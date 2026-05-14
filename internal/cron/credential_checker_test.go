@@ -17,6 +17,7 @@ import (
 // test stub receives: connector ID, provider, and expiry time.
 type notifCapture struct {
 	ConnectorID string
+	WorkspaceID string
 	Provider    string
 	ExpiresAt   time.Time
 }
@@ -27,11 +28,12 @@ type stubNotificationSender struct {
 	err     error
 }
 
-func (s *stubNotificationSender) SendCredentialExpiryWarning(_ context.Context, connectorID, provider string, expiresAt time.Time) error {
+func (s *stubNotificationSender) SendCredentialExpiryWarning(_ context.Context, connectorID, workspaceID, provider string, expiresAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, notifCapture{
 		ConnectorID: connectorID,
+		WorkspaceID: workspaceID,
 		Provider:    provider,
 		ExpiresAt:   expiresAt,
 	})
@@ -165,6 +167,42 @@ func TestCredentialChecker_Run_NilNotifierIsGraceful(t *testing.T) {
 func TestCredentialChecker_Run_MissingDependenciesError(t *testing.T) {
 	if err := (&CredentialChecker{}).Run(context.Background()); err == nil {
 		t.Error("Run with nil db returned nil; want error")
+	}
+}
+
+// TestCredentialChecker_Run_PropagatesWorkspaceID asserts that the
+// scanner forwards each connector's WorkspaceID to the notification
+// sender so the notification can be routed to the workspace admin
+// channel (T25 — credential rotation alerting).
+func TestCredentialChecker_Run_PropagatesWorkspaceID(t *testing.T) {
+	db := newCredDB(t)
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	// Seed a connector with a non-default workspace ID to be sure we
+	// observe the actual row value rather than the seed default.
+	row := &models.AccessConnector{
+		ID:                    "01HCONN_WS_PROP",
+		WorkspaceID:           "01HWS_T25_ADMINS",
+		Provider:              "okta",
+		ConnectorType:         "test",
+		CredentialExpiredTime: ptrTime(now.Add(3 * 24 * time.Hour)),
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
+	}
+	if err := db.Create(row).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	sender := &stubNotificationSender{}
+	c := NewCredentialChecker(db, sender, 7) // T25 spec: 7-day horizon
+	c.SetClock(func() time.Time { return now })
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(sender.calls) != 1 {
+		t.Fatalf("notifications = %d; want 1", len(sender.calls))
+	}
+	if got := sender.calls[0].WorkspaceID; got != "01HWS_T25_ADMINS" {
+		t.Fatalf("workspace_id = %q; want 01HWS_T25_ADMINS", got)
 	}
 }
 

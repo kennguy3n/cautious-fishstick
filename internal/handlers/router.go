@@ -100,6 +100,8 @@ func Router(deps Dependencies) *gin.Engine {
 	r.Use(gin.Recovery())
 	r.Use(JSONLoggerMiddleware())
 	r.Use(MetricsMiddleware(deps.Metrics))
+	r.Use(NewRateLimiter().Middleware())
+	r.Use(JSONValidationMiddleware())
 
 	r.GET("/health", HealthHandler)
 	r.GET("/metrics", MetricsHandler(deps.Metrics))

@@ -124,6 +124,13 @@ type Access struct {
 	// log line so dev binaries stay healthy without a webhook.
 	NotificationSlackWebhookURL string
 
+	// HealthWebhookURL is the operator-supplied URL the platform
+	// POSTs ConnectorHealthEvent envelopes to whenever a connector
+	// enters the "needs attention" state (stale audit cursor /
+	// expired credential). Empty turns the dispatcher into a no-op
+	// (see internal/services/access/connector_health_webhook.go).
+	HealthWebhookURL string
+
 	// KafkaBrokers is the comma-separated list of Kafka bootstrap
 	// brokers used by the access-audit producer (PROPOSAL §10.1).
 	// Empty means "Kafka is intentionally unconfigured" — the
@@ -163,6 +170,7 @@ func Load() *Access {
 		NotificationSMTPUsername:    getEnv("NOTIFICATION_SMTP_USERNAME"),
 		NotificationSMTPPassword:    getEnv("NOTIFICATION_SMTP_PASSWORD"),
 		NotificationSlackWebhookURL: getEnv("NOTIFICATION_SLACK_WEBHOOK_URL"),
+		HealthWebhookURL:            getEnv("ACCESS_HEALTH_WEBHOOK_URL"),
 		KafkaBrokers:                getEnv("ACCESS_KAFKA_BROKERS"),
 		AuditLogTopic:               getEnvDefault("ACCESS_AUDIT_LOG_TOPIC", DefaultAuditLogTopic),
 	}

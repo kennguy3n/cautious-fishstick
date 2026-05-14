@@ -19,6 +19,7 @@ import (
 	"github.com/kennguy3n/cautious-fishstick/internal/config"
 	"github.com/kennguy3n/cautious-fishstick/internal/cron"
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
+	"github.com/kennguy3n/cautious-fishstick/internal/services/notification"
 
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/activecampaign"
 	_ "github.com/kennguy3n/cautious-fishstick/internal/services/access/connectors/airtable"
@@ -305,6 +306,45 @@ func BuildAuditProducer(cfg config.Access) access.AuditProducer {
 	return &access.NoOpAuditProducer{}
 }
 
+// BuildCredentialExpiryNotifier constructs the NotificationSender the
+// CredentialChecker cron dispatches credential-expiry warnings
+// through. The wiring is:
+//
+//	cron.CredentialChecker -> access.CredentialExpiryNotifierAdapter ->
+//	*notification.NotificationService -> [slack | in-memory] notifiers
+//
+// The notifier set is assembled here so the cron stays decoupled
+// from any specific channel. The in-memory notifier is always
+// attached so the dispatch is observable in dev binaries without
+// requiring a real channel.
+//
+// SMTP wiring deliberately remains out of scope at this layer: the
+// EmailNotifier requires a workspace-aware EmailRecipientResolver
+// (workspace_id -> []email_addresses) which is provided by the API
+// binary's directory adapter, not by the worker. When the access
+// platform grows a dedicated workspace-admin distribution list, the
+// resolver wiring lands here in a follow-up PR.
+func BuildCredentialExpiryNotifier(cfg config.Access) cron.NotificationSender {
+	notifiers := []notification.Notifier{}
+	// Slack channel is the canonical fan-out target for workspace-
+	// admin credential alerts when a webhook URL is configured. The
+	// notifier itself short-circuits to log-only mode when the URL
+	// is blank, but we still gate the wiring at the env layer so
+	// the worker log line above reports an accurate "configured"
+	// state.
+	if cfg.NotificationSlackWebhookURL != "" {
+		notifiers = append(notifiers, notification.NewSlackNotifier(cfg.NotificationSlackWebhookURL, nil))
+	}
+	// Always include the in-memory notifier as a tracer — its
+	// captured buffer is what dev binaries inspect when no real
+	// channel is configured. The buffer is bounded by the lifetime
+	// of the worker process, so it doesn't leak across restarts.
+	notifiers = append(notifiers, &notification.InMemoryNotifier{})
+
+	svc := notification.NewNotificationService(notifiers...)
+	return access.NewCredentialExpiryNotifierAdapter(svc)
+}
+
 func main() {
 	log.Printf("access-connector-worker: starting; registered access connectors: %v", access.ListRegisteredProviders())
 
@@ -314,11 +354,33 @@ func main() {
 	// runCron. The current scaffold compiles WireCronJobs into the
 	// binary so the set is exercised by `go build ./...` without
 	// requiring a live DB.
+	//
+	// T25 (credential rotation alerting) wires the
+	// CredentialExpiryNotifier even when db is nil — the cron
+	// itself short-circuits on a nil db but the notifier
+	// construction is exercised so a misconfigured channel surfaces
+	// at boot rather than at the first credential rotation.
 	cfg := config.Load()
-	jobs := WireCronJobs(nil, nil, nil, *cfg)
+	credNotifier := BuildCredentialExpiryNotifier(*cfg)
+	jobs := WireCronJobs(nil, nil, credNotifier, *cfg)
 	auditProducer := BuildAuditProducer(*cfg)
+	// T28 — connector health webhook dispatcher. The dispatcher
+	// short-circuits to a no-op when the URL is unset so dev
+	// binaries can run without external infrastructure; the boot
+	// log records the effective state so operators can confirm at
+	// a glance whether the channel is wired.
+	healthWebhook := access.NewConnectorHealthWebhookDispatcher(access.ConnectorHealthWebhookConfig{
+		WebhookURL: cfg.HealthWebhookURL,
+	})
 	log.Printf("access-connector-worker: audit pipeline topic=%q producer=%T", cfg.AuditLogTopic, auditProducer)
+	log.Printf("access-connector-worker: credential expiry notifier wired (slack_configured=%t)",
+		cfg.NotificationSlackWebhookURL != "",
+	)
+	log.Printf("access-connector-worker: health webhook dispatcher wired (configured=%t)",
+		healthWebhook.Configured(),
+	)
 	_ = jobs
 	_ = runCron
 	_ = auditProducer
+	_ = healthWebhook
 }

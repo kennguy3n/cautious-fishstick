@@ -82,6 +82,32 @@ swag init \
     --outputTypes "json,yaml" \
     --parseInternal
 
+# swag emits a trivial `{"paths": {}}` envelope when the handlers
+# don't carry swag annotations. The project is OpenAPI 3.0 + hand-
+# maintained docs/swagger.{json,yaml} (per docs/PHASES.md §11) so we
+# detect this and short-circuit to the same mirror-only path the
+# "swag not installed" fallback above uses.
+generated_paths=$(grep -c '"/' "$tmpdir/swagger.json" || true)
+if [[ ${generated_paths} -le 1 ]]; then
+    echo "scripts/generate-swagger.sh: swag produced an empty spec (no swag annotations on handlers); treating docs/swagger.{json,yaml} as canonical." >&2
+    if [[ "$mode" == "check" ]]; then
+        sync_status=0
+        diff docs/swagger.json internal/handlers/swagger.json >/dev/null 2>&1 || sync_status=1
+        diff docs/swagger.yaml internal/handlers/swagger.yaml >/dev/null 2>&1 || sync_status=1
+        if [[ $sync_status -ne 0 ]]; then
+            echo "scripts/generate-swagger.sh: internal/handlers/swagger.{json,yaml} out of sync with docs/swagger.{json,yaml}." >&2
+            echo "    Run: ./scripts/generate-swagger.sh" >&2
+            exit 2
+        fi
+        echo "scripts/generate-swagger.sh: swagger files present and embedded copies in sync."
+        exit 0
+    fi
+    cp docs/swagger.json internal/handlers/swagger.json
+    cp docs/swagger.yaml internal/handlers/swagger.yaml
+    echo "scripts/generate-swagger.sh: mirrored docs/swagger.{json,yaml} into internal/handlers/"
+    exit 0
+fi
+
 if [[ "$mode" == "check" ]]; then
     diff_status=0
     for target in docs/swagger.json internal/handlers/swagger.json; do

@@ -19,6 +19,20 @@ paths:
       tags: [meta]
       responses:
         '200': { description: Service alive }
+  /metrics:
+    get:
+      summary: Prometheus-format metrics
+      description: |
+        Returns request count/latency by route, connector sync
+        duration, AI agent call latency, and queue depth in
+        Prometheus text exposition format.
+      tags: [meta]
+      responses:
+        '200':
+          description: Prometheus text format
+          content:
+            text/plain:
+              schema: { type: string }
   /access/requests:
     post:
       summary: Create an access request
@@ -127,8 +141,33 @@ paths:
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
-        '200': { description: OK }
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConnectorHealth' }
         '404': { description: Connector not found }
+  /access/connectors/batch-status:
+    post:
+      summary: Batch connector health lookup — avoids N+1 calls from the Admin UI connector list page
+      description: |
+        Accepts an array of connector IDs and returns each
+        connector's health view in a single response. Per-entry
+        errors (e.g. connector deleted) are inlined rather than
+        aborting the whole request.
+      tags: [access-connectors]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BatchStatusRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BatchStatusResponse' }
+        '400': { description: Validation error (empty array, oversized, malformed JSON) }
   /access/connectors/{id}/secret:
     put:
       summary: Rotate connector credentials — re-validates, re-encrypts, and atomically updates the secrets column
@@ -169,6 +208,15 @@ paths:
       tags: [access-reviews]
       responses:
         '201': { description: Created }
+  /access/reviews/{id}:
+    patch:
+      summary: Patch an access review campaign (partial update)
+      tags: [access-reviews]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+        '404': { description: Campaign not found }
   /access/reviews/{id}/decisions:
     post:
       summary: Submit a campaign decision
@@ -313,6 +361,14 @@ paths:
       responses:
         '201': { description: Created }
   /scim/Users/{id}:
+    patch:
+      summary: Partially update a SCIM user (attribute change / role move)
+      tags: [scim]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+        '404': { description: Not found }
     delete:
       summary: Deprovision a SCIM user (leaver)
       tags: [scim]
@@ -327,3 +383,123 @@ paths:
       tags: [meta]
       responses:
         '200': { description: swagger.json }
+components:
+  schemas:
+    AccessRequest:
+      type: object
+      description: A user-submitted request to be granted access to a connector resource.
+      properties:
+        id: { type: string, description: ULID primary key }
+        workspace_id: { type: string }
+        requester_id: { type: string }
+        connector_id: { type: string }
+        resource_external_id: { type: string }
+        role: { type: string }
+        justification: { type: string }
+        state:
+          type: string
+          enum: [pending_approval, approved, denied, cancelled, provisioned, revoked, expired]
+        risk_score: { type: number, format: float }
+        risk_label:
+          type: string
+          enum: [low, medium, high, critical]
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      required: [id, workspace_id, requester_id, connector_id, state]
+    AccessGrant:
+      type: object
+      description: An issued / revoked grant tying a user to a connector resource role.
+      properties:
+        id: { type: string }
+        workspace_id: { type: string }
+        request_id: { type: string }
+        user_external_id: { type: string }
+        connector_id: { type: string }
+        resource_external_id: { type: string }
+        role: { type: string }
+        status:
+          type: string
+          enum: [active, revoked, expired]
+        granted_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+      required: [id, workspace_id, user_external_id, connector_id, status]
+    Policy:
+      type: object
+      description: Per-workspace access policy. Drafts have is_draft=true and is_active=false until promoted.
+      properties:
+        id: { type: string }
+        workspace_id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        is_draft: { type: boolean }
+        is_active: { type: boolean }
+        rules:
+          type: array
+          items: { type: object }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      required: [id, workspace_id, name]
+    AccessReview:
+      type: object
+      description: An access-review campaign covering a slice of active grants for periodic recertification.
+      properties:
+        id: { type: string }
+        workspace_id: { type: string }
+        name: { type: string }
+        status:
+          type: string
+          enum: [open, closed]
+        frequency: { type: string }
+        created_at: { type: string, format: date-time }
+        closed_at: { type: string, format: date-time }
+      required: [id, workspace_id, name, status]
+    ConnectorHealth:
+      type: object
+      description: Operational health view of a single access connector.
+      properties:
+        connector_id: { type: string }
+        provider: { type: string }
+        connector_type: { type: string }
+        status: { type: string }
+        credential_expired_time: { type: string, format: date-time }
+        last_sync_times:
+          type: object
+          additionalProperties: { type: string, format: date-time }
+          description: Map of sync kind (identity/group/audit) to last-sync timestamp
+        stale_audit: { type: boolean }
+      required: [connector_id, provider, status, stale_audit]
+    BatchStatusRequest:
+      type: object
+      description: POST body for /access/connectors/batch-status.
+      properties:
+        connector_ids:
+          type: array
+          items: { type: string }
+          maxItems: 200
+          description: Array of connector IDs to look up
+      required: [connector_ids]
+    BatchStatusResponse:
+      type: object
+      description: Response envelope for /access/connectors/batch-status. Entries preserve the caller order (after dedup).
+      properties:
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/BatchStatusEntry' }
+      required: [entries]
+    BatchStatusEntry:
+      type: object
+      description: Per-connector result. Exactly one of health, not_found, or error is populated.
+      properties:
+        connector_id: { type: string }
+        not_found: { type: boolean }
+        health: { $ref: '#/components/schemas/ConnectorHealth' }
+        error: { type: string }
+      required: [connector_id]
+    ErrorEnvelope:
+      type: object
+      description: Canonical 4xx/5xx error envelope.
+      properties:
+        error: { type: string }
+        code: { type: string }
+        message: { type: string }
+      required: [error, code, message]
