@@ -129,3 +129,66 @@ type SCIMProvisioner interface {
 		externalID string,
 	) error
 }
+
+// SSOEnforcementChecker is implemented by SaaS connectors that can
+// answer "is password / non-SSO login disabled on this tenant?".
+// Phase 11 (docs/PROPOSAL.md §13) uses the check at connector
+// setup time, on the connector-health endpoint, and on the daily
+// orphan-account reconciler so an SSO-only connector that silently
+// regresses (e.g. an admin re-enables basic auth) surfaces in the
+// admin UI without waiting for a leaver flow to discover it.
+//
+// Semantics:
+//
+//   - enforced=true means "every interactive login goes through
+//     the federated IdP". The connector implementation decides
+//     what counts as enforcement: Okta sign-on policy rules, Slack
+//     team.info SSO enforcement, GitHub org SAML, etc.
+//   - enforced=false means "at least one non-SSO login path is
+//     reachable". The details string carries a short human-readable
+//     hint (e.g. "password login still allowed for 3 users").
+//   - A nil error with enforced=false is the canonical "regression"
+//     signal — callers MUST NOT confuse it with a transient
+//     connector outage.
+//   - A non-nil error means the check itself could not complete
+//     (network outage, permission denied). Callers surface this as
+//     "unknown" enforcement state, never as "not enforced".
+type SSOEnforcementChecker interface {
+	CheckSSOEnforcement(
+		ctx context.Context,
+		config map[string]interface{},
+		secrets map[string]interface{},
+	) (enforced bool, details string, err error)
+}
+
+// SessionRevoker is implemented by SaaS connectors that can sign
+// a user out of every active session on the tenant. Phase 11
+// (docs/PROPOSAL.md §13) calls this from the leaver flow as one
+// of the five layers of the kill switch — terminating long-lived
+// SaaS sessions matters even after the IdP itself has been
+// disabled, because many SaaS apps re-validate IdP only on session
+// expiry (which can be 30+ days).
+//
+// Semantics:
+//
+//   - userExternalID is the SaaS-native identifier (Okta user ID,
+//     Google primaryEmail, GitHub login, etc.) — the same value
+//     the connector emits during SyncIdentities.
+//   - Implementations are best-effort: a non-nil error is logged
+//     by the leaver flow and surfaces in the audit trail, but it
+//     does NOT block the rest of the leaver chain. The user's
+//     access is already revoked at the policy layer; session
+//     termination is belt-and-braces.
+//   - A successful return means the revoke request was accepted
+//     by the upstream API. Some providers (Okta, Google) revoke
+//     synchronously; others (Slack, Microsoft) acknowledge and
+//     propagate within minutes. Implementations document the
+//     specific semantics in their package comments.
+type SessionRevoker interface {
+	RevokeUserSessions(
+		ctx context.Context,
+		config map[string]interface{},
+		secrets map[string]interface{},
+		userExternalID string,
+	) error
+}
