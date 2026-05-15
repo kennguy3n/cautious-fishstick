@@ -22,8 +22,8 @@ This page is the per-provider capability matrix. For the contract itself see [`a
 | 2 | Google Workspace | T1 | IAM/SSO | `google_workspace/` | • | • | • | • | • |
 | 3 | Okta | T1 | IAM/SSO | `okta/` | • | • | • | • | • |
 | 4 | Auth0 | T1 | IAM/SSO | `auth0/` | • | • | • | • | • |
-| 5 | Generic SAML | T1 | IAM/SSO | `generic_saml/` | — | n/a | — | n/a | • |
-| 6 | Generic OIDC | T1 | IAM/SSO | `generic_oidc/` | — | n/a | — | n/a | • |
+| 5 | Generic SAML | T1 | IAM/SSO | `generic_saml/` | — | — | — | — | • |
+| 6 | Generic OIDC | T1 | IAM/SSO | `generic_oidc/` | — | — | — | — | • |
 | 7 | Duo Security | T1 | IAM/MFA | `duo/` | • | • | • | • | — |
 | 8 | 1Password | T1 | Secrets/Vault | `onepassword/` | • | • | • | • | — |
 | 9 | LastPass | T1 | Secrets/Vault | `lastpass/` | • | • | • | • | — |
@@ -162,17 +162,17 @@ This page is the per-provider capability matrix. For the contract itself see [`a
 | 142 | SentinelOne | T5 | Security | `sentinelone/` | • | • | • | • | — |
 | 143 | Snyk | T5 | Security | `snyk/` | • | • | • | • | — |
 | 144 | HackerOne | T5 | Security | `hackerone/` | • | • | • | • | — |
-| 145 | HIBP | T5 | Security | `hibp/` | — | n/a | — | • | — |
-| 146 | BitSight | T5 | Security | `bitsight/` | — | n/a | — | • | — |
+| 145 | HIBP | T5 | Security | `hibp/` | — | — | — | • | — |
+| 146 | BitSight | T5 | Security | `bitsight/` | — | — | — | • | — |
 | 147 | Tenable.io | T5 | Security | `tenable/` | • | • | • | • | — |
 | 148 | Qualys VMDR | T5 | Security | `qualys/` | • | • | • | • | — |
 | 149 | Rapid7 | T5 | Security | `rapid7/` | • | • | • | • | — |
-| 150 | VirusTotal | T5 | Security | `virustotal/` | — | n/a | — | • | — |
+| 150 | VirusTotal | T5 | Security | `virustotal/` | — | — | — | • | — |
 | 151 | Malwarebytes | T5 | Security | `malwarebytes/` | • | • | • | • | • |
 | 152 | ForgeRock | T5 | IAM | `forgerock/` | • | • | • | • | • |
 | 153 | BeyondTrust | T5 | IAM/PAM | `beyondtrust/` | • | • | • | • | — |
 | 154 | Keeper | T5 | Secrets/Vault | `keeper/` | • | • | • | • | • |
-| 155 | Wazuh | T5 | SIEM | `wazuh/` | — | n/a | — | • | — |
+| 155 | Wazuh | T5 | SIEM | `wazuh/` | — | — | — | • | — |
 | 156 | OpenAI (ChatGPT) | T5 | GenAI | `openai/` | • | • | • | • | • |
 | 157 | Google Gemini | T5 | GenAI | `gemini/` | • | • | • | • | • |
 | 158 | Anthropic (Claude) | T5 | GenAI | `anthropic/` | • | • | • | • | — |
@@ -275,7 +275,7 @@ Returns `(enforced bool, details string, err error)`. Transport / auth failures 
 | `get_access_log`   |       198 |   2 |          200 / 200 |
 | `sso_federation`   |       104 |  96 |          200 / 200 |
 
-`n/a` entries reflect providers where the capability does not exist by design — generic SAML / OIDC have no identity API; HIBP, BitSight, VirusTotal, and Wazuh are audit-only; many niche providers have no native SSO metadata endpoint. The effective-coverage column counts connectors where the capability is either supported or does not apply.
+`—` entries reflect providers where the capability does not exist by design — generic SAML / OIDC have no identity API; HIBP, BitSight, VirusTotal, and Wazuh are audit-only; many niche providers have no native SSO metadata endpoint. The effective-coverage column counts connectors where the capability is either supported or does not apply.
 
 ## Where to read next
 

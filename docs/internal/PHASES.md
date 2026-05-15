@@ -291,7 +291,7 @@ grant-expiry enforcement (see [`docs/architecture.md`](../architecture.md#13-hyb
 
 ### WS7 — Documentation
 
-- [x] PROPOSAL §13 (Hybrid Access Model).
+- [x] `docs/overview.md` + `docs/architecture.md` §13 (Hybrid Access Model).
 - [x] PHASES.md Phase 11 section (this section).
 - [x] `docs/architecture.md` (Hybrid Access Model & kill switch flow).
 - [x] PROGRESS.md Phase 11 rows + changelog.
