@@ -210,27 +210,15 @@ const maxBatchStatusIDs = 200
 func (h *ConnectorHealthHandler) PostBatchStatus(c *gin.Context) {
 	var req batchStatusRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "invalid request body",
-			Code:    "validation_failed",
-			Message: err.Error(),
-		})
+		abortWithError(c, http.StatusBadRequest, "invalid request body", "validation_failed", err.Error())
 		return
 	}
 	if len(req.ConnectorIDs) == 0 {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "connector_ids is required",
-			Code:    "validation_failed",
-			Message: "connector_ids must contain at least one id",
-		})
+		abortWithError(c, http.StatusBadRequest, "connector_ids is required", "validation_failed", "connector_ids must contain at least one id")
 		return
 	}
 	if len(req.ConnectorIDs) > maxBatchStatusIDs {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "too many connector_ids",
-			Code:    "validation_failed",
-			Message: "connector_ids exceeds the per-request limit",
-		})
+		abortWithError(c, http.StatusBadRequest, "too many connector_ids", "validation_failed", "connector_ids exceeds the per-request limit")
 		return
 	}
 
@@ -249,11 +237,7 @@ func (h *ConnectorHealthHandler) PostBatchStatus(c *gin.Context) {
 		ordered = append(ordered, id)
 	}
 	if len(ordered) == 0 {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "connector_ids must contain at least one non-empty id",
-			Code:    "validation_failed",
-			Message: "connector_ids must contain at least one non-empty id",
-		})
+		abortWithError(c, http.StatusBadRequest, "connector_ids must contain at least one non-empty id", "validation_failed", "connector_ids must contain at least one non-empty id")
 		return
 	}
 
@@ -280,21 +264,13 @@ func (h *ConnectorHealthHandler) PostBatchStatus(c *gin.Context) {
 func (h *ConnectorHealthHandler) GetHealth(c *gin.Context) {
 	id := GetStringParam(c, "id")
 	if id == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "connector id is required",
-			Code:    "validation_failed",
-			Message: "connector id is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "connector id is required", "validation_failed", "connector id is required")
 		return
 	}
 	out, err := h.reader.GetConnectorHealth(c.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.AbortWithStatusJSON(http.StatusNotFound, errorEnvelope{
-				Error:   "connector not found",
-				Code:    "not_found",
-				Message: "connector not found",
-			})
+			abortWithError(c, http.StatusNotFound, "connector not found", "not_found", "connector not found")
 			return
 		}
 		writeError(c, http.StatusInternalServerError, err)

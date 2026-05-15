@@ -95,10 +95,13 @@ func JSONValidationMiddleware() gin.HandlerFunc {
 
 		ct := c.GetHeader("Content-Type")
 		if ct != "" && !isJSONContentType(ct) {
-			c.AbortWithStatusJSON(http.StatusUnsupportedMediaType, gin.H{
-				"error":   "unsupported_media_type",
-				"message": "Content-Type must be application/json for request bodies",
-			})
+			abortWithError(
+				c,
+				http.StatusUnsupportedMediaType,
+				"unsupported_media_type",
+				"unsupported_media_type",
+				"Content-Type must be application/json for request bodies",
+			)
 			return
 		}
 
@@ -110,23 +113,32 @@ func JSONValidationMiddleware() gin.HandlerFunc {
 		if err != nil {
 			var maxBytesErr *http.MaxBytesError
 			if errors.As(err, &maxBytesErr) {
-				c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{
-					"error":   "payload_too_large",
-					"message": fmt.Sprintf("request body exceeds %d bytes", maxRequestBodyBytes),
-				})
+				abortWithError(
+					c,
+					http.StatusRequestEntityTooLarge,
+					"payload_too_large",
+					"payload_too_large",
+					fmt.Sprintf("request body exceeds %d bytes", maxRequestBodyBytes),
+				)
 				return
 			}
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
-				"error":   "invalid_request",
-				"message": "failed to read request body",
-			})
+			abortWithError(
+				c,
+				http.StatusBadRequest,
+				"invalid_request",
+				"invalid_request",
+				"failed to read request body",
+			)
 			return
 		}
 		if len(buf) > maxRequestBodyBytes {
-			c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{
-				"error":   "payload_too_large",
-				"message": fmt.Sprintf("request body exceeds %d bytes", maxRequestBodyBytes),
-			})
+			abortWithError(
+				c,
+				http.StatusRequestEntityTooLarge,
+				"payload_too_large",
+				"payload_too_large",
+				fmt.Sprintf("request body exceeds %d bytes", maxRequestBodyBytes),
+			)
 			return
 		}
 
@@ -142,20 +154,24 @@ func JSONValidationMiddleware() gin.HandlerFunc {
 		dec.UseNumber()
 		var probe any
 		if err := dec.Decode(&probe); err != nil {
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
-				"error":   "invalid_json",
-				"code":    "validation_failed",
-				"message": "request body is not valid JSON: " + summariseJSONError(err),
-			})
+			abortWithError(
+				c,
+				http.StatusBadRequest,
+				"invalid_json",
+				"validation_failed",
+				"request body is not valid JSON: "+summariseJSONError(err),
+			)
 			return
 		}
 		// Disallow trailing tokens — "{}{" is two values, not one.
 		if dec.More() {
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
-				"error":   "invalid_json",
-				"code":    "validation_failed",
-				"message": "request body must contain a single JSON value",
-			})
+			abortWithError(
+				c,
+				http.StatusBadRequest,
+				"invalid_json",
+				"validation_failed",
+				"request body must contain a single JSON value",
+			)
 			return
 		}
 
@@ -212,20 +228,26 @@ type FieldError struct {
 // WriteFieldErrors emits a 400 with the canonical validation_failed
 // envelope plus a "fields" array containing one entry per offending
 // field. Handlers call this when they have multiple field-level
-// errors to surface in a single response.
+// errors to surface in a single response. The body inherits the same
+// {error, code, message, request_id} envelope as abortWithError so
+// every error response — middleware or handler — carries the same
+// correlation key under request_id.
 func WriteFieldErrors(c *gin.Context, fields []FieldError) {
 	if len(fields) == 0 {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
-			"error":   "validation_failed",
-			"code":    "validation_failed",
-			"message": "request validation failed",
-		})
+		abortWithError(
+			c,
+			http.StatusBadRequest,
+			"validation_failed",
+			"validation_failed",
+			"request validation failed",
+		)
 		return
 	}
 	c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
-		"error":   "validation_failed",
-		"code":    "validation_failed",
-		"message": "request validation failed",
-		"fields":  fields,
+		"error":      "validation_failed",
+		"code":       "validation_failed",
+		"message":    "request validation failed",
+		"request_id": GetRequestID(c),
+		"fields":     fields,
 	})
 }

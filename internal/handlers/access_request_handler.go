@@ -47,11 +47,7 @@ func (h *AccessRequestHandler) Register(r *gin.Engine) {
 func (h *AccessRequestHandler) GetRequest(c *gin.Context) {
 	id := GetStringParam(c, "id")
 	if id == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "id path parameter is required",
-			Code:    "validation_failed",
-			Message: "id path parameter is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "id path parameter is required", "validation_failed", "id path parameter is required")
 		return
 	}
 	detail, err := h.requestService.GetRequest(c.Request.Context(), id)
@@ -110,11 +106,7 @@ func (h *AccessRequestHandler) CreateRequest(c *gin.Context) {
 func (h *AccessRequestHandler) ListRequests(c *gin.Context) {
 	wsID := GetPtrStringQuery(c, "workspace_id")
 	if wsID == nil || *wsID == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "workspace_id query parameter is required",
-			Code:    "validation_failed",
-			Message: "workspace_id query parameter is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "workspace_id query parameter is required", "validation_failed", "workspace_id query parameter is required")
 		return
 	}
 	q := access.ListAccessRequestsQuery{
@@ -162,11 +154,7 @@ func (h *AccessRequestHandler) CancelRequest(c *gin.Context) {
 func (h *AccessRequestHandler) transitionVerb(c *gin.Context, verb string) {
 	id := GetStringParam(c, "id")
 	if id == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "id path parameter is required",
-			Code:    "validation_failed",
-			Message: "id path parameter is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "id path parameter is required", "validation_failed", "id path parameter is required")
 		return
 	}
 	var body transitionBody

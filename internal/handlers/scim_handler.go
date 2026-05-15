@@ -160,11 +160,7 @@ func (h *SCIMHandler) CreateUser(c *gin.Context) {
 	}
 	workspaceID := h.workspaceFor(c)
 	if workspaceID == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "workspace_id is required for SCIM operations",
-			Code:    "validation_failed",
-			Message: "workspace_id is required for SCIM operations",
-		})
+		abortWithError(c, http.StatusBadRequest, "workspace_id is required for SCIM operations", "validation_failed", "workspace_id is required for SCIM operations")
 		return
 	}
 
@@ -199,11 +195,7 @@ func (h *SCIMHandler) CreateUser(c *gin.Context) {
 		}
 		c.JSON(scimResponseStatus(res), res)
 	default:
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "unable to classify SCIM POST event",
-			Code:    "validation_failed",
-			Message: "unable to classify SCIM POST event",
-		})
+		abortWithError(c, http.StatusBadRequest, "unable to classify SCIM POST event", "validation_failed", "unable to classify SCIM POST event")
 	}
 }
 
@@ -214,11 +206,7 @@ func (h *SCIMHandler) CreateUser(c *gin.Context) {
 func (h *SCIMHandler) PatchUser(c *gin.Context) {
 	externalID := GetStringParam(c, "id")
 	if externalID == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "user id is required",
-			Code:    "validation_failed",
-			Message: "user id is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "user id is required", "validation_failed", "user id is required")
 		return
 	}
 	var payload SCIMUserPayload
@@ -228,11 +216,7 @@ func (h *SCIMHandler) PatchUser(c *gin.Context) {
 	}
 	workspaceID := h.workspaceFor(c)
 	if workspaceID == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "workspace_id is required for SCIM operations",
-			Code:    "validation_failed",
-			Message: "workspace_id is required for SCIM operations",
-		})
+		abortWithError(c, http.StatusBadRequest, "workspace_id is required for SCIM operations", "validation_failed", "workspace_id is required for SCIM operations")
 		return
 	}
 
@@ -291,11 +275,7 @@ func (h *SCIMHandler) PatchUser(c *gin.Context) {
 		// JML automation. SCIM providers SHOULD avoid sending
 		// such PATCHes; surfacing a 400 makes the misuse visible
 		// rather than silently no-op'ing.
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "PATCH carries no JML-relevant changes",
-			Code:    "validation_failed",
-			Message: "PATCH must include group or attribute changes",
-		})
+		abortWithError(c, http.StatusBadRequest, "PATCH carries no JML-relevant changes", "validation_failed", "PATCH must include group or attribute changes")
 	}
 }
 
@@ -305,20 +285,12 @@ func (h *SCIMHandler) PatchUser(c *gin.Context) {
 func (h *SCIMHandler) DeleteUser(c *gin.Context) {
 	externalID := GetStringParam(c, "id")
 	if externalID == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "user id is required",
-			Code:    "validation_failed",
-			Message: "user id is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "user id is required", "validation_failed", "user id is required")
 		return
 	}
 	workspaceID := h.workspaceFor(c)
 	if workspaceID == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "workspace_id is required for SCIM operations",
-			Code:    "validation_failed",
-			Message: "workspace_id is required for SCIM operations",
-		})
+		abortWithError(c, http.StatusBadRequest, "workspace_id is required for SCIM operations", "validation_failed", "workspace_id is required for SCIM operations")
 		return
 	}
 	userID, err := h.resolver.ResolveLeaver(c.Request.Context(), workspaceID, externalID)
@@ -339,11 +311,7 @@ func (h *SCIMHandler) DeleteUser(c *gin.Context) {
 // 404 — anything else is a 5xx.
 func (h *SCIMHandler) handleResolverErr(c *gin.Context, err error) {
 	if errors.Is(err, ErrSCIMUserNotFound) {
-		c.AbortWithStatusJSON(http.StatusNotFound, errorEnvelope{
-			Error:   err.Error(),
-			Code:    "not_found",
-			Message: err.Error(),
-		})
+		abortWithError(c, http.StatusNotFound, err.Error(), "not_found", err.Error())
 		return
 	}
 	writeError(c, http.StatusInternalServerError, err)

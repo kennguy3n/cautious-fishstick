@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/glebarez/sqlite"
@@ -56,5 +57,59 @@ func TestAccessWorkflowEngineHandlerBoots(t *testing.T) {
 func TestAccessWorkflowEngineConnectorRegistryPopulated(t *testing.T) {
 	if got := len(access.ListRegisteredProviders()); got == 0 {
 		t.Errorf("ListRegisteredProviders() count = 0; want >0 (binary blank imports failed to populate registry)")
+	}
+}
+
+// TestRunHealthcheck_OKWhenServerHealthy is the self-probe contract
+// the docker-compose CMD relies on: when /health returns 200, the
+// binary's runHealthcheck() must exit 0.
+func TestRunHealthcheck_OKWhenServerHealthy(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("parse server URL: %v", err)
+	}
+	t.Setenv("ACCESS_WORKFLOW_ENGINE_LISTEN_ADDR", ":"+u.Port())
+
+	if got := runHealthcheck(); got != 0 {
+		t.Errorf("runHealthcheck() = %d; want 0 (server returned 200)", got)
+	}
+}
+
+// TestRunHealthcheck_FailsOnNon200 asserts a regressed /health
+// surfaces as exit 1 so docker-compose restarts the container.
+func TestRunHealthcheck_FailsOnNon200(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("parse server URL: %v", err)
+	}
+	t.Setenv("ACCESS_WORKFLOW_ENGINE_LISTEN_ADDR", ":"+u.Port())
+
+	if got := runHealthcheck(); got != 1 {
+		t.Errorf("runHealthcheck() = %d; want 1 (server returned 503)", got)
+	}
+}
+
+// TestRunHealthcheck_FailsOnUnreachableServer asserts the binary
+// reports exit 1 when no server is listening on the configured
+// address — the third leg of the docker-compose healthcheck contract.
+func TestRunHealthcheck_FailsOnUnreachableServer(t *testing.T) {
+	t.Setenv("ACCESS_WORKFLOW_ENGINE_LISTEN_ADDR", ":1")
+
+	if got := runHealthcheck(); got != 1 {
+		t.Errorf("runHealthcheck() = %d; want 1 (server unreachable)", got)
 	}
 }

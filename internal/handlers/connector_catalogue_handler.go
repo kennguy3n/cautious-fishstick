@@ -46,11 +46,7 @@ func (h *ConnectorCatalogueHandler) Register(r *gin.Engine) {
 func (h *ConnectorCatalogueHandler) ListCatalogue(c *gin.Context) {
 	wsID := GetPtrStringQuery(c, "workspace_id")
 	if wsID == nil || *wsID == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "workspace_id query parameter is required",
-			Code:    "validation_failed",
-			Message: "workspace_id query parameter is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "workspace_id query parameter is required", "validation_failed", "workspace_id query parameter is required")
 		return
 	}
 	out, err := h.reader.ListCatalogue(c.Request.Context(), access.ConnectorCatalogueQuery{

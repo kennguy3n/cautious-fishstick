@@ -107,6 +107,15 @@ func JSONLoggerMiddleware() gin.HandlerFunc {
 			slog.Int("bytes", bytesWritten),
 		}
 
+		// Thread the request ID into the log line so per-request
+		// traces (request → service → DB) can be joined on a single
+		// stable key. The middleware stash is nil-safe so log lines
+		// emitted before RequestIDMiddleware ran simply omit the
+		// attribute rather than crash.
+		if rid := GetRequestID(c); rid != "" {
+			attrs = append(attrs, slog.String("request_id", rid))
+		}
+
 		if len(c.Errors) > 0 {
 			attrs = append(attrs, slog.String("errors", c.Errors.String()))
 		}
