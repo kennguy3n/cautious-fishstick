@@ -540,7 +540,7 @@ func (s *JMLService) HandleLeaver(ctx context.Context, workspaceID, userID strin
 		})
 	}
 
-	// Phase 11 five-layer leaver kill switch — every step is
+	// Phase 11 six-layer leaver kill switch — every step is
 	// best-effort; a failure logs but does not block the next
 	// layer. The order is intentional:
 	//   1. grant revoke (above)            — pull upstream API access

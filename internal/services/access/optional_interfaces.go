@@ -164,7 +164,7 @@ type SSOEnforcementChecker interface {
 // SessionRevoker is implemented by SaaS connectors that can sign
 // a user out of every active session on the tenant. Phase 11
 // (docs/PROPOSAL.md §13) calls this from the leaver flow as one
-// of the five layers of the kill switch — terminating long-lived
+// of the six layers of the kill switch — terminating long-lived
 // SaaS sessions matters even after the IdP itself has been
 // disabled, because many SaaS apps re-validate IdP only on session
 // expiry (which can be 30+ days).
