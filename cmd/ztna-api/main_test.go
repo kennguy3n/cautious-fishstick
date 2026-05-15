@@ -35,13 +35,13 @@ func TestZtnaAPIRouterBoots(t *testing.T) {
 }
 
 // TestZtnaAPIConnectorRegistryPopulated asserts the binary's blank
-// imports populate the access-connector registry with the expected
-// number of providers. If a future PR drops a blank import (or adds
-// one without registering), this test fails loudly inside the binary
-// build rather than at runtime in docker-compose.
+// imports populate the access-connector registry. The exact-count
+// guard lives in internal/services/access/registry_count_test.go
+// (TestRegistry_ExactConnectorCount) so this smoke test only needs
+// to prove the registry is non-empty — i.e. the binary's blank
+// imports compiled and ran their init() functions.
 func TestZtnaAPIConnectorRegistryPopulated(t *testing.T) {
-	providers := access.ListRegisteredProviders()
-	if got, want := len(providers), 200; got != want {
-		t.Errorf("ListRegisteredProviders() count = %d; want %d", got, want)
+	if got := len(access.ListRegisteredProviders()); got == 0 {
+		t.Errorf("ListRegisteredProviders() count = 0; want >0 (binary blank imports failed to populate registry)")
 	}
 }

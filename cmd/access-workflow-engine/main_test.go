@@ -48,10 +48,13 @@ func TestAccessWorkflowEngineHandlerBoots(t *testing.T) {
 }
 
 // TestAccessWorkflowEngineConnectorRegistryPopulated mirrors the
-// ztna-api smoke: every blank import in the binary should populate
-// the registry with exactly 200 connectors.
+// ztna-api smoke: it asserts the binary's blank imports actually
+// ran by checking the registry is non-empty. The exact-count guard
+// is owned by internal/services/access/registry_count_test.go
+// (TestRegistry_ExactConnectorCount) so duplicating the literal
+// here would just be a second copy to keep in sync.
 func TestAccessWorkflowEngineConnectorRegistryPopulated(t *testing.T) {
-	if got, want := len(access.ListRegisteredProviders()), 200; got != want {
-		t.Errorf("ListRegisteredProviders() count = %d; want %d", got, want)
+	if got := len(access.ListRegisteredProviders()); got == 0 {
+		t.Errorf("ListRegisteredProviders() count = 0; want >0 (binary blank imports failed to populate registry)")
 	}
 }

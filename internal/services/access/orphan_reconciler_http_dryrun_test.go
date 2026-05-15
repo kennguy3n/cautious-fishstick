@@ -236,6 +236,19 @@ func TestOrphanReconciler_HTTP_WetRun_Persists(t *testing.T) {
 // callers mix dry and wet sweeps without racing on a shared piece
 // of state. The wet caller must persist exactly one row; the dry
 // caller must not persist anything additional.
+//
+// Race safety relies on two existing guarantees:
+//   - newOrphanHTTPTestDB caps the sqlite pool at MaxOpenConns=1
+//     so concurrent goroutines see the same in-memory schema and
+//     the GORM driver serialises writes for us.
+//   - raceSafeOrphanConnector (the SwapConnector stub) has no
+//     mutable call-counter, unlike MockAccessConnector — its
+//     ListIdentities returns a frozen slice so parallel callers
+//     never mutate shared state.
+//
+// t.Errorf is safe to call from goroutines (only t.FailNow/t.Fatal
+// would be unsafe), so the per-goroutine assertions below are
+// race-correct.
 func TestOrphanReconciler_HTTP_ConcurrentDryAndWet(t *testing.T) {
 	db := newOrphanHTTPTestDB(t)
 	seedOrphanHTTPFixture(t, db)

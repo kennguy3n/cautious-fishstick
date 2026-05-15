@@ -3,6 +3,7 @@ package access
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -151,13 +152,13 @@ func TestLoadConnectorCredentials_HappyPath_Passthrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encryptSecretsMap: %v", err)
 	}
-	kvInt := 0
-	for _, ch := range kv {
-		if ch < '0' || ch > '9' {
-			kvInt = 0
-			break
-		}
-		kvInt = kvInt*10 + int(ch-'0')
+	// kv is the string-encoded key version returned by the
+	// encryptor (PassthroughEncryptor returns "0"). strconv.Atoi
+	// keeps the parse honest — a non-numeric kv would error here
+	// instead of being silently coerced to 0.
+	kvInt, err := strconv.Atoi(kv)
+	if err != nil {
+		t.Fatalf("strconv.Atoi(%q): %v", kv, err)
 	}
 	if err := db.Create(&models.AccessConnector{
 		ID:            id,

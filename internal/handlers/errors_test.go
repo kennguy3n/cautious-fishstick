@@ -161,7 +161,7 @@ func TestWriteError_PreservesStatusForUnknownErr(t *testing.T) {
 // rather than rendering raw text.
 func TestWriteError_ContentTypeIsJSON(t *testing.T) {
 	rec, _ := invokeWriteError(t, http.StatusInternalServerError, access.ErrValidation)
-	if ct := rec.Header().Get("Content-Type"); ct == "" || ct[:16] != "application/json" {
+	if ct := rec.Header().Get("Content-Type"); ct == "" || len(ct) < 16 || ct[:16] != "application/json" {
 		t.Errorf("Content-Type = %q; want application/json", ct)
 	}
 }

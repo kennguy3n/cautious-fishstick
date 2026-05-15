@@ -65,11 +65,14 @@ func TestNotificationAdapter_NotifyReviewersPending_ForwardsToInner(t *testing.T
 	}
 }
 
-// TestNotificationAdapter_NotifyReviewersPending_ErrorPropagates
-// verifies a failing inner Notifier surfaces a non-nil error from
-// the adapter. Production AccessReviewService logs but does not
-// roll back — the adapter contract is just "forward the error".
-func TestNotificationAdapter_NotifyReviewersPending_ErrorPropagates(t *testing.T) {
+// TestNotificationAdapter_NotifyReviewersPending_BestEffortFanOut
+// verifies a failing inner Notifier does NOT surface a non-nil
+// error from the adapter. NotificationService logs per-channel
+// failures into its result but treats fan-out as best-effort, so
+// the adapter contract is "forward inner.Err" rather than "forward
+// per-channel failures" — the only channel here fails yet the
+// adapter still returns nil.
+func TestNotificationAdapter_NotifyReviewersPending_BestEffortFanOut(t *testing.T) {
 	failing := &notification.InMemoryNotifier{
 		Fail: func(_ notification.Notification) error { return errors.New("inmem boom") },
 	}
