@@ -280,5 +280,7 @@ Returns `(enforced bool, details string, err error)`. Transport / auth failures 
 | 10 | BambooHR | `bamboohr/` | `GET /v1/meta/security` |
 | 11 | Workday | `workday/` | REST API authentication-policy endpoint |
 | 12 | HubSpot | `hubspot/` | `GET /settings/v3/users/provisioning` |
+| 13 | Dropbox | `dropbox/` | `POST /2/team/get_info` + `policies.sso.tag` (`required` → enforced) |
+| 14 | Zoom | `zoom/` | `GET /accounts/{accountId}/settings?option=security` + `sign_in.login_types` (`sso`/`saml` → enforced) |
 
 For the per-feature platform status table see [`PROGRESS.md`](./PROGRESS.md) §2. For phase-level milestones see [`PHASES.md`](./PHASES.md).

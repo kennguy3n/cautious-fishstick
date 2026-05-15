@@ -651,28 +651,53 @@ schema:
 
 Indexes: `(workspace_id, status)` and `(connector_id, user_external_id)`.
 
-### 12.3 Five-layer leaver kill switch
+### 12.3 Six-layer leaver kill switch
 
-The Phase 4 leaver flow used to do two things. Phase 11 extends it to
-six (the kill switch counts the existing two plus the four new
-layers):
+The Phase 4 leaver flow used to do two things (grant-revoke +
+team-remove). Phase 11 grows it to **six** kill-switch layers plus
+one preparatory `snapshot` step at the head of the flow (step 1 in
+the numbered list below is the pivot snapshot — *not* a kill-switch
+layer itself). The six layers map 1:1 to the `LeaverLayer*`
+constants enumerated in §12.5:
 
 ```
 HandleLeaver(userID)
     |
     v
-1. snapshot connector_id -> external_id pivot (BEFORE step 2)
-2. revoke all active access_grants                    (existing)
-3. remove team memberships                            (existing)
-4. SSOFederationService.DisableKeycloakUser           (NEW)
-5. for each connector: SessionRevoker.RevokeUserSessions (NEW)
-6. for each connector: SCIMProvisioner.DeleteSCIMResource (NEW)
-7. OpenZitiClient.DisableIdentity                     (existing)
+1. snapshot connector_id -> external_id pivot          (preparation)
+2. revoke all active access_grants                     (layer 1: grant_revoke)
+3. remove team memberships                             (layer 2: team_remove)
+4. SSOFederationService.DisableKeycloakUser            (layer 3: keycloak_disable)
+5. for each connector: SessionRevoker.RevokeUserSessions
+                                                       (layer 4: session_revoke,
+                                                        14 connectors implement it)
+6. for each connector: SCIMProvisioner.DeleteSCIMResource
+                                                       (layer 5: scim_deprovision,
+                                                        8 connectors implement it)
+7. OpenZitiClient.DisableIdentity                      (layer 6: openziti_disable)
 ```
 
 Every step is best-effort: a failure in step N does NOT prevent steps
 N+1..7 from running. The flow is idempotent — replaying it on a half-
 applied leaver is safe.
+
+The 14 `SessionRevoker` and 8 `SCIMProvisioner` implementations above
+are locked in by the registry-guard tests in
+`internal/services/access/registry_count_test.go`; bumping either
+count requires updating the README + `docs/PROGRESS.md` in the same
+PR.
+
+### 12.3.1 SSO-only enforcement verification
+
+A complementary scan to the unused-app-account reconciler:
+`SSOEnforcementChecker.CheckSSOEnforcement` runs against every
+connector that opts into the interface, reporting whether the
+upstream provider is actually configured to require SSO (vs.
+allowing fallback password / API-key login). **14 connectors**
+implement it today: Salesforce, Google Workspace, Okta, Slack,
+GitHub, Microsoft Entra ID, Auth0, Ping Identity, Zendesk, BambooHR,
+Workday, HubSpot, Dropbox, Zoom. The count is locked in by
+`TestRegistry_SSOEnforcementCheckerCount`.
 
 ### 12.4 Automatic grant expiry
 

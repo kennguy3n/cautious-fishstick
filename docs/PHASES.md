@@ -23,8 +23,9 @@ This document collects the planned milestones in one place so reviewers and oper
 | 8 | Workflow orchestration | ✅ |
 | 9 | Mobile / Desktop SDKs | ✅ |
 | 10 | Advanced connector capabilities | 🟡 |
+| 11 | Hybrid Access & Offboarding Safety Net | ✅ |
 
-Phases 1–5 are 🟡 because the backend is complete in every case; only the Admin UI surfaces (in [`ztna-frontend`](https://github.com/uneycom/ztna-frontend)) remain. Phase 10 is 🟡 because the long-tail advanced-capability work is still in progress: 194 / 200 connectors ship real `ProvisionAccess` / `RevokeAccess` / `ListEntitlements` (6 n/a), 198 / 200 ship the audit pipeline (2 n/a), and 104 / 200 are SSO-federated (96 n/a — many providers have no native SSO metadata API).
+Phases 1–5 are 🟡 because the backend is complete in every case; only the Admin UI surfaces (in [`ztna-frontend`](https://github.com/uneycom/ztna-frontend)) remain. Phase 10 is 🟡 because the long-tail advanced-capability work is still in progress: 194 / 200 connectors ship real `ProvisionAccess` / `RevokeAccess` / `ListEntitlements` (6 n/a), 198 / 200 ship the audit pipeline (2 n/a), and 104 / 200 are SSO-federated (96 n/a — many providers have no native SSO metadata API). Phase 11 is ✅ shipped: per-connector access-mode classification, the unused-app-account reconciler, SSO-only enforcement verification, session revocation, the five-layer leaver kill switch, and the grant-expiry cron all landed across batches 1–6.
 
 ---
 
@@ -114,7 +115,7 @@ Joiner-Mover-Leaver automation end-to-end, plus outbound SCIM provisioning.
 - [x] **Joiner.** SCIM user creation → default Teams → bulk-create approved access requests → fan-out provisioning.
 - [x] **Mover.** SCIM group / attribute change → atomic batch of revokes + provisions (no partial-access window).
 - [x] **Leaver.** SCIM deactivation → bulk-revoke → remove from Teams → disable OpenZiti identity.
-- [x] Outbound SCIM v2.0 push: generic `SCIMClient` plus `SCIMProvisioner` composition across all 10 Tier-1 connectors.
+- [x] Outbound SCIM v2.0 push: generic `SCIMClient` plus `SCIMProvisioner` composition across 8 of the 10 Tier-1 connectors (the two generic protocol stubs `generic_saml` / `generic_oidc` are intentionally n/a — no upstream API to push to). Count locked in by `TestRegistry_SCIMProvisionerCount`.
 - [x] `access_anomaly_detection` agent skill — cross-grant baseline, off-hours, geographic-outlier, and unused-high-privilege detectors.
 
 ---
@@ -170,7 +171,7 @@ Beyond the minimum capabilities of Phase 7: real `ProvisionAccess` / `RevokeAcce
 
 ---
 
-## Phase 11 — Hybrid Access & Offboarding Safety Net  🟢
+## Phase 11 — Hybrid Access & Offboarding Safety Net  ✅
 
 Phase 11 introduces an access-mode classification per connector, an
 "unused app account" reconciler, SSO-only enforcement verification,
@@ -299,6 +300,8 @@ grant-expiry enforcement (docs/PROPOSAL.md §13).
 ## Cross-cutting exit criteria for *every* phase
 
 Independent of which phase a PR contributes to, the following must hold before merge:
+
+The checkboxes below are intentionally split: `[ ]` items are **per-PR** invariants every author re-asserts in their own PR description, and `[x]` items are **CI-enforced** gates that the merge queue blocks on automatically (the matching script lives under `scripts/`).
 
 - [ ] All affected `*_test.go` updated. New behavior has at least one happy-path + one failure-path test.
 - [ ] No secret / token / PII logged. Sensitive payloads are sanitized before logging.
