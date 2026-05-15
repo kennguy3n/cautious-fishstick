@@ -4,7 +4,7 @@
 // This file defines the `AccessSDKClient` protocol that every concrete
 // implementation in a host iOS application must satisfy. The SDK is a
 // **thin REST client** — every method maps 1:1 to an HTTP endpoint on
-// `ztna-api` (see `docs/architecture.md` §11.4).
+// `ztna-api` (see `docs/architecture.md` §10).
 //
 // There is **no on-device inference** in this SDK. There are no
 // `import CoreML` / `import MLX` statements and no bundled model files

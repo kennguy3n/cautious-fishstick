@@ -6,7 +6,7 @@
 // **no on-device inference**, no `CoreML` import, no `MLX` import, no bundled
 // model weights (`.mlmodel`, `.tflite`, `.onnx`, `.gguf`). Every "AI" call is
 // a REST call to the server-side `access-ai-agent` over HTTPS. See
-// `docs/architecture.md` §11.1 and `docs/sdk.md`.
+// `docs/architecture.md` §10 and `docs/sdk.md`.
 //
 // This manifest is intentionally minimal — the package only ships the
 // `AccessSDKClient` protocol and the request / response model types. Concrete

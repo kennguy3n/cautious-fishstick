@@ -44,12 +44,13 @@ make docker-down   # docker compose down -v
 The CI workflow in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs every gate the merge queue blocks on. The Makefile mirrors each gate as a target so you can run them locally before pushing:
 
 ```bash
-make ci            # vet + test + swagger-check + sn360-check + model-check
-make lint          # all static gates, no test suite
-make vet           # go vet ./...
-make swagger-check # fail if docs/swagger.{json,yaml} is stale vs annotations
-make sn360-check   # fail if user-facing vocabulary regressed
-make model-check   # fail if a binary model file landed under sdk/
+make ci               # vet + test + swagger-check + sn360-check + model-check + stale-ref-check
+make lint             # all static gates (vet + swagger-check + sn360-check + model-check + stale-ref-check), no test suite
+make vet              # go vet ./...
+make swagger-check    # fail if docs/swagger.{json,yaml} is stale vs annotations
+make sn360-check      # fail if user-facing vocabulary regressed
+make model-check      # fail if a binary model file landed under sdk/
+make stale-ref-check  # fail if a retired doc filename (PROPOSAL.md, ARCHITECTURE.md, LISTCONNECTORS.md) is referenced outside docs/internal/
 ```
 
 ## Adding a connector

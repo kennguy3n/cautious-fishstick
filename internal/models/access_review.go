@@ -8,7 +8,7 @@ import (
 )
 
 // AccessReview mirrors the access_reviews table per docs/architecture.md
-// §9 and docs/architecture.md §7. One row per access-review campaign;
+// §11 and docs/architecture.md §7. One row per access-review campaign;
 // each campaign holds many AccessReviewDecision rows (one per
 // access_grant in scope).
 //
@@ -49,7 +49,7 @@ type AccessReview struct {
 }
 
 // TableName overrides the default plural so the table name is exactly
-// access_reviews (matching the migration and PROPOSAL §9).
+// access_reviews (matching the migration and docs/architecture.md).
 func (AccessReview) TableName() string {
 	return "access_reviews"
 }

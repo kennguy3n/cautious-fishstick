@@ -4,7 +4,7 @@
  * REST-only client for the ShieldNet 360 Access Platform `ztna-api`. This
  * package defines the `AccessSDKClient` interface plus the request /
  * response data classes that mirror the JSON payloads documented in
- * `docs/architecture.md` §11.4.
+ * `docs/architecture.md` §10.
  *
  * REST endpoint mapping (per docs/architecture.md):
  *   createRequest      → POST   /access/requests
@@ -22,7 +22,7 @@
  * (`explainPolicy`, `suggestResources`) are REST calls to `/access/explain`
  * and `/access/suggest`, which the backend forwards to the
  * `access-ai-agent` Python skill server via A2A. This rule is enforced by
- * `scripts/check_no_model_files.sh` in CI. See `docs/architecture.md` §11.2 and
+ * `scripts/check_no_model_files.sh` in CI. See `docs/architecture.md` §10 and
  * `docs/sdk.md`.
  */
 package com.shieldnet360.access

@@ -156,7 +156,7 @@ func TestResolveImpact_VeryLargeTeam(t *testing.T) {
 // belongs to multiple matching teams shows up exactly once in
 // AffectedMembers — the classic "department=engineering AND
 // team=platform" overlap that doubles up on members in a naive
-// implementation. (The docs/PROPOSAL.md §6.2 contract says members
+// implementation. (The docs/architecture.md §6 contract says members
 // are deduped across teams.) This is the closest practical
 // regression test for "circular team membership" — Phase 11 teams
 // have no parent_team_id column, so true circularity is structurally
