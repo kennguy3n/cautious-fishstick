@@ -66,7 +66,8 @@ Connectors live under `internal/services/access/connectors/<provider>/`. The "se
    - `TestGetCredentialsMetadata_*`.
 4. Implement any **optional interfaces** the provider supports (`SessionRevoker`, `SSOEnforcementChecker`, `SCIMProvisioner`, `GroupSyncer`, `IdentityDeltaSyncer`, etc.) and add the matching httptest happy + failure tests in a dedicated `<feature>_test.go`.
 5. Update the registry guard test in `internal/services/access/registry_count_test.go` if a count changed (connectors / SessionRevoker / SSOEnforcementChecker).
-6. Update the matching documentation: `README.md` (connector list & counts), `docs/PROGRESS.md` (§1/§2 tables), `docs/LISTCONNECTORS.md` (per-connector capability table). Keep the numbers consistent across every file.
+6. If your connector's directory name does **not** match its `ProviderName` constant (e.g. `connectors/duo/` registers as `duo_security`), add the mapping to `directoryToProvider` in `TestRegistry_NoOrphanDirectories` (`internal/services/access/registry_count_test.go`). Otherwise the orphan-directory guard will fire on the next run and claim the directory is unregistered.
+7. Update the matching documentation: `README.md` (connector list & counts), `docs/PROGRESS.md` (§1/§2 tables), `docs/LISTCONNECTORS.md` (per-connector capability table). Keep the numbers consistent across every file.
 
 ## PR checklist
 

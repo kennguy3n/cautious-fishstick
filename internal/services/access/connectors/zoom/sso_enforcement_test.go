@@ -127,6 +127,36 @@ func TestCheckSSOEnforcement_UnrecognizedMethods_NotEnforced(t *testing.T) {
 	}
 }
 
+func TestCheckSSOEnforcement_AccountIDIsPathEscaped(t *testing.T) {
+	// AccountID is operator-configured today and rarely contains
+	// special characters, but the path-building code must still
+	// run it through url.PathEscape so a forward slash or space
+	// can never silently retarget the request at a different
+	// resource. We assert the *escaped* literal "acc%2F1%20space"
+	// appears in the request path — if a future refactor drops
+	// the escape, the literal '/' would split the segment and
+	// this test would fail.
+	var seenPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPath = r.URL.EscapedPath()
+		_, _ = w.Write([]byte(`{"login_types":["sso"]}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	c.urlOverride = srv.URL
+	c.httpClient = func() httpDoer { return srv.Client() }
+	c.tokenOverride = func(_ context.Context, _ Config, _ Secrets) (string, error) {
+		return "fake-token", nil
+	}
+	cfg := map[string]interface{}{"account_id": "acc/1 space"}
+	if _, _, err := c.CheckSSOEnforcement(context.Background(), cfg, validSecrets()); err != nil {
+		t.Fatalf("CheckSSOEnforcement: %v", err)
+	}
+	if !strings.Contains(seenPath, "/accounts/acc%2F1%20space/settings") {
+		t.Errorf("escaped path=%q; want to contain /accounts/acc%%2F1%%20space/settings", seenPath)
+	}
+}
+
 func TestCheckSSOEnforcement_HTTPFailure(t *testing.T) {
 	c := ssoTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
