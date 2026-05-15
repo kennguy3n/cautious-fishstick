@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check_no_model_files.sh — Enforce the "no on-device inference" rule
-# from docs/PROPOSAL.md §11 and docs/PHASES.md Phase 9 cross-cutting
+# from docs/sdk.md ("no on-device inference" rule). Mobile / desktop
 # criterion.
 #
 # The Mobile SDKs and Desktop Extension are thin REST clients. They must
@@ -63,9 +63,9 @@ if [[ $violations -gt 0 ]]; then
         echo "  $entry" >&2
     done
     echo "" >&2
-    echo "The SDKs are REST clients only. See docs/PROPOSAL.md §11 and" >&2
-    echo "docs/SDK_CONTRACTS.md. If you genuinely need on-device" >&2
-    echo "inference for a follow-on phase, update PROPOSAL.md §12.1 and" >&2
+    echo "The SDKs are REST clients only. See docs/sdk.md for the" >&2
+    echo "contract. If on-device inference becomes a real requirement," >&2
+    echo "update docs/sdk.md and docs/architecture.md first, and" >&2
     echo "this script together." >&2
     exit 1
 fi

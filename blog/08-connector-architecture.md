@@ -60,7 +60,7 @@ type AccessConnector interface {
 
 Ten methods. Two of them (`Validate`, `Connect`) are the lifecycle entry points called by the wizard. One (`VerifyPermissions`) is the capability check called by the wizard. Two (`CountIdentities`, `SyncIdentities`) are the identity sync. Two (`ProvisionAccess`, `RevokeAccess`) are the provisioning RPCs. One (`ListEntitlements`) is the access-check-up support. The last two (`GetSSOMetadata`, `GetCredentialsMetadata`) are metadata accessors.
 
-The failure semantics are spelled out in `docs/PROPOSAL.md` §2.1, but the highlights:
+The failure semantics are spelled out in `docs/overview.md` §2.1, but the highlights:
 
 - **`Validate`** must not do network I/O. It is the format-and-shape check. Errors here are 4xx without ever touching the database.
 - **`Connect`** does a network probe. Errors abort the row insert; the connector is never persisted in a half-configured state.
@@ -204,7 +204,7 @@ This is the SN360 `t.Cleanup` pattern, copied verbatim. Tests that need to injec
 
 ## Credential management
 
-Credentials are AES-GCM ciphertext at rest. The full chapter is `docs/PROPOSAL.md` §4; the implementation lives in `internal/pkg/credentials/manager.go`. The key rules:
+Credentials are AES-GCM ciphertext at rest. The full chapter is `docs/overview.md` §4; the implementation lives in `internal/pkg/credentials/manager.go`. The key rules:
 
 - **Per-organisation data encryption key (DEK).** Fetched via `keymanager.KeyManager.GetLatestOrgDEK(orgID)`. The DEK is rotated independently of any individual credential.
 - **AES-GCM AAD = connector ULID.** The AAD binds the ciphertext to its `access_connectors` row. Copy-pasting between connectors renders the ciphertext undecryptable.
@@ -310,7 +310,7 @@ For partners building new connectors, the bounded shape of work:
 3. **Add the `init()` block.** `func init() { access.RegisterAccessConnector("<provider>", &Connector{}) }`.
 4. **Blank-import in the three cmd binaries.** Add the line to `cmd/ztna-api/main.go`, `cmd/access-connector-worker/main.go`, `cmd/access-workflow-engine/main.go`.
 5. **Write the lifecycle test.** `connector_flow_test.go` in the same package — Validate-without-network, Connect-with-mock-HTTP, SyncIdentities returning canonical Identities, ProvisionAccess + RevokeAccess idempotency check.
-6. **Document the capabilities.** Add the connector row to `docs/LISTCONNECTORS.md`.
+6. **Document the capabilities.** Add the connector row to `docs/connectors.md`.
 
 That is the recipe. A connector that follows it takes one to two days for a partner engineer who knows the provider's API. A connector that *doesn't* follow it ends up reinventing one or more of credential management, retry, scheduling, or pagination — and gets rejected in code review.
 
@@ -322,8 +322,8 @@ That is the recipe. A connector that follows it takes one to two days for a part
 - Test helpers: `internal/services/access/testing.go`.
 - Credential manager: `internal/pkg/credentials/manager.go`.
 - Shared HTTP utilities: `internal/services/access/connectors/_shared/`.
-- Connector catalogue: `docs/LISTCONNECTORS.md`.
-- Design contract: `docs/PROPOSAL.md` §2–§4.
+- Connector catalogue: `docs/connectors.md`.
+- Design contract: `docs/overview.md` §2–§4.
 
 ## What's next
 

@@ -2,7 +2,7 @@
 # check_sn360_language.sh — Enforce ShieldNet 360 user-facing
 # language alignment in handler responses.
 #
-# Per docs/PROPOSAL.md §8 the platform uses two terminology
+# Per docs/overview.md ("product language") the platform uses two terminology
 # registers:
 #
 #   * Technical (internal docs / code / variable names) — uses ZTNA /
@@ -107,7 +107,7 @@ if [[ $violations -gt 0 ]]; then
     done
     echo ""
     echo "Update the offending strings to use the SN360 product register" >&2
-    echo "(see docs/PROPOSAL.md §8) or move the technical term into an" >&2
+    echo "(see docs/overview.md \"product language\") or move the technical term into an" >&2
     echo "internal-only comment / variable name." >&2
     exit 1
 fi

@@ -94,7 +94,7 @@ ShieldNetAccess resolved
 - [ ] `swift test --package-path sdk/ios` exits 0 on macOS.
 - [ ] `bash scripts/check_no_model_files.sh` passes (no `.mlmodel` / `.tflite` / `.onnx` / `.gguf` under `sdk/`).
 - [ ] `sdk/ios/CHANGELOG.md` has a new entry on top.
-- [ ] `docs/SDK_CONTRACTS.md` "Versioning" table is updated.
+- [ ] `docs/sdk.md` "Versioning" table is updated.
 
 ## Notes on internal-only consumers
 

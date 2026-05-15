@@ -3,7 +3,7 @@
 Minimal Jetpack Compose sample wiring `OkHttpAccessSDKClient`
 against `ztna-api`. The view models depend on `AccessSDKClient`
 (interface), not the concrete class — matching the DI pattern in
-`docs/SDK_CONTRACTS.md`.
+`docs/sdk.md`.
 
 ## Configuration
 

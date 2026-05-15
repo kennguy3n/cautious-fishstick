@@ -215,7 +215,7 @@ If you want to read the integration code yourself:
 - `ztna-k8s-assets/` — the Helm charts for the controller and the router fleet. `controller/values.yaml` shows the configurable knobs.
 - `ztna-business-layer/internal/services/access/policy_service_test.go::TestPromote_DoesNotInvokeOpenZiti` — the regression test that enforces the draft-never-touches-controller invariant.
 
-For the broader design contract on policies, drafts, and simulation, see `docs/PROPOSAL.md` §6. For the deployment topology, see `docs/PROPOSAL.md` §10 and `docs/ARCHITECTURE.md` §11.
+For the broader design contract on policies, drafts, and simulation, see `docs/overview.md` §6. For the deployment topology, see `docs/overview.md` §10 and `docs/architecture.md` §11.
 
 ## What's next
 

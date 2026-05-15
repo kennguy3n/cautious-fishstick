@@ -206,7 +206,7 @@ Reviewers don't poll the platform. The platform tells them when there's work to 
 - **In-app** — the reviewer's home screen shows pending decisions.
 - **Web push** for the desktop client, via `WebPushNotifier` (push subscriptions stored in `push_subscriptions`, migration `010`).
 
-All notifications are best-effort. Notification failures are logged but never roll back a campaign — campaign state always commits first; notifications are fired after the transaction (PHASES Phase 5). This is the same pattern as the rest of the platform: state of record commits before any external side-effect.
+All notifications are best-effort. Notification failures are logged but never roll back a campaign — campaign state always commits first; notifications are fired after the transaction. This is the same pattern as the rest of the platform: state of record commits before any external side-effect.
 
 ## A worked example
 
@@ -243,7 +243,7 @@ The combination is what continuous certification means in practice. Routine gran
 - Migrations: `internal/migrations/004_create_access_review_tables.go`, `005_create_access_campaign_schedules.go`, `010_create_push_subscriptions.go`.
 - AI skill: `cmd/access-ai-agent/skills/access_review_automation.py`.
 - Notifier adapter: `internal/services/access/notification_adapter.go`.
-- Design contract: `docs/PROPOSAL.md` §5 and §7 (covers the AI integration), `docs/ARCHITECTURE.md` §6.
+- Design contract: `docs/overview.md` §5 and §7 (covers the AI integration), `docs/architecture.md` §6.
 
 ## What's next
 

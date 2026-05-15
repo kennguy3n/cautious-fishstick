@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # generate-swagger.sh — Regenerates the OpenAPI 3.0 spec for the
 # ZTNA access platform HTTP API. Called from CI (per the cross-cutting
-# criteria in docs/PHASES.md) whenever a handler-level change lands.
+# criteria in docs/architecture.md §5) whenever a handler-level change lands.
 #
 # The script uses `swag` (https://github.com/swaggo/swag) to scan the
 # annotated handler functions in internal/handlers/ and emit a
@@ -84,7 +84,7 @@ swag init \
 
 # swag emits a trivial `{"paths": {}}` envelope when the handlers
 # don't carry swag annotations. The project is OpenAPI 3.0 + hand-
-# maintained docs/swagger.{json,yaml} (per docs/PHASES.md §11) so we
+# maintained docs/swagger.{json,yaml} (per docs/architecture.md) so we
 # detect this and short-circuit to the same mirror-only path the
 # "swag not installed" fallback above uses.
 generated_paths=$(grep -c '"/' "$tmpdir/swagger.json" || true)

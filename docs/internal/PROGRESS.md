@@ -1,8 +1,8 @@
-# ShieldNet 360 Access Platform — Progress Tracker
+# Progress tracker
 
-Status: **In progress | ~97%** — Phases 0, 6–9 shipped; Phases 1–5 backend complete (Admin UI remains); Phase 10 advanced caps shipped for 194 / 200 connectors (6 n/a), audit logs for 198 / 200 (2 n/a), and SSO federation for 104 / 200 (96 n/a — providers without native SSO metadata APIs). Phase 11 hybrid access model is ✅ shipped: kill-switch audit trail, orphan reconciler hardening, grant-expiry notifications + warning sweep, and 14 `SessionRevoker` / 14 `SSOEnforcementChecker` connectors all in `main`.
+> **Internal document.** This is a development tracker for maintainers. Public-facing documentation lives under [`docs/`](../) — start with [`docs/overview.md`](../overview.md), [`docs/architecture.md`](../architecture.md), and [`docs/connectors.md`](../connectors.md) for the connector matrix.
 
-For canonical phase definitions see [`PHASES.md`](PHASES.md). For the design contract see [`PROPOSAL.md`](PROPOSAL.md). For the unified connector view see [`LISTCONNECTORS.md`](LISTCONNECTORS.md).
+For phase definitions see [`PHASES.md`](PHASES.md).
 
 | Status legend |  |
 |---------------|--|
@@ -360,7 +360,7 @@ Use this section sparingly. If something belongs here for more than two sprints,
 
 | Area | Problem | Tracking |
 |------|---------|----------|
-| Documentation drift | Per-cell tables in §1 and the statistics in [`LISTCONNECTORS.md`](LISTCONNECTORS.md) can lag reality after large batches land. Mitigated by CI drift checks (swagger, SN360 language) and the `scripts/sync_listconnectors.py` helper. | (closed) |
+| Documentation drift | Per-cell tables in §1 and the statistics in [`docs/connectors.md`](../connectors.md) can lag reality after large batches land. Mitigated by CI drift checks (swagger, SN360 language) and the `scripts/sync_listconnectors.py` helper. | (closed) |
 
 ---
 

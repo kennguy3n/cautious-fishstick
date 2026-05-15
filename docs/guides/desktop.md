@@ -2,7 +2,7 @@
 
 This guide walks an Electron host application through integrating the **ShieldNet 360 Access Extension** end-to-end. It covers installation, registering IPC handlers in the **main process**, exposing the surface to the **renderer** via `contextBridge`, the full IPC channel reference, error handling, and the contractual "no on-device inference" rule.
 
-The extension lives at [`sdk/desktop/`](../../sdk/desktop/) and is published as `@shieldnet360/access-extension` on the internal npm registry — see [`sdk/desktop/PUBLISHING.md`](../../sdk/desktop/PUBLISHING.md) for release coordinates. The cross-platform REST contract is documented in [`docs/SDK_CONTRACTS.md`](../SDK_CONTRACTS.md).
+The extension lives at [`sdk/desktop/`](../../sdk/desktop/) and is published as `@shieldnet360/access-extension` on the internal npm registry — see [`sdk/desktop/PUBLISHING.md`](../../sdk/desktop/PUBLISHING.md) for release coordinates. The cross-platform REST contract is documented in [`docs/sdk.md`](../sdk.md).
 
 ---
 
@@ -231,7 +231,7 @@ The extension enforces this in three ways:
 2. **No bundled models.** There are no `.mlmodel`, `.tflite`, `.onnx`, or `.gguf` files under `sdk/desktop/`. This is enforced in CI by [`scripts/check_no_model_files.sh`](../../scripts/check_no_model_files.sh), which fails the build if any of these extensions appear under `sdk/`.
 3. **AI is REST.** The two AI-facing channels (`access:queryPolicy.explain` and `access:askAI.suggestResources`) are HTTP calls to `/access/explain` and `/access/suggest`. The backend (`ztna-api`) forwards them to the `access-ai-agent` Python skill server via A2A. The desktop extension does not see the model.
 
-See PROPOSAL.md §11.3 and §11.5 for the design rationale.
+See [`docs/sdk.md`](../sdk.md) for the cross-platform design rationale.
 
 ---
 
@@ -246,7 +246,7 @@ See PROPOSAL.md §11.3 and §11.5 for the design rationale.
 ## 8. Versioning & support
 
 - The extension follows semver. Breaking changes will increment MAJOR.
-- The current version is **0.1.0**. The matching `ztna-api` HTTP contract is documented in `docs/SDK_CONTRACTS.md` and `docs/swagger.{json,yaml}`.
+- The current version is **0.1.0**. The matching `ztna-api` HTTP contract is documented in `docs/sdk.md` and `docs/swagger.{json,yaml}`.
 - Each tagged release is announced in `sdk/desktop/CHANGELOG.md`.
 
 For bugs, open an issue on [`kennguy3n/cautious-fishstick`](https://github.com/kennguy3n/cautious-fishstick/issues) with the `area:sdk-desktop` label.

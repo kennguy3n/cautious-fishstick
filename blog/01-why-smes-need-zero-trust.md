@@ -135,7 +135,7 @@ Every workflow that an operator hits — connecting an app, creating an access r
 
 The product surface uses SN360 language. We never say "policy" in a UI — we say "access rule". We never say "connector" — we say "app connection". We never say "access certification campaign" — we say "access check-up". Every admin who has been forced to learn vendor-specific vocabulary has lost an hour they didn't have. We give them that hour back.
 
-The plain-language rule is enforced by a CI check. Every public-facing string is grep'd for technical terms before it ships. The translation table is in `docs/PROPOSAL.md` §8 — it is part of the design contract.
+The plain-language rule is enforced by a CI check. Every public-facing string is grep'd for technical terms before it ships. The translation table is in `docs/overview.md` §8 — it is part of the design contract.
 
 ### AI-assisted governance
 

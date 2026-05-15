@@ -2,7 +2,7 @@
 
 Minimal SwiftUI sample wiring `URLSessionAccessSDKClient` against
 `ztna-api`. The app demonstrates the DI pattern from
-`docs/SDK_CONTRACTS.md` — the view models depend on
+`docs/sdk.md` — the view models depend on
 `AccessSDKClient` (protocol), not the concrete class.
 
 ## Running

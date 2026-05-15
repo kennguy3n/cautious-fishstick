@@ -75,7 +75,7 @@ Three properties to call out:
 - **The Python agent never persists state.** It is a pure RPC server. State lives in PostgreSQL on the Go side.
 - **The workflow engine is a separate process.** Multi-step orchestration is its own concern; the request service is not in the business of polling for approval timeouts.
 
-The complete deployment map is in `docs/PROPOSAL.md` §10.
+The complete deployment map is in `docs/overview.md` §10.
 
 ## The A2A protocol
 
@@ -178,7 +178,7 @@ Auto-certification is opt-out per resource category. A workspace that wants ever
 
 **Failure mode.** On a failed call, the scan logs the failure and continues with the next grant. No grant is marked anomalous defensively.
 
-The Phase 5 expansion (PR #20) added a cross-grant baseline histogram, off-hours detection, geographic-outlier detection, and unused-high-privilege detection inside `cmd/access-ai-agent/skills/access_anomaly_detection.py`. These are heuristic detectors that run *alongside* the LLM call — the LLM produces a narrative, the heuristics produce the numeric thresholds.
+The skill also ships a cross-grant baseline histogram, off-hours detection, geographic-outlier detection, and unused-high-privilege detection inside `cmd/access-ai-agent/skills/access_anomaly_detection.py`. These are heuristic detectors that run *alongside* the LLM call — the LLM produces a narrative, the heuristics produce the numeric thresholds.
 
 ### 4. connector_setup_assistant
 
@@ -280,7 +280,7 @@ The router is `internal/services/access/workflow_engine/risk_router.go`. The imp
 
 ### DAG execution
 
-Phase 8 (`✅ shipped`) brought the LangGraph DAG runtime online. Workflow definitions can express fan-out / join across multiple approver branches via `WorkflowStepDefinition.Next` (the list of next steps) and `WorkflowStepDefinition.Join` (the join points). The executor walks the DAG topologically with goroutine-parallel branches, and the validator catches cycles / out-of-range references / self-loops with a Kahn's-algorithm check.
+Workflow definitions can express fan-out / join across multiple approver branches via `WorkflowStepDefinition.Next` (the list of next steps) and `WorkflowStepDefinition.Join` (the join points). The executor walks the DAG topologically with goroutine-parallel branches, and the validator catches cycles / out-of-range references / self-loops with a Kahn's-algorithm check.
 
 ```mermaid
 flowchart LR
@@ -293,17 +293,17 @@ flowchart LR
     JOIN --> PROV[provision]
 ```
 
-Each step's outcome is recorded in `access_workflow_step_history` (migration `009`) with a `branch_index` column (added in PR #23) so a multi-branch workflow's audit trail captures which branch produced which decision.
+Each step's outcome is recorded in `access_workflow_step_history` (migration `009`) with a `branch_index` column so a multi-branch workflow's audit trail captures which branch produced which decision.
 
 ### Escalation
 
 The `EscalationChecker` is a cron-driven worker inside `access-workflow-engine`. It scans for steps whose `escalation_at` timestamp is in the past, escalates them to the next approver in the chain (or to `security_review` if the chain is exhausted), and writes an `access_request_state_history` row.
 
-The escalator is the path that fires email and Slack notifications. In PR #23, the workflow engine wires the Phase 5 `EmailNotifier` and `SlackNotifier` behind the `NOTIFICATION_SMTP_HOST` and `NOTIFICATION_SLACK_WEBHOOK_URL` env-var feature flags. Both notifiers are best-effort: a failed delivery is logged but never rolls back the state transition.
+The escalator is the path that fires email and Slack notifications. The workflow engine wires the `EmailNotifier` and `SlackNotifier` behind the `NOTIFICATION_SMTP_HOST` and `NOTIFICATION_SLACK_WEBHOOK_URL` env-var feature flags. Both notifiers are best-effort: a failed delivery is logged but never rolls back the state transition.
 
 ### Retry and DLQ
 
-Phase 8 also brought a retry / dead-letter pattern for the step performer. Each step retries with exponential backoff (3 attempts, 100ms → 200ms → 400ms, capped at 5s). Steps that exhaust their retries land in a `failed_steps` view exposed via `ListFailedSteps`, where an operator can inspect, retry, or cancel.
+The step performer ships with a retry / dead-letter pattern. Each step retries with exponential backoff (3 attempts, 100ms → 200ms → 400ms, capped at 5s). Steps that exhaust their retries land in a `failed_steps` view exposed via `ListFailedSteps`, where an operator can inspect, retry, or cancel.
 
 ## The no-on-device-inference rule
 
@@ -314,7 +314,7 @@ The clients — iOS SDK, Android SDK, Desktop Extension — are thin REST client
 - No `onnxruntime` or native inference binaries in the Electron extension.
 - No bundled model files of any kind.
 
-Every AI call from a client goes over HTTPS to `ztna-api`, which delegates to the Python agent. The build-time check that enforces this rule is in the Phase 4 exit criteria — it grep's the build artefact for forbidden imports and bundle entries.
+Every AI call from a client goes over HTTPS to `ztna-api`, which delegates to the Python agent. The rule is enforced in CI by [`scripts/check_no_model_files.sh`](../scripts/check_no_model_files.sh), which fails the build if any model file (`.mlmodel`, `.tflite`, `.onnx`, `.gguf`) shows up under `sdk/`.
 
 The reasons are:
 

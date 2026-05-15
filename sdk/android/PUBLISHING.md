@@ -123,4 +123,4 @@ The Gradle plugin keeps the publication name `GitHubPackages` regardless of URL 
 - [ ] `./gradlew :build :test` exits 0 inside `sdk/android/`.
 - [ ] `bash scripts/check_no_model_files.sh` passes.
 - [ ] `sdk/android/CHANGELOG.md` has a new entry on top.
-- [ ] `docs/SDK_CONTRACTS.md` "Versioning" table is updated.
+- [ ] `docs/sdk.md` "Versioning" table is updated.
