@@ -25,7 +25,7 @@ This document collects the planned milestones in one place so reviewers and oper
 | 10 | Advanced connector capabilities | 🟡 |
 | 11 | Hybrid Access & Offboarding Safety Net | ✅ |
 
-Phases 1–5 are 🟡 because the backend is complete in every case; only the Admin UI surfaces (in [`ztna-frontend`](https://github.com/uneycom/ztna-frontend)) remain. Phase 10 is 🟡 because the long-tail advanced-capability work is still in progress: 194 / 200 connectors ship real `ProvisionAccess` / `RevokeAccess` / `ListEntitlements` (6 n/a), 198 / 200 ship the audit pipeline (2 n/a), and 104 / 200 are SSO-federated (96 n/a — many providers have no native SSO metadata API). Phase 11 is ✅ shipped: per-connector access-mode classification, the unused-app-account reconciler, SSO-only enforcement verification, session revocation, the five-layer leaver kill switch, and the grant-expiry cron all landed across batches 1–6.
+Phases 1–5 are 🟡 because the backend is complete in every case; only the Admin UI surfaces (in [`ztna-frontend`](https://github.com/uneycom/ztna-frontend)) remain. Phase 10 is 🟡 because the long-tail advanced-capability work is still in progress: 194 / 200 connectors ship real `ProvisionAccess` / `RevokeAccess` / `ListEntitlements` (6 n/a), 198 / 200 ship the audit pipeline (2 n/a), and 104 / 200 are SSO-federated (96 n/a — many providers have no native SSO metadata API). Phase 11 is ✅ shipped: per-connector access-mode classification, the unused-app-account reconciler, SSO-only enforcement verification, session revocation, the six-layer leaver kill switch, and the grant-expiry cron all landed across batches 1–6.
 
 ---
 
@@ -175,7 +175,7 @@ Beyond the minimum capabilities of Phase 7: real `ProvisionAccess` / `RevokeAcce
 
 Phase 11 introduces an access-mode classification per connector, an
 "unused app account" reconciler, SSO-only enforcement verification,
-session revocation, a five-layer leaver kill switch, and automatic
+session revocation, a six-layer leaver kill switch, and automatic
 grant-expiry enforcement (docs/PROPOSAL.md §13).
 
 ### WS1 — Per-connector access mode
@@ -229,7 +229,7 @@ grant-expiry enforcement (docs/PROPOSAL.md §13).
 - [x] `SSOFederationService.DisableKeycloakUser` +
   `KeycloakClient.UpdateUser` added with tests.
 
-### WS5 — Enhanced leaver flow (five-layer kill switch)
+### WS5 — Enhanced leaver flow (six-layer kill switch)
 
 - [x] `JMLService.HandleLeaver` extended to call, in order: revoke
   grants → remove memberships → disable Keycloak user → revoke

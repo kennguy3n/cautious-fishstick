@@ -571,11 +571,11 @@ The reconciler runs on a configurable schedule
 (`ACCESS_ORPHAN_RECONCILE_INTERVAL`, default `24h`). New detections
 fire a notification through the existing `NotificationService`.
 
-### 13.5 Five-layer leaver kill switch
+### 13.5 Six-layer leaver kill switch
 
 The Phase 4 leaver flow used to do two things: revoke active grants and
 remove team memberships. Phase 11 extends `JMLService.HandleLeaver` into
-a five-layer kill switch so a single off-boarding call locks the user
+a six-layer kill switch so a single off-boarding call locks the user
 out of every channel the platform knows about:
 
 1. Revoke all active access grants (existing).
