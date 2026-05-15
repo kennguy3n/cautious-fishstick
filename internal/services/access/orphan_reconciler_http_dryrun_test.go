@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -144,21 +145,28 @@ type reconcileResp struct {
 	DryRun bool `json:"dry_run"`
 }
 
-func postReconcile(t *testing.T, r *gin.Engine, dryRun bool) reconcileResp {
-	t.Helper()
+// postReconcile drives POST /access/orphans/reconcile and returns
+// the decoded envelope plus a non-nil error on transport / decode
+// failures. The function deliberately does NOT call t.Fatalf so
+// that goroutine callers (see TestOrphanReconciler_HTTP_ConcurrentDryAndWet)
+// can surface failures via t.Errorf, which is the only Fail
+// variant safe to invoke from a non-test goroutine — t.Fatalf
+// calls runtime.Goexit on the wrong goroutine and produces
+// undefined behaviour in the race detector.
+func postReconcile(r *gin.Engine, dryRun bool) (reconcileResp, error) {
 	body := bytes.NewBufferString(`{"workspace_id":"` + orphanHTTPTestWorkspace + `","dry_run":` + boolStr(dryRun) + `}`)
 	req := httptest.NewRequest(http.MethodPost, "/access/orphans/reconcile", body)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("dry_run=%v status = %d (body=%s); want 200", dryRun, rec.Code, rec.Body.String())
+		return reconcileResp{}, fmt.Errorf("dry_run=%v status = %d (body=%s); want 200", dryRun, rec.Code, rec.Body.String())
 	}
 	var out reconcileResp
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatalf("decode envelope: %v (body=%s)", err, rec.Body.String())
+		return reconcileResp{}, fmt.Errorf("decode envelope: %w (body=%s)", err, rec.Body.String())
 	}
-	return out
+	return out, nil
 }
 
 func boolStr(b bool) string {
@@ -185,7 +193,10 @@ func TestOrphanReconciler_HTTP_DryRun_DoesNotPersist(t *testing.T) {
 	rec.SetPerConnectorDelay(0)
 	r := handlers.Router(handlers.Dependencies{OrphanReconciler: rec, DisableRateLimiter: true})
 
-	got := postReconcile(t, r, true)
+	got, err := postReconcile(r, true)
+	if err != nil {
+		t.Fatalf("postReconcile: %v", err)
+	}
 	if !got.DryRun {
 		t.Error("envelope dry_run = false; want true echoing the request")
 	}
@@ -212,7 +223,10 @@ func TestOrphanReconciler_HTTP_WetRun_Persists(t *testing.T) {
 	rec.SetPerConnectorDelay(0)
 	r := handlers.Router(handlers.Dependencies{OrphanReconciler: rec, DisableRateLimiter: true})
 
-	got := postReconcile(t, r, false)
+	got, err := postReconcile(r, false)
+	if err != nil {
+		t.Fatalf("postReconcile: %v", err)
+	}
 	if got.DryRun {
 		t.Error("envelope dry_run = true; want false echoing the request")
 	}
@@ -246,9 +260,13 @@ func TestOrphanReconciler_HTTP_WetRun_Persists(t *testing.T) {
 //     ListIdentities returns a frozen slice so parallel callers
 //     never mutate shared state.
 //
-// t.Errorf is safe to call from goroutines (only t.FailNow/t.Fatal
-// would be unsafe), so the per-goroutine assertions below are
-// race-correct.
+// t.Errorf is safe to call from goroutines (only t.FailNow /
+// t.Fatalf / t.Skipf would be unsafe — they call runtime.Goexit,
+// which is undefined behaviour outside the goroutine that owns
+// the test). postReconcile is therefore goroutine-safe by
+// construction: it returns an error envelope instead of failing
+// the test directly, leaving the goroutine free to surface the
+// failure via t.Errorf.
 func TestOrphanReconciler_HTTP_ConcurrentDryAndWet(t *testing.T) {
 	db := newOrphanHTTPTestDB(t)
 	seedOrphanHTTPFixture(t, db)
@@ -263,7 +281,11 @@ func TestOrphanReconciler_HTTP_ConcurrentDryAndWet(t *testing.T) {
 	for i := 0; i < dryCallers; i++ {
 		go func() {
 			defer wg.Done()
-			got := postReconcile(t, r, true)
+			got, err := postReconcile(r, true)
+			if err != nil {
+				t.Errorf("concurrent dry postReconcile: %v", err)
+				return
+			}
 			if !got.DryRun {
 				t.Errorf("concurrent dry_run echo missing")
 			}
@@ -271,7 +293,11 @@ func TestOrphanReconciler_HTTP_ConcurrentDryAndWet(t *testing.T) {
 	}
 	go func() {
 		defer wg.Done()
-		got := postReconcile(t, r, false)
+		got, err := postReconcile(r, false)
+		if err != nil {
+			t.Errorf("concurrent wet postReconcile: %v", err)
+			return
+		}
 		if got.DryRun {
 			t.Errorf("wet caller saw dry_run=true echo")
 		}
