@@ -2,13 +2,14 @@
 
 [![CI](https://github.com/kennguy3n/cautious-fishstick/actions/workflows/ci.yml/badge.svg)](https://github.com/kennguy3n/cautious-fishstick/actions/workflows/ci.yml) [![Python CI](https://github.com/kennguy3n/cautious-fishstick/actions/workflows/python-ci.yml/badge.svg)](https://github.com/kennguy3n/cautious-fishstick/actions/workflows/python-ci.yml)
 
-> **Status:** ~97% complete. See [`docs/PROGRESS.md`](docs/PROGRESS.md) for details.
-> - Phases 0, 6, 7, 8, 9, 11: shipped
-> - Phases 1–5: backend complete, Admin UI pending (lives in `ztna-frontend`)
-> - Phase 10: 200 / 200 connectors registered, advanced caps shipped across 194 (6 n/a), audit logs across 198 (2 n/a), SSO federation across 104 (96 n/a)
-> - Phase 11: hybrid access model, 6-layer leaver kill switch, 14 `SessionRevoker` + 14 `SSOEnforcementChecker` connectors
+> **Status:** Active development. Core backend services operational against Postgres. See [`docs/PROGRESS.md`](docs/PROGRESS.md) for the phase-by-phase breakdown.
+> - Backend wiring (Phase 0 → 11): the three Go binaries (`ztna-api`, `access-connector-worker`, `access-workflow-engine`) boot against the shared Postgres instance the docker-compose stack provisions, run every migration in `internal/migrations`, and register their handlers / crons.
+> - Admin UI (Phases 1–5): backend service layer ships in this repo; the React Admin UI lives in `ztna-frontend` and is still in progress.
+> - Connector framework (Phase 10): **200 connectors are registered** with the access registry; per-capability depth (advanced provisioning, audit logs, SSO federation, session revocation, SSO enforcement checks) varies per connector — see [`docs/LISTCONNECTORS.md`](docs/LISTCONNECTORS.md) for the matrix.
+> - Hybrid access + leaver kill switch (Phase 11): hybrid access model, six-layer leaver kill switch, 14 `SessionRevoker` and 14 `SSOEnforcementChecker` connectors.
+> - Kafka audit pipeline: **not yet implemented**. `access-connector-worker` currently uses an in-process `NoOpAuditProducer` even when `ACCESS_KAFKA_BROKERS` is set; the boot log makes this state obvious so SIEM ingestion isn't silently dropped. Tracked alongside the Phase 10 audit hardening backlog.
 
-The ShieldNet 360 Access Platform is a multi-tenant zero-trust access control plane. It lets small and medium-sized businesses connect, manage, and secure access to **200+ cloud platforms, SaaS applications, and identity systems** from a single product — without writing policy DSLs, decoding SAML metadata, or hand-rolling SCIM payloads.
+The ShieldNet 360 Access Platform is a multi-tenant zero-trust access control plane. It lets small and medium-sized businesses connect, manage, and secure access to upstream cloud platforms, SaaS applications, and identity systems from a single product — without writing policy DSLs, decoding SAML metadata, or hand-rolling SCIM payloads. The connector framework ships with **200 registered providers**; capability depth varies per connector (see [`docs/LISTCONNECTORS.md`](docs/LISTCONNECTORS.md)).
 
 ---
 
@@ -145,7 +146,7 @@ Desktop Extension (Electron)  ┘                  │
                                                  ├──▶ Redis (queue, staging, locks)
                                                  ├──▶ Keycloak (SSO federation)
                                                  ├──▶ OpenZiti (ServicePolicy)
-                                                 ├──▶ Kafka (audit envelope)
+                                                 ├──▶ Kafka (audit envelope)  [planned — NoOp today]
                                                  └──▶ Access Connector Worker
                                                           │
                                                           └──▶ Access Connectors (200 providers)

@@ -8,9 +8,9 @@
 // The engine listens on ACCESS_WORKFLOW_ENGINE_LISTEN_ADDR (default
 // :8082) and shuts down gracefully on SIGINT / SIGTERM. Database access
 // is via the same gorm postgres URL the rest of the platform uses
-// (DATABASE_URL); when DATABASE_URL is unset the binary falls back to a
-// short-lived in-memory SQLite so smoke tests can boot without
-// provisioning a database.
+// (ACCESS_DATABASE_URL); when ACCESS_DATABASE_URL is unset the binary
+// falls back to a short-lived in-memory SQLite so smoke tests can boot
+// without provisioning a database.
 package main
 
 import (
@@ -21,6 +21,7 @@ import (
 	"net/smtp"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -29,7 +30,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 
-	"github.com/kennguy3n/cautious-fishstick/internal/models"
+	"github.com/kennguy3n/cautious-fishstick/internal/pkg/database"
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access/workflow_engine"
 	"github.com/kennguy3n/cautious-fishstick/internal/services/notification"
@@ -299,14 +300,36 @@ func main() {
 	}
 }
 
-// openDatabase returns a gorm DB. ACCESS_WORKFLOW_ENGINE_SQLITE_PATH is
-// honoured when set so operators can persist workflow state to disk;
-// otherwise an in-memory SQLite is opened so the binary can smoke-test
-// without provisioning storage. Postgres support lives in
-// internal/migrations and will be wired into the engine once the
-// migration runner is hooked up to this binary in Phase 9. The returned
-// description is logged at startup.
+// openDatabase returns a gorm DB. ACCESS_DATABASE_URL takes priority —
+// when set the engine opens the shared Postgres pool the rest of the
+// access platform uses and runs the full access-platform migration
+// set (via database.RunMigrations) against it. Otherwise it falls
+// back to SQLite (ACCESS_WORKFLOW_ENGINE_SQLITE_PATH or in-memory)
+// so dev / smoke binaries can boot without provisioning a database.
+//
+// Both paths route through database.RunMigrations so the schema is
+// uniform across Postgres and SQLite — if service-layer code
+// queries a table outside the workflow set, the same query works
+// against either backend rather than blowing up only in the SQLite
+// fallback. The returned description is logged at startup.
 func openDatabase() (*gorm.DB, string, error) {
+	if pgDSN := os.Getenv("ACCESS_DATABASE_URL"); pgDSN != "" {
+		db, err := database.OpenPostgres(pgDSN)
+		if err != nil {
+			return nil, "", err
+		}
+		// Run the full access-platform migration set against
+		// Postgres so the workflow engine sees the same schema
+		// ztna-api and the worker do. The helper takes a
+		// pg_advisory_lock so the three binaries don't race on
+		// catalog writes when docker-compose brings them up in
+		// parallel.
+		if err := database.RunMigrations(db); err != nil {
+			return nil, "", err
+		}
+		return db, "postgres at " + redactDSN(pgDSN), nil
+	}
+
 	dsn := os.Getenv("ACCESS_WORKFLOW_ENGINE_SQLITE_PATH")
 	if dsn == "" {
 		dsn = ":memory:"
@@ -315,12 +338,12 @@ func openDatabase() (*gorm.DB, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	if err := db.AutoMigrate(
-		&models.AccessRequest{},
-		&models.AccessWorkflow{},
-		&models.AccessRequestStateHistory{},
-		&models.AccessWorkflowStepHistory{},
-	); err != nil {
+	// Run the full access-platform migration set against the
+	// SQLite fallback too so the workflow engine sees the same
+	// schema it would under Postgres. database.RunMigrations
+	// short-circuits the pg_advisory_lock path on non-Postgres
+	// dialects so there's no extra cost on SQLite.
+	if err := database.RunMigrations(db); err != nil {
 		return nil, "", err
 	}
 	desc := "in-memory sqlite (workflows will not persist)"
@@ -328,6 +351,47 @@ func openDatabase() (*gorm.DB, string, error) {
 		desc = "sqlite at " + dsn
 	}
 	return db, desc, nil
+}
+
+// libpqKeyValuePasswordRE matches the libpq key=value DSN password
+// segment. libpq accepts either URL-style (postgres://user:pass@host)
+// or space-separated key=value (host=foo password=bar dbname=baz)
+// DSNs; the env-var documentation steers operators toward the URL
+// form, but redactDSN handles both so a misconfigured deployment
+// can't accidentally log the password from a key=value string.
+//
+// libpq also allows single-quoted values (password='se cret') for
+// passwords containing spaces or special characters, so the regex
+// covers both bare and quoted forms.
+var libpqKeyValuePasswordRE = regexp.MustCompile(`(?i)\bpassword\s*=\s*(?:'[^']*'|\S+)`)
+
+// redactDSN strips the user:password segment from a libpq DSN so the
+// startup log never echoes the Postgres password. Handles two libpq
+// formats:
+//
+//   - URL style (postgres://user:pass@host/db) — the user:pass
+//     segment is replaced with [redacted].
+//   - key=value style (host=... password=... dbname=...) — every
+//     password=<value> token is replaced with password=[redacted].
+//
+// Inputs that don't look like either are returned unchanged.
+func redactDSN(dsn string) string {
+	// key=value form: redact the password token first so a libpq
+	// connection string that happens to contain an '@' inside
+	// (e.g. host=host@example.com) doesn't fall into the URL
+	// branch and skip the password=... scrub.
+	if !strings.Contains(dsn, "://") {
+		return libpqKeyValuePasswordRE.ReplaceAllString(dsn, "password=[redacted]")
+	}
+	at := strings.LastIndex(dsn, "@")
+	if at < 0 {
+		return dsn
+	}
+	scheme := strings.Index(dsn, "://")
+	if scheme < 0 || scheme >= at {
+		return dsn
+	}
+	return dsn[:scheme+3] + "[redacted]" + dsn[at:]
 }
 
 // runEscalationChecker polls every minute until ctx is cancelled. The
