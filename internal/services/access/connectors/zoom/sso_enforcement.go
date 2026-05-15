@@ -63,8 +63,14 @@ func (c *ZoomAccessConnector) CheckSSOEnforcement(ctx context.Context, configRaw
 			hasPassword = true
 		}
 	}
-	if hasSSO && !hasPassword {
+	switch {
+	case hasSSO && !hasPassword:
 		return true, "Zoom account requires single sign-on for every interactive login", nil
+	case hasSSO && hasPassword:
+		return false, "Zoom account allows password login alongside SSO", nil
+	case !hasSSO && hasPassword:
+		return false, "Zoom account permits password login and does not advertise SSO as a sign-in method", nil
+	default:
+		return false, "Zoom account sign-in methods do not include SSO or password (e.g. only social login); SSO enforcement cannot be confirmed", nil
 	}
-	return false, "Zoom account allows password login alongside SSO", nil
 }

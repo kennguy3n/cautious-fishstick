@@ -88,6 +88,45 @@ func TestCheckSSOEnforcement_EmptyResponse_NotEnforced(t *testing.T) {
 	}
 }
 
+func TestCheckSSOEnforcement_PasswordOnly_NotEnforced(t *testing.T) {
+	c := ssoTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"login_types":["password"]}`))
+	})
+	enforced, details, err := c.CheckSSOEnforcement(context.Background(), validConfig(), validSecrets())
+	if err != nil {
+		t.Fatalf("CheckSSOEnforcement: %v", err)
+	}
+	if enforced {
+		t.Error("enforced=true; want false when only password is allowed")
+	}
+	if !strings.Contains(strings.ToLower(details), "does not advertise sso") {
+		t.Errorf("details=%q; want to mention 'does not advertise SSO' so callers don't claim SSO is available", details)
+	}
+}
+
+func TestCheckSSOEnforcement_UnrecognizedMethods_NotEnforced(t *testing.T) {
+	// e.g. ["google"] — neither SSO/SAML nor password/email. The
+	// boolean must stay false, and the details string must NOT
+	// falsely claim "password login alongside SSO" because in this
+	// case neither is advertised.
+	c := ssoTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"login_types":["google"]}`))
+	})
+	enforced, details, err := c.CheckSSOEnforcement(context.Background(), validConfig(), validSecrets())
+	if err != nil {
+		t.Fatalf("CheckSSOEnforcement: %v", err)
+	}
+	if enforced {
+		t.Error("enforced=true; want false for unrecognized-only methods")
+	}
+	if strings.Contains(strings.ToLower(details), "alongside sso") {
+		t.Errorf("details=%q; must not claim 'password login alongside SSO' when neither was advertised", details)
+	}
+	if !strings.Contains(strings.ToLower(details), "cannot be confirmed") {
+		t.Errorf("details=%q; want to mention enforcement cannot be confirmed", details)
+	}
+}
+
 func TestCheckSSOEnforcement_HTTPFailure(t *testing.T) {
 	c := ssoTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
