@@ -2,7 +2,7 @@
 
 This guide walks an Android (or any Kotlin/JVM) host application through integrating the **ShieldNet 360 Access SDK** end-to-end. It covers installation, configuration, every method on `AccessSDKClient`, error handling, and the contractual "no on-device inference" rule that the SDK enforces.
 
-The SDK lives at [`sdk/android/`](../../sdk/android/) and is published as a Maven artifact (`com.shieldnet360.access:access-sdk:<version>`) — see [`sdk/android/PUBLISHING.md`](../../sdk/android/PUBLISHING.md) for release coordinates. The cross-platform REST contract is documented in [`docs/SDK_CONTRACTS.md`](../SDK_CONTRACTS.md).
+The SDK lives at [`sdk/android/`](../../sdk/android/) and is published as a Maven artifact (`com.shieldnet360.access:access-sdk:<version>`) — see [`sdk/android/PUBLISHING.md`](../../sdk/android/PUBLISHING.md) for release coordinates. The cross-platform REST contract is documented in [`docs/sdk.md`](../sdk.md).
 
 Source of truth for every example in this guide: the sample app under [`sdk/android/example/`](../../sdk/android/example/).
 
@@ -279,7 +279,7 @@ The SDK enforces this in three ways:
 
 If your host app has its own ML stack (e.g. a separate TFLite model for on-device biometrics), keep that out of the access surface. The access SDK is a thin transport.
 
-See PROPOSAL.md §11.2 and §11.5 for the design rationale.
+See [`docs/sdk.md`](../sdk.md) for the cross-platform design rationale.
 
 ---
 
@@ -299,7 +299,7 @@ Start there — every code snippet in this guide is taken from or compatible wit
 ## 7. Versioning & support
 
 - The SDK follows semver. Breaking changes will increment MAJOR.
-- The current version is **0.1.0**. The matching `ztna-api` HTTP contract is documented in `docs/SDK_CONTRACTS.md` and `docs/swagger.{json,yaml}`.
+- The current version is **0.1.0**. The matching `ztna-api` HTTP contract is documented in `docs/sdk.md` and `docs/swagger.{json,yaml}`.
 - Each tagged release is announced in `sdk/android/CHANGELOG.md`.
 
 For bugs, open an issue on [`kennguy3n/cautious-fishstick`](https://github.com/kennguy3n/cautious-fishstick/issues) with the `area:sdk-android` label.
