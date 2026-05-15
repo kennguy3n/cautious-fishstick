@@ -254,7 +254,7 @@ const expectedSSOEnforcementCheckerCount = 14
 func TestRegistry_ExactConnectorCount(t *testing.T) {
 	got := len(access.ListRegisteredProviders())
 	if got != expectedConnectorCount {
-		t.Fatalf("ListRegisteredProviders() count = %d; want %d (update docs/{PHASES,PROGRESS,ARCHITECTURE,LISTCONNECTORS}.md + README.md)", got, expectedConnectorCount)
+		t.Fatalf("ListRegisteredProviders() count = %d; want %d (update docs/internal/PHASES.md + docs/internal/PROGRESS.md + docs/architecture.md + docs/connectors.md + README.md)", got, expectedConnectorCount)
 	}
 }
 
