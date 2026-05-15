@@ -3,9 +3,10 @@
 [![CI](https://github.com/kennguy3n/cautious-fishstick/actions/workflows/ci.yml/badge.svg)](https://github.com/kennguy3n/cautious-fishstick/actions/workflows/ci.yml) [![Python CI](https://github.com/kennguy3n/cautious-fishstick/actions/workflows/python-ci.yml/badge.svg)](https://github.com/kennguy3n/cautious-fishstick/actions/workflows/python-ci.yml)
 
 > **Status:** ~97% complete. See [`docs/PROGRESS.md`](docs/PROGRESS.md) for details.
-> - Phases 0, 6, 7, 8, 9: shipped
+> - Phases 0, 6, 7, 8, 9, 11: shipped
 > - Phases 1–5: backend complete, Admin UI pending (lives in `ztna-frontend`)
 > - Phase 10: 200 / 200 connectors registered, advanced caps shipped across 194 (6 n/a), audit logs across 198 (2 n/a), SSO federation across 104 (96 n/a)
+> - Phase 11: hybrid access model, 5-layer leaver kill switch, 14 `SessionRevoker` + 14 `SSOEnforcementChecker` connectors
 
 The ShieldNet 360 Access Platform is a multi-tenant zero-trust access control plane. It lets small and medium-sized businesses connect, manage, and secure access to **200+ cloud platforms, SaaS applications, and identity systems** from a single product — without writing policy DSLs, decoding SAML metadata, or hand-rolling SCIM payloads.
 
