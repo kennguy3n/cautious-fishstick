@@ -315,3 +315,6 @@ The checkboxes below are intentionally split: `[ ]` items are **per-PR** invaria
 - [x] **SN360 language alignment** verified by `scripts/check_sn360_language.sh`.
 - [x] **Swagger drift** check via `scripts/generate-swagger.sh --check`.
 - [x] **Client-side AI rule** — no model files anywhere under `sdk/`, enforced by `scripts/check_no_model_files.sh`.
+- [x] **Stale doc-reference guard** — no references to retired `PROPOSAL.md` / `ARCHITECTURE.md` / `LISTCONNECTORS.md` / `SDK_CONTRACTS.md` outside `docs/internal/` + `CHANGELOG.md`, enforced by `scripts/check_stale_references.sh` (and wired into `make lint`).
+- [x] **Integration test workflow** — PRs touching `internal/`, `go.mod/sum`, or the `Makefile` run `make test-integration` against a Postgres 16 service container via `.github/workflows/integration-test.yml`.
+- [x] **Request-ID correlation** — every HTTP response carries an `X-Request-ID` header (honoured if inbound, otherwise minted UUIDv4) and every 4xx/5xx body mirrors it under `request_id`; threaded through the JSON logger via `internal/handlers/request_id_middleware.go`.

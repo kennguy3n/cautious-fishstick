@@ -154,6 +154,9 @@ The full per-provider matrix lives in [`docs/connectors.md`](docs/connectors.md)
 | [`docs/sdk.md`](docs/sdk.md)                             | Mobile + Desktop SDK contract and integration guide.      |
 | [`docs/guides/`](docs/guides/)                           | Platform integration walkthroughs (iOS, Android, Desktop).|
 | [`docs/swagger.yaml`](docs/swagger.yaml)                 | OpenAPI 3.0 spec for the HTTP API.                        |
+| [`cmd/README.md`](cmd/README.md)                         | Per-binary catalogue (ports, env vars) for `ztna-api`, `access-connector-worker`, `access-workflow-engine`, `access-ai-agent`. |
+| [`docker/README.md`](docker/README.md)                   | Dockerfile catalogue + two-stage build pattern.            |
+| [`deploy/README.md`](deploy/README.md)                   | Kubernetes deployment (raw + Kustomize + Helm).            |
 
 ---
 
