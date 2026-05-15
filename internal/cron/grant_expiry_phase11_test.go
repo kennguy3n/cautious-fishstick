@@ -658,3 +658,74 @@ func TestGrantExpiryEnforcer_NoAuditProducerIsNoOp(t *testing.T) {
 		t.Error("revoked_at not set")
 	}
 }
+
+// TestGrantExpiryEnforcer_RunWarning_ThenRunRevokes is the Phase 11
+// batch 6 interaction test for T12: a grant that is first surfaced
+// by RunWarning (so its LastWarnedAt column gets stamped) must
+// still be picked up by Run once its ExpiresAt has elapsed, even
+// though the dedup pivot would suppress a second warning. This
+// guarantees the dedup column is scoped to RunWarning only and
+// cannot accidentally veto a real revoke.
+func TestGrantExpiryEnforcer_RunWarning_ThenRunRevokes(t *testing.T) {
+	db := newGrantDB(t)
+	t0 := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	expiresAt := t0.Add(2 * time.Hour)
+	seedGrant(t, db, "01HGRANT0WARNREVOKE000000A", &expiresAt)
+
+	rev := &captureRevoker{now: func() time.Time { return t0 }, db: db}
+	loader := newStubCredentialsLoader()
+	loader.set("01HCONN00000000000000000A",
+		map[string]interface{}{}, map[string]interface{}{"api_key": "k"}, nil)
+	notifier := &stubGrantExpiryNotifier{}
+
+	e := NewGrantExpiryEnforcer(db, rev, loader, 100)
+	e.SetClock(func() time.Time { return t0 })
+	e.SetWarningHours(24)
+	e.SetNotifier(notifier)
+
+	// Tick 1: RunWarning fires the heads-up notification and
+	// stamps LastWarnedAt on the grant row.
+	warned, err := e.RunWarning(context.Background())
+	if err != nil {
+		t.Fatalf("RunWarning (warn tick): %v", err)
+	}
+	if warned != 1 {
+		t.Fatalf("warn tick warned = %d; want 1", warned)
+	}
+	var rowAfterWarn models.AccessGrant
+	if err := db.Where("id = ?", "01HGRANT0WARNREVOKE000000A").First(&rowAfterWarn).Error; err != nil {
+		t.Fatalf("load after warn: %v", err)
+	}
+	if rowAfterWarn.LastWarnedAt == nil {
+		t.Fatal("LastWarnedAt = nil after warn; want stamped so dedup engages")
+	}
+	if rowAfterWarn.RevokedAt != nil {
+		t.Fatal("RevokedAt = non-nil after warn; warning sweep must not revoke")
+	}
+
+	// Advance the clock past ExpiresAt and Run() the eviction
+	// sweep. The grant has already been warned (LastWarnedAt is
+	// set), so this is the exact interaction T12 cares about:
+	// the dedup column scoped to RunWarning must not stop Run from
+	// revoking a now-expired grant.
+	e.SetClock(func() time.Time { return t0.Add(3 * time.Hour) })
+	rev.now = func() time.Time { return t0.Add(3 * time.Hour) }
+
+	revoked, err := e.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run (eviction tick): %v", err)
+	}
+	if revoked != 1 {
+		t.Fatalf("eviction tick revoked = %d; want 1", revoked)
+	}
+	if len(rev.calls) != 1 || rev.calls[0] != "01HGRANT0WARNREVOKE000000A" {
+		t.Errorf("captureRevoker.calls = %v; want [warned grant]", rev.calls)
+	}
+	var rowAfterRun models.AccessGrant
+	if err := db.Where("id = ?", "01HGRANT0WARNREVOKE000000A").First(&rowAfterRun).Error; err != nil {
+		t.Fatalf("load after run: %v", err)
+	}
+	if rowAfterRun.RevokedAt == nil {
+		t.Fatal("RevokedAt = nil after Run; warned grant must still get revoked when it expires")
+	}
+}
