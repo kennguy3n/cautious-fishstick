@@ -206,7 +206,7 @@ Reviewers don't poll the platform. The platform tells them when there's work to 
 - **In-app** — the reviewer's home screen shows pending decisions.
 - **Web push** for the desktop client, via `WebPushNotifier` (push subscriptions stored in `push_subscriptions`, migration `010`).
 
-All notifications are best-effort. Notification failures are logged but never roll back a campaign — campaign state always commits first; notifications are fired after the transaction (PHASES Phase 5). This is the same pattern as the rest of the platform: state of record commits before any external side-effect.
+All notifications are best-effort. Notification failures are logged but never roll back a campaign — campaign state always commits first; notifications are fired after the transaction. This is the same pattern as the rest of the platform: state of record commits before any external side-effect.
 
 ## A worked example
 
