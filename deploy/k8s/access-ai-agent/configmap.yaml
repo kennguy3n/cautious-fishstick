@@ -23,7 +23,7 @@ metadata:
 type: Opaque
 stringData:
   # Must match ACCESS_AI_AGENT_API_KEY on ztna-api per
-  # docs/PROPOSAL.md §10.3.
+  # docs/architecture.md §12.
   api-key: "CHANGE_ME"
   openai-api-key: ""
   anthropic-api-key: ""

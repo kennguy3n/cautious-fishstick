@@ -1,10 +1,10 @@
 # Deployment for access-ai-agent — Python A2A skill server hosting
 # the five Tier-1 access skills (risk assessment, anomaly detection,
 # policy recommendation, connector setup, review automation).
-# Cluster-internal only per docs/PROPOSAL.md §10.3; ztna-api dials
+# Cluster-internal only per docs/architecture.md §12; ztna-api dials
 # this via ACCESS_AI_AGENT_BASE_URL with an X-API-Key shared secret.
 #
-# Resources are sized per docs/ARCHITECTURE.md §11: "AI agent server
+# Resources are sized per docs/architecture.md §12: "AI agent server
 # is sized per model load and scales horizontally." The defaults
 # here assume the in-tree skills run with a remote LLM (no local
 # model load); operators bumping memory to host a local model

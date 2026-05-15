@@ -1,6 +1,6 @@
 """access-ai-agent — A2A skill server for the access platform.
 
-Per docs/PROPOSAL.md §7.1 and docs/ARCHITECTURE.md §8 the access
+Per docs/architecture.md §7 and docs/architecture.md §8 the access
 platform pushes decision-support requests to a co-located Python
 agent over plain JSON. The Go side (``internal/pkg/aiclient``)
 hosts the canonical client; this module is the server-side

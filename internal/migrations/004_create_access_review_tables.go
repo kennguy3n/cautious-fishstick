@@ -9,8 +9,8 @@ import (
 )
 
 // Migration004CreateAccessReviewTables creates the two Phase 5 tables
-// (access_reviews, access_review_decisions) per docs/PROPOSAL.md §9
-// and docs/ARCHITECTURE.md §6 using GORM AutoMigrate.
+// (access_reviews, access_review_decisions) per docs/architecture.md §11
+// and docs/architecture.md §7 using GORM AutoMigrate.
 //
 // All indexes are declared on the model struct tags and materialised
 // here. No FOREIGN KEY constraints (per SN360 database-index rule and

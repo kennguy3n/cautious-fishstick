@@ -12,9 +12,9 @@
 //   - README.md (connector count, optional-interface counts)
 //   - docs/PHASES.md (Phase 11 status table)
 //   - docs/PROGRESS.md §2 capability status
-//   - docs/ARCHITECTURE.md §12 (Hybrid Access Model)
-//   - docs/LISTCONNECTORS.md
-//   - docs/PROPOSAL.md §13
+//   - docs/architecture.md §12 (Hybrid Access Model)
+//   - docs/connectors.md
+//   - docs/architecture.md §13
 package access_test
 
 import (
@@ -232,13 +232,13 @@ const expectedConnectorCount = 200
 
 // expectedSessionRevokerCount is the canonical number of
 // AccessConnector implementations that also satisfy SessionRevoker.
-// docs/PROPOSAL.md §13.5 (kill-switch) calls this the Tier 1 set
+// docs/architecture.md §13 (kill-switch) calls this the Tier 1 set
 // for the leaver flow.
 const expectedSessionRevokerCount = 14
 
 // expectedSSOEnforcementCheckerCount is the canonical number of
 // AccessConnector implementations that also satisfy
-// SSOEnforcementChecker. docs/PROPOSAL.md §13.3 (SSO-only
+// SSOEnforcementChecker. docs/architecture.md §13 (SSO-only
 // enforcement verification) uses this set for the orphan
 // reconciler's daily SSO-regression scan. The count grows when a
 // connector adds a CheckSSOEnforcement implementation; the matching
@@ -254,7 +254,7 @@ const expectedSSOEnforcementCheckerCount = 14
 func TestRegistry_ExactConnectorCount(t *testing.T) {
 	got := len(access.ListRegisteredProviders())
 	if got != expectedConnectorCount {
-		t.Fatalf("ListRegisteredProviders() count = %d; want %d (update docs/{PHASES,PROGRESS,ARCHITECTURE,LISTCONNECTORS}.md + README.md)", got, expectedConnectorCount)
+		t.Fatalf("ListRegisteredProviders() count = %d; want %d (update docs/internal/PHASES.md + docs/internal/PROGRESS.md + docs/architecture.md + docs/connectors.md + README.md)", got, expectedConnectorCount)
 	}
 }
 

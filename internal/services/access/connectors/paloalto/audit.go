@@ -29,7 +29,7 @@ const (
 // Authenticated with the same x-redlock-auth JWT header used for the
 // rest of the connector. Non-eligible tenants (401 / 403 / 404)
 // gracefully downgrade via access.ErrAuditNotAvailable per
-// PROPOSAL.md §2.1.
+// docs/architecture.md §2.
 func (c *PaloAltoAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

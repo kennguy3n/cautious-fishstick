@@ -155,7 +155,7 @@ func TestClassifyAccessMode(t *testing.T) {
 // TestIsValidAccessMode asserts the three known modes pass and
 // arbitrary strings fail. The function is one switch statement —
 // the test exists to lock the public surface and catch typos that
-// drift the canonical set away from docs/PROPOSAL.md §13.
+// drift the canonical set away from docs/architecture.md §13.
 func TestIsValidAccessMode(t *testing.T) {
 	valid := []string{models.AccessModeTunnel, models.AccessModeSSOOnly, models.AccessModeAPIOnly}
 	for _, v := range valid {

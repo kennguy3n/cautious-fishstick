@@ -6,7 +6,7 @@ import (
 	"gorm.io/datatypes"
 )
 
-// AccessJob mirrors the access_jobs table per docs/ARCHITECTURE.md
+// AccessJob mirrors the access_jobs table per docs/architecture.md
 // §10. One row per worker job run — sync_identities,
 // provision_access, revoke_access, list_entitlements. The Phase 6
 // scaffold persists the job lifecycle in this table; a future
@@ -52,7 +52,7 @@ type AccessJob struct {
 }
 
 // TableName overrides the default plural so the table name matches
-// docs/ARCHITECTURE.md §10.
+// docs/architecture.md §5.
 func (AccessJob) TableName() string {
 	return "access_jobs"
 }

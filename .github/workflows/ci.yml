@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   go:
-    name: go (build / vet / test / swagger / sn360-language / sdk-no-model-files)
+    name: go (build / vet / test / swagger / sn360-language / sdk-no-model-files / stale-refs)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -45,6 +45,9 @@ jobs:
 
       - name: Verify no on-device model files under sdk/
         run: bash scripts/check_no_model_files.sh
+
+      - name: Verify no stale doc references
+        run: bash scripts/check_stale_references.sh
 
   docker-compose-smoke:
     name: docker-compose smoke (build + /health + /healthz)

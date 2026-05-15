@@ -255,7 +255,7 @@ type CronJobs struct {
 	CredentialChecker       *cron.CredentialChecker
 	CredentialCheckInterval time.Duration
 	// GrantExpiryEnforcer revokes access_grants whose expires_at has
-	// passed. Phase 11 (docs/PROPOSAL.md §13). nil when the binary
+	// passed. Phase 11 (docs/architecture.md §13). nil when the binary
 	// boots without a provisioning service or credentials loader
 	// wired (the early-scaffold path).
 	GrantExpiryEnforcer *cron.GrantExpiryEnforcer
@@ -272,7 +272,7 @@ type CronJobs struct {
 	GrantExpiryWarningInterval time.Duration
 	// OrphanReconcilerScheduler walks every workspace and asks the
 	// orphan reconciler to find upstream SaaS users with no IdP
-	// pivot. Phase 11 (docs/PROPOSAL.md §13.4). nil when the binary
+	// pivot. Phase 11 (docs/architecture.md §13). nil when the binary
 	// boots without a reconciler wired.
 	OrphanReconcilerScheduler *cron.OrphanReconcilerScheduler
 	OrphanReconcileInterval   time.Duration
@@ -610,7 +610,7 @@ func main() {
 		// AnomalyDetectionService.ScanWorkspace satisfies
 		// cron.WorkspaceScanner. The AI detector is nil here — the
 		// service degrades gracefully to an empty observation list
-		// per docs/PROPOSAL.md §5.3 so the cron stays useful even
+		// per docs/architecture.md §8 so the cron stays useful even
 		// without the agent.
 		scanner = access.NewAnomalyDetectionService(db, nil)
 	} else {

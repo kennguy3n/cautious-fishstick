@@ -9,7 +9,7 @@ import (
 )
 
 // Migration006CreateAccessSyncState creates the access_sync_state
-// table per docs/PROPOSAL.md §9.1 + docs/ARCHITECTURE.md §3 using
+// table per docs/architecture.md §11 + docs/architecture.md §3 using
 // GORM AutoMigrate. The unique composite index on (connector_id,
 // kind) is declared on the model struct tags and materialised here
 // — a single connector never holds two open cursors of the same

@@ -68,7 +68,7 @@ type Dependencies struct {
 
 	// ConnectorManagementService backs POST /access/connectors, DELETE
 	// /access/connectors/:id, PUT /access/connectors/:id/secret and
-	// POST /access/connectors/:id/sync (per docs/ARCHITECTURE.md §2).
+	// POST /access/connectors/:id/sync (per docs/architecture.md §2).
 	// May be nil in dev binaries that read connectors out of a static
 	// fixture; the routes are only registered when wired.
 	ConnectorManagementService *access.ConnectorManagementService

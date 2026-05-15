@@ -7,8 +7,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// Resource mirrors the resources table per docs/PROPOSAL.md §9 and
-// docs/ARCHITECTURE.md §5. Resources are the targets of access policies:
+// Resource mirrors the resources table per docs/architecture.md §11.
+// Resources are the targets of access policies:
 // a draft policy's ResourceSelector matches Resources via ExternalID,
 // Category, or Tags, and the matched Resources are listed in the
 // ImpactReport's AffectedResources field.

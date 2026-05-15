@@ -61,7 +61,7 @@ var (
 
 // AccessConnector is the mandatory contract every access provider implements.
 //
-// Method semantics (see docs/PROPOSAL.md §2.1 for the full table):
+// Method semantics (see docs/architecture.md §2 for the full table):
 //
 //   - Validate MUST NOT perform network I/O. It checks format, required
 //     fields, and mutually-exclusive combinations only. Errors here surface
@@ -226,7 +226,7 @@ type SSOMetadata struct {
 // optional AccessAuditor capability. Event-shape stabilises across providers
 // so the audit pipeline does not need provider-specific code paths.
 //
-// Canonical fields (per docs/PROPOSAL.md §2.1):
+// Canonical fields (per docs/architecture.md §2):
 //
 //   - EventType: provider event-type slug (e.g. "signIn", "role.assigned").
 //   - ActorExternalID: identifier of the user / service-account who performed

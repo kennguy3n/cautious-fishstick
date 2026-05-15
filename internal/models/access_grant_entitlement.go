@@ -44,7 +44,7 @@ type AccessGrantEntitlement struct {
 }
 
 // TableName overrides the default plural so the table name matches
-// docs/PROPOSAL.md §9.1.
+// docs/architecture.md §11.
 func (AccessGrantEntitlement) TableName() string {
 	return "access_grant_entitlements"
 }

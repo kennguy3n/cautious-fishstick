@@ -13,7 +13,7 @@ import (
 )
 
 // Migration001CreateAccessConnectors creates the access_connectors table per
-// docs/PROPOSAL.md §9.1 using GORM AutoMigrate. The composite index on
+// docs/architecture.md §11 using GORM AutoMigrate. The composite index on
 // (workspace_id, provider, connector_type) is declared on the model and
 // materialised here.
 //

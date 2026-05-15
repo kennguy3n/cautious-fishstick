@@ -8,7 +8,7 @@ import (
 )
 
 // ProviderName is the registry key for the Microsoft Entra ID connector.
-// Lowercased, snake_case per docs/PROPOSAL.md §3.1.
+// Lowercased, snake_case per docs/architecture.md §3.
 const ProviderName = "microsoft"
 
 // Config is the operator-visible configuration for an Entra ID connector

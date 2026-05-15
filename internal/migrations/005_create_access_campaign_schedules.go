@@ -9,7 +9,7 @@ import (
 )
 
 // Migration005CreateAccessCampaignSchedules creates the
-// access_campaign_schedules table per docs/PROPOSAL.md §9 (Phase 5
+// access_campaign_schedules table per docs/architecture.md §11 (Phase 5
 // scheduled campaigns) using GORM AutoMigrate. The composite index
 // on (workspace_id, is_active) and the standalone next_run_at index
 // are declared on the model struct tags and materialised here.

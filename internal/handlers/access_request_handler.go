@@ -28,7 +28,7 @@ func NewAccessRequestHandler(service *access.AccessRequestService) *AccessReques
 }
 
 // Register wires the handler's routes onto r. Routes follow the
-// shape in docs/PROPOSAL.md §11 ("POST /access/requests" + verbs).
+// shape in docs/architecture.md §2 ("POST /access/requests" + verbs).
 func (h *AccessRequestHandler) Register(r *gin.Engine) {
 	g := r.Group("/access/requests")
 	g.POST("", h.CreateRequest)

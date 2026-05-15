@@ -7,8 +7,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// Team mirrors the teams table per docs/PROPOSAL.md §9 and
-// docs/ARCHITECTURE.md §5. Teams are the unit of attribute-based
+// Team mirrors the teams table per docs/architecture.md §11.
+// Teams are the unit of attribute-based
 // targeting for Phase 3 policy simulation: a draft policy's
 // AttributesSelector matches Teams via Team.Attributes, and the
 // matched Teams are then expanded to their members.

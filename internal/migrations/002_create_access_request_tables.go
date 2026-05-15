@@ -10,7 +10,7 @@ import (
 
 // Migration002CreateAccessRequestTables creates the four Phase 2 tables
 // (access_requests, access_request_state_history, access_grants,
-// access_workflows) per docs/ARCHITECTURE.md §10 using GORM AutoMigrate.
+// access_workflows) per docs/architecture.md §5 using GORM AutoMigrate.
 //
 // All indexes are declared on the model struct tags and materialised here.
 // No FOREIGN KEY constraints (per SN360 database-index rules and
@@ -27,8 +27,8 @@ func Migration002CreateAccessRequestTables(db *gorm.DB) error {
 	}
 
 	// AutoMigrate each model in dependency-free order. There are no FKs,
-	// so the order is purely cosmetic — kept matching docs/ARCHITECTURE.md
-	// §10 for readability.
+	// so the order is purely cosmetic — kept matching docs/architecture.md
+	// §5 for readability.
 	tables := []interface{}{
 		&models.AccessRequest{},
 		&models.AccessRequestStateHistory{},
