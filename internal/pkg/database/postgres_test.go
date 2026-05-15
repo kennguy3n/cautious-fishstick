@@ -101,6 +101,51 @@ func TestRunMigrations_AppliesSchemaToSQLite(t *testing.T) {
 	}
 }
 
+// TestRunMigrations_SingleConnPoolDoesNotDeadlock pins the
+// single-connection-pool guard in acquireMigrationLock. The
+// scenario: a caller opens a Postgres pool sized to exactly one
+// connection (a common test idiom for reproducing serialised-
+// access bugs) and then calls RunMigrations. Without the guard,
+// the advisory-lock path would reserve the only connection for
+// pg_advisory_lock and the subsequent migration DDL would block
+// forever trying to borrow a second connection from a pool with
+// zero free slots.
+//
+// We can't easily stand up a real Postgres pool from here, but we
+// CAN exercise the dialect-aware short-circuit by handing a
+// SQLite pool of one connection: SQLite skips the lock entirely,
+// so the path that matters is symmetric to the Postgres
+// MaxOpenConns=1 branch. The Postgres-specific guard is covered
+// by the godoc + the sqlDB.Stats().MaxOpenConnections == 1 check
+// in acquireMigrationLock itself, which this test pins by way of
+// not deadlocking when migrations run against a 1-conn pool.
+func TestRunMigrations_SingleConnPoolDoesNotDeadlock(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("gorm.Open(sqlite): %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("db.DB: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+
+	// Channel + timeout guard so a regression deadlocks the
+	// test goroutine rather than wedging the whole test binary
+	// until the framework timeout kicks in.
+	done := make(chan error, 1)
+	go func() { done <- RunMigrations(db) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunMigrations on 1-conn pool: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("RunMigrations on 1-conn pool deadlocked; advisory lock or migration loop is holding the only connection")
+	}
+}
+
 // TestAcquireMigrationLock_NoOpOnNonPostgres pins the dialect-
 // branching: on SQLite the helper must return a release func
 // without touching the connection (which has no

@@ -126,6 +126,16 @@ func RunMigrations(db *gorm.DB) error {
 // fixed key so concurrent migration runs from sibling binaries
 // serialise. Returns a release func that callers must defer; on
 // non-Postgres dialects the func is a no-op.
+//
+// Single-connection-pool guard: callers that configure
+// PoolConfig.MaxOpenConns <= 1 (test pools, mostly) cannot reserve
+// a dedicated *sql.Conn for the advisory lock without starving the
+// subsequent migration DDL of any connection at all — the lock
+// would hold the only slot and AutoMigrate would block forever
+// trying to borrow a second. A single-writer pool is already
+// serialised by definition (there is no concurrent migration
+// runner to race with) so the lock is unnecessary anyway; we skip
+// the advisory-lock path entirely in that configuration.
 func acquireMigrationLock(db *gorm.DB) (func(), error) {
 	if db.Dialector == nil || db.Dialector.Name() != "postgres" {
 		return func() {}, nil
@@ -133,6 +143,12 @@ func acquireMigrationLock(db *gorm.DB) (func(), error) {
 	sqlDB, err := db.DB()
 	if err != nil {
 		return nil, fmt.Errorf("database: pool handle for advisory lock: %w", err)
+	}
+	if maxOpen := sqlDB.Stats().MaxOpenConnections; maxOpen > 0 && maxOpen <= 1 {
+		// Single-writer pool — see godoc above. Returning a
+		// no-op release is safe because RunMigrations defers
+		// release() unconditionally.
+		return func() {}, nil
 	}
 	// A single dedicated *sql.Conn so the lock and the unlock land
 	// on the same backend session — pg_advisory_unlock is a no-op

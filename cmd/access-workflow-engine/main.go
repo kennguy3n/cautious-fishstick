@@ -21,6 +21,7 @@ import (
 	"net/smtp"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -352,10 +353,36 @@ func openDatabase() (*gorm.DB, string, error) {
 	return db, desc, nil
 }
 
-// redactDSN strips the user:password segment from a libpq URL so the
-// startup log never echoes the Postgres password. Anything that isn't
-// a `scheme://user:pass@host/...` URL is returned unchanged.
+// libpqKeyValuePasswordRE matches the libpq key=value DSN password
+// segment. libpq accepts either URL-style (postgres://user:pass@host)
+// or space-separated key=value (host=foo password=bar dbname=baz)
+// DSNs; the env-var documentation steers operators toward the URL
+// form, but redactDSN handles both so a misconfigured deployment
+// can't accidentally log the password from a key=value string.
+//
+// libpq also allows single-quoted values (password='se cret') for
+// passwords containing spaces or special characters, so the regex
+// covers both bare and quoted forms.
+var libpqKeyValuePasswordRE = regexp.MustCompile(`(?i)\bpassword\s*=\s*(?:'[^']*'|\S+)`)
+
+// redactDSN strips the user:password segment from a libpq DSN so the
+// startup log never echoes the Postgres password. Handles two libpq
+// formats:
+//
+//   - URL style (postgres://user:pass@host/db) — the user:pass
+//     segment is replaced with [redacted].
+//   - key=value style (host=... password=... dbname=...) — every
+//     password=<value> token is replaced with password=[redacted].
+//
+// Inputs that don't look like either are returned unchanged.
 func redactDSN(dsn string) string {
+	// key=value form: redact the password token first so a libpq
+	// connection string that happens to contain an '@' inside
+	// (e.g. host=host@example.com) doesn't fall into the URL
+	// branch and skip the password=... scrub.
+	if !strings.Contains(dsn, "://") {
+		return libpqKeyValuePasswordRE.ReplaceAllString(dsn, "password=[redacted]")
+	}
 	at := strings.LastIndex(dsn, "@")
 	if at < 0 {
 		return dsn
