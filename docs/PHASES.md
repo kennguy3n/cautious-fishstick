@@ -208,11 +208,11 @@ grant-expiry enforcement (docs/PROPOSAL.md §13).
 ### WS3 — SSO-only enforcement verification
 
 - [x] `SSOEnforcementChecker` optional capability interface.
-- [x] **12 connectors** implement the interface today: Salesforce,
+- [x] **14 connectors** implement the interface today: Salesforce,
   Google Workspace, Okta, Slack, GitHub, Microsoft (top-6) and
   Auth0, Ping Identity, Zendesk, BambooHR, Workday, HubSpot
-  (Phase 11 batch 6). Every implementation ships with httptest-driven
-  happy + failure tests.
+  (Phase 11 batch 6) and Dropbox, Zoom (Phase 11 Group B). Every
+  implementation ships with httptest-driven happy + failure tests.
 - [x] Health endpoint surfaces `sso_enforcement_status`.
 - [x] Orphan reconciler re-checks SSO enforcement on `sso_only`
   connectors daily.
