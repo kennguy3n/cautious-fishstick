@@ -11,7 +11,7 @@ import (
 
 // PolicyHandler bundles the HTTP entry points for the access-rule
 // (policy) lifecycle: draft → simulate → promote → test-access (per
-// docs/PROPOSAL.md §6 and docs/ARCHITECTURE.md §5).
+// docs/architecture.md §6 and docs/architecture.md §11).
 //
 // Handlers translate HTTP into PolicyService calls; they never talk
 // to the DB directly. Sentinel-based status mapping lives in
@@ -28,7 +28,7 @@ func NewPolicyHandler(service *access.PolicyService) *PolicyHandler {
 }
 
 // Register wires the handler's routes onto r. Routes follow the
-// shape in docs/PROPOSAL.md §11 and the workspace-prefixed
+// shape in docs/architecture.md §2 and the workspace-prefixed
 // convention used elsewhere in the SN360 admin API.
 func (h *PolicyHandler) Register(r *gin.Engine) {
 	g := r.Group("/workspace/policy")

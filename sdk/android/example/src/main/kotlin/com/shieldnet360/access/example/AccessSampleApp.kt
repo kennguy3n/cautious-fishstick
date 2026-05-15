@@ -2,7 +2,7 @@
  * AccessSampleApp.kt — Jetpack Compose sample demonstrating the
  * `OkHttpAccessSDKClient`. The view depends on `AccessSDKClient`
  * (interface), not the concrete class, per the DI pattern in
- * `docs/SDK_CONTRACTS.md`.
+ * `docs/sdk.md`.
  *
  * This file is plain Kotlin so it compiles under a standard JDK
  * toolchain; host apps wrap it in an Android Activity.

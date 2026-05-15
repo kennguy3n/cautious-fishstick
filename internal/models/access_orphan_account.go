@@ -10,7 +10,7 @@ import (
 // pair where the SaaS app reports a user that the identity provider does
 // NOT recognise. Orphan accounts are the Phase 11 ShieldNet 360 surface
 // area for the “unused app account” workflow described in
-// docs/PROPOSAL.md §13.4 — operators see them in the connector health
+// docs/architecture.md §13 — operators see them in the connector health
 // page and can either auto-revoke or dismiss.
 //
 // Status state machine:

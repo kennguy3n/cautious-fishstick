@@ -9,7 +9,7 @@ import (
 )
 
 // Migration014CreateAccessOrphanAccounts creates the Phase 11
-// access_orphan_accounts table per docs/PROPOSAL.md §13.4 using
+// access_orphan_accounts table per docs/architecture.md §13 using
 // GORM AutoMigrate.
 //
 // All indexes are declared on the AccessOrphanAccount struct tags

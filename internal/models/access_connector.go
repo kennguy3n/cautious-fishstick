@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// AccessConnector mirrors the access_connectors table per docs/PROPOSAL.md
+// AccessConnector mirrors the access_connectors table per docs/architecture.md
 // §9.1. One row per (workspace, provider, connector_type) tuple — the
 // duplicate-check index lives on that triple.
 //
@@ -36,7 +36,7 @@ type AccessConnector struct {
 	KeyVersion            int            `gorm:"not null;default:1" json:"key_version"`
 	Status                string         `gorm:"type:varchar(50);not null;default:'disconnected'" json:"status"`
 	// AccessMode classifies how the platform reaches the connector
-	// per docs/PROPOSAL.md §13 (Hybrid Access Model). One of:
+	// per docs/architecture.md §13 (Hybrid Access Model). One of:
 	//   - "tunnel"   — private / self-hosted resource fronted by an
 	//                  OpenZiti dataplane tunnel.
 	//   - "sso_only" — SaaS app federated through Keycloak; no API
@@ -57,7 +57,7 @@ type AccessConnector struct {
 }
 
 // TableName overrides the default plural form so the table is exactly
-// access_connectors (matching the migration and PROPOSAL.md §9.1).
+// access_connectors (matching the migration and docs/architecture.md §11).
 func (AccessConnector) TableName() string {
 	return "access_connectors"
 }
@@ -72,7 +72,7 @@ const (
 )
 
 // AccessMode enumerates the values stored in AccessConnector.AccessMode per
-// docs/PROPOSAL.md §13 (Hybrid Access Model).
+// docs/architecture.md §13 (Hybrid Access Model).
 const (
 	// AccessModeTunnel marks the connector as a private / self-hosted
 	// resource fronted by an OpenZiti dataplane tunnel. PolicyService
@@ -92,7 +92,7 @@ const (
 )
 
 // IsValidAccessMode reports whether mode is one of the three values
-// defined in docs/PROPOSAL.md §13. Used by the admin PATCH endpoint
+// defined in docs/architecture.md §13. Used by the admin PATCH endpoint
 // to reject typos before they reach the DB layer.
 func IsValidAccessMode(mode string) bool {
 	switch mode {

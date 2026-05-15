@@ -1,10 +1,10 @@
 # Deployment for ztna-api — the public HTTP surface of the
 # ShieldNet Access platform. Sizing follows the SN360 deployment
-# pattern in docs/PROPOSAL.md §10.2: cpu=200m mem=1Gi,
+# pattern in docs/architecture.md §12: cpu=200m mem=1Gi,
 # GOMEMLIMIT=900MiB GOGC=100. Readiness + liveness both probe
 # /health (always available per cmd/ztna-api/main.go:9).
 #
-# Per docs/PROPOSAL.md §10.3, ztna-api is the only cluster member
+# Per docs/architecture.md §12, ztna-api is the only cluster member
 # that gets a public ingress; access-workflow-engine and
 # access-ai-agent stay cluster-internal and authenticate via the
 # shared X-API-Key header that ACCESS_AI_AGENT_API_KEY pins.

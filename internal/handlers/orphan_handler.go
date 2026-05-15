@@ -25,7 +25,7 @@ type OrphanReconcilerReader interface {
 }
 
 // OrphanHandler exposes the Phase 11 "unused app accounts" surface
-// area per docs/PROPOSAL.md §13.4. The user-facing vocabulary used
+// area per docs/architecture.md §13. The user-facing vocabulary used
 // in JSON responses is the SN360 term ("unused app account") rather
 // than the engineering term ("orphan account").
 type OrphanHandler struct {
@@ -132,7 +132,7 @@ func (h *OrphanHandler) Reconcile(c *gin.Context) {
 	} else {
 		rows, err = h.svc.ReconcileWorkspace(c.Request.Context(), body.WorkspaceID)
 	}
-	// Best-effort across connectors (see docs/ARCHITECTURE.md §12.2): the
+	// Best-effort across connectors (see docs/architecture.md §12): the
 	// reconciler returns rows from successful connectors alongside an
 	// aggregated error from failed connectors. When rows are present we
 	// surface them with HTTP 200 plus an optional "partial_failure" field

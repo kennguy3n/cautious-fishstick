@@ -6,7 +6,7 @@ import (
 	"github.com/kennguy3n/cautious-fishstick/internal/models"
 )
 
-// ClassifyAccessMode picks one of the three docs/PROPOSAL.md §13
+// ClassifyAccessMode picks one of the three docs/architecture.md §13
 // access modes for a freshly-configured connector. The decision is
 // deterministic given (connector, config, sso metadata, sso federation
 // success) and is applied at Connect time before the access_connectors

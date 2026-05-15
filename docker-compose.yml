@@ -8,7 +8,7 @@
 #   - access-workflow-engine (HTTP webhooks on :8082)
 #   - access-ai-agent (A2A skill server on :8090)
 #
-# Env vars and ports follow docs/PROPOSAL.md §10.2. Every service has
+# Env vars and ports follow docs/architecture.md §12. Every service has
 # a real healthcheck so `docker compose up --wait` only returns once
 # the dependency graph is healthy.
 
@@ -66,7 +66,7 @@ services:
       # AssessRiskWithFallback / DetectAnomaliesWithFallback still
       # degrade gracefully if the agent is unreachable, so leaving
       # the API key empty keeps the dev-stack auth open per
-      # docs/PROPOSAL.md §10.3 (rotate before any non-local use).
+      # docs/architecture.md §12 (rotate before any non-local use).
       ACCESS_AI_AGENT_BASE_URL: http://access-ai-agent:8090
       ACCESS_AI_AGENT_API_KEY: ""
     healthcheck:

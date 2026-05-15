@@ -1,6 +1,6 @@
 // Command ztna-api is the access platform's HTTP API binary. It boots
 // a Gin HTTP server, exposes the access-platform endpoints described
-// in docs/PROPOSAL.md §11, and blank-imports every Phase 0 connector
+// in docs/architecture.md §2, and blank-imports every Phase 0 connector
 // so the process-global registry is populated.
 //
 // Production wiring: when ACCESS_DATABASE_URL is set the binary opens

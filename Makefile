@@ -31,6 +31,10 @@ test: ## go test -race -timeout=180s ./...
 test-short: ## go test -race -timeout=60s -short ./...
 	go test -race -timeout=60s -short ./...
 
+.PHONY: test-integration
+test-integration: ## go test -race -timeout=300s -tags=integration ./... (build-tagged integration suite)
+	go test -race -timeout=300s -tags=integration ./...
+
 # --- Python ----------------------------------------------------------
 
 .PHONY: test-python
@@ -55,6 +59,10 @@ sn360-check: ## fail if SN360 user-facing vocabulary regressed (CI gate)
 model-check: ## fail if an on-device model file landed under sdk/ (CI gate)
 	bash scripts/check_no_model_files.sh
 
+.PHONY: stale-ref-check
+stale-ref-check: ## fail if a retired doc filename is referenced outside docs/internal/ (CI gate)
+	bash scripts/check_stale_references.sh
+
 # --- Docker ----------------------------------------------------------
 
 .PHONY: docker-up
@@ -72,10 +80,10 @@ docker-logs: ## docker compose logs --no-color --tail=200
 # --- Aggregates -----------------------------------------------------
 
 .PHONY: lint
-lint: vet swagger-check sn360-check model-check ## run every CI lint gate
+lint: vet swagger-check sn360-check model-check stale-ref-check ## run every CI lint gate
 
 .PHONY: ci
-ci: vet test swagger-check sn360-check model-check ## run every CI gate locally
+ci: vet test swagger-check sn360-check model-check stale-ref-check ## run every CI gate locally
 
 # --- Help -----------------------------------------------------------
 

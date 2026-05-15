@@ -2,7 +2,7 @@ openapi: 3.0.0
 info:
   title: ShieldNet 360 Access Platform API
   description: |
-    HTTP surface for the ZTNA access platform (PHASES.md §11 + ARCHITECTURE.md §2).
+    HTTP surface for the ZTNA access platform (docs/internal/PHASES.md §11 + docs/architecture.md §2).
     Covers access requests, reviews, grants, policy drafting / simulation, AI
     explain / suggest, and inbound SCIM provisioning.
 

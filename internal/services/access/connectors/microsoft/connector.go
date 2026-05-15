@@ -213,7 +213,7 @@ func (c *M365AccessConnector) SyncIdentities(
 
 // SyncIdentitiesDelta exercises Microsoft Graph's /users/delta endpoint. A
 // 410 Gone from the provider is translated into access.ErrDeltaTokenExpired
-// per docs/PROPOSAL.md §2.2.
+// per docs/architecture.md §2.
 func (c *M365AccessConnector) SyncIdentitiesDelta(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

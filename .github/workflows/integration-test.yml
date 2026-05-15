@@ -1,0 +1,91 @@
+name: Integration tests
+
+# `make test-integration` runs the build-tagged integration suite
+# (currently the Phase-11 leaver kill switch and orphan reconciler
+# integration tests in internal/services/access/). The unit suite
+# already runs on every push via ci.yml; this workflow is a heavier
+# gate that only fires when something under internal/ changes, and
+# brings up a real PostgreSQL service container so the integration
+# tests exercise the prod DB driver rather than the in-memory SQLite
+# fallback.
+
+on:
+  pull_request:
+    paths:
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - '.github/workflows/integration-test.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - '.github/workflows/integration-test.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: go test -tags=integration (Postgres service)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: access
+          POSTGRES_PASSWORD: access
+          POSTGRES_DB: access
+        ports:
+          - 5432:5432
+        # The workflow runner cannot use a Compose-style
+        # `depends_on: condition: service_healthy`, so we declare the
+        # healthcheck on the service itself and wait for it explicitly
+        # in the first step.
+        options: >-
+          --health-cmd "pg_isready -U access -d access"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+    env:
+      # Match the docker-compose stack so the integration tests pick
+      # up the same DSN they would inside a fresh `make docker-up`.
+      ACCESS_DATABASE_URL: postgres://access:access@localhost:5432/access?sslmode=disable
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          check-latest: true
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Wait for Postgres
+        # The service container already has --health-cmd configured;
+        # belt-and-braces wait in case the runner races the probe.
+        run: |
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5432 -U access -d access; then
+              echo "postgres ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "postgres did not become ready" >&2
+          exit 1
+
+      - name: Run integration tests
+        run: make test-integration

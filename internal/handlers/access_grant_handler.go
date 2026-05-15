@@ -101,7 +101,7 @@ type GrantEntitlementsReader interface {
 // ListGrants handles GET /access/grants. user_id and connector_id
 // are read from the query string; at least one must be supplied so
 // the handler never surfaces an unbounded list (per
-// docs/PROPOSAL.md §11). Returns 200 with the active-grant array.
+// docs/architecture.md §2). Returns 200 with the active-grant array.
 func (h *AccessGrantHandler) ListGrants(c *gin.Context) {
 	userID := GetPtrStringQuery(c, "user_id")
 	connectorID := GetPtrStringQuery(c, "connector_id")
@@ -131,7 +131,7 @@ func (h *AccessGrantHandler) ListGrants(c *gin.Context) {
 // The adapter is intentionally trivial; it lives here (not in the
 // service package) so the service does not depend on the handler-
 // owned interface, preserving the dependency direction in
-// docs/ARCHITECTURE.md §1.
+// docs/architecture.md §1.
 type AccessGrantReaderAdapter struct {
 	Inner *access.AccessGrantQueryService
 }

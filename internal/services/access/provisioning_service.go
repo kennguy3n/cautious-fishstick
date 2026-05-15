@@ -50,7 +50,7 @@ func NewAccessProvisioningService(db *gorm.DB) *AccessProvisioningService {
 }
 
 // Provision pushes an approved request out to the upstream provider.
-// Lifecycle (per docs/ARCHITECTURE.md §4):
+// Lifecycle (per docs/architecture.md §4):
 //
 //  1. Transition the request approved → provisioning.
 //  2. Resolve the access_connectors row by request.ConnectorID and look
