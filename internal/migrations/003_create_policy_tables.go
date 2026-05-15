@@ -10,7 +10,7 @@ import (
 
 // Migration003CreatePolicyTables creates the four Phase 3 tables
 // (policies, teams, team_members, resources) per docs/architecture.md §11
-// and docs/architecture.md §11 using GORM AutoMigrate.
+// using GORM AutoMigrate.
 //
 // All indexes are declared on the model struct tags and materialised
 // here. No FOREIGN KEY constraints (per SN360 database-index rule and
@@ -28,7 +28,7 @@ func Migration003CreatePolicyTables(db *gorm.DB) error {
 
 	// AutoMigrate each model in dependency-free order. There are no FKs,
 	// so the order is purely cosmetic — kept matching docs/architecture.md
-	// §9 for readability.
+	// §11 for readability.
 	tables := []interface{}{
 		&models.Policy{},
 		&models.Team{},

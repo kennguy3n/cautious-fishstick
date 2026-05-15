@@ -28,7 +28,7 @@ func Migration002CreateAccessRequestTables(db *gorm.DB) error {
 
 	// AutoMigrate each model in dependency-free order. There are no FKs,
 	// so the order is purely cosmetic — kept matching docs/architecture.md
-	// §10 for readability.
+	// §5 for readability.
 	tables := []interface{}{
 		&models.AccessRequest{},
 		&models.AccessRequestStateHistory{},
