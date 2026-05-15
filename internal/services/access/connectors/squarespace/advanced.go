@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Squarespace member id or email
 //   - grant.ResourceExternalID -> member role (e.g. "subscriber", "contributor")
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func squarespaceValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

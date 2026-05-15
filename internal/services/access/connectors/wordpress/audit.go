@@ -28,7 +28,7 @@ const (
 // The Activity Log is only available on WordPress.com hosted sites;
 // self-hosted installations return 401/403/404 on this path, which the
 // connector soft-skips via access.ErrAuditNotAvailable per
-// PROPOSAL §2.1.
+// docs/architecture.md §2.
 func (c *WordPressAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

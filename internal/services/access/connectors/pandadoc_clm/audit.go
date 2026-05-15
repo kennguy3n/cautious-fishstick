@@ -27,7 +27,7 @@ const (
 //
 // The CLM audit-log API is gated behind PandaDoc CLM Enterprise; tokens
 // without the entitlement surface 401 / 403 / 404 which the connector
-// soft-skips via access.ErrAuditNotAvailable per PROPOSAL §2.1.
+// soft-skips via access.ErrAuditNotAvailable per docs/architecture.md §2.
 func (c *PandaDocCLMAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

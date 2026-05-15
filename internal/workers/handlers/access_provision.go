@@ -11,7 +11,7 @@ import (
 
 // provisionAccessPayload is the worker-specific payload shape for
 // an access_jobs row of job_type = provision_access. Mirrors the
-// AccessGrant shape per docs/PROPOSAL §5.4.
+// AccessGrant shape per docs/docs/architecture.md.
 type provisionAccessPayload struct {
 	UserExternalID     string                 `json:"user_external_id"`
 	ResourceExternalID string                 `json:"resource_external_id"`

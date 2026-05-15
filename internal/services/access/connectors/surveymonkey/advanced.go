@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> SurveyMonkey user ID or email
 //   - grant.ResourceExternalID -> role slug ("admin", "standard", "team_manager")
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func surveymonkeyValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

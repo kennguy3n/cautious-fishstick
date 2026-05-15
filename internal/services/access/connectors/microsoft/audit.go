@@ -25,7 +25,7 @@ const (
 // Graph back into the access audit pipeline. Implements
 // access.AccessAuditor.
 //
-// Endpoints (PROPOSAL §2.1, Task 2):
+// Endpoints (docs/architecture.md §2, Task 2):
 //
 //   - GET /auditLogs/signIns?$filter=createdDateTime ge {since}
 //   - GET /auditLogs/directoryAudits?$filter=activityDateTime ge {since}

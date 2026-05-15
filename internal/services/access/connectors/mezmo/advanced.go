@@ -27,7 +27,7 @@ import (
 //
 // All mutations are idempotent: adding an existing member with the
 // same role is treated as success, and deleting a non-existent member
-// is treated as success per PROPOSAL §2.1.
+// is treated as success per docs/architecture.md §2.
 
 func mezmoValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {
@@ -109,7 +109,7 @@ func (c *MezmoAccessConnector) ProvisionAccess(ctx context.Context, configRaw, s
 }
 
 // RevokeAccess removes the member. 404 is treated as idempotent
-// success per PROPOSAL §2.1.
+// success per docs/architecture.md §2.
 func (c *MezmoAccessConnector) RevokeAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
 	if err := mezmoValidateGrant(grant); err != nil {
 		return err

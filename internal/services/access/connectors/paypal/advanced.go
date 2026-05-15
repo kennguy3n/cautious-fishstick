@@ -36,7 +36,7 @@ import (
 //                                 "PAYMENT", "REFUND", "PARTNER_FEE")
 //
 // Auth: short-lived OAuth2 bearer minted via accessToken(); idempotent
-// on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1 — PayPal
+// on (UserExternalID, ResourceExternalID) per docs/architecture.md §2 — PayPal
 // returns 409 / 422 for duplicate tracking ids and 404 once a merchant
 // integration is fully deactivated.
 

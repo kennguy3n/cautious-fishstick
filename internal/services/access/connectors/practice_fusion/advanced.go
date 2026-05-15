@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Practice Fusion provider id or NPI / email
 //   - grant.ResourceExternalID -> role slug ("admin", "provider", "staff")
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func practiceFusionValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

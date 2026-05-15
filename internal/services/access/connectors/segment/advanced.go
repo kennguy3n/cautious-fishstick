@@ -27,7 +27,7 @@ import (
 //
 // Auth reuses the existing newRequest helper which sets
 // "Accept: application/vnd.segment.v1+json" and the bearer token.
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func segmentValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

@@ -62,7 +62,7 @@ func TestCloseConnectorFlow_FullLifecycle(t *testing.T) {
 	cfg := closeValidConfig()
 	secrets := closeValidSecrets()
 	// ResourceExternalID is the role id so the (user, resource) pair round-trips
-	// consistently through Provision → List → Revoke per PROPOSAL §2.1.
+	// consistently through Provision → List → Revoke per docs/architecture.md §2.
 	grant := access.AccessGrant{UserExternalID: userID, ResourceExternalID: roleID}
 
 	if err := c.Validate(context.Background(), cfg, secrets); err != nil {

@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Hootsuite member id (email)
 //   - grant.ResourceExternalID -> role slug (org_admin|team_admin|member|...)
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func hootsuiteValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

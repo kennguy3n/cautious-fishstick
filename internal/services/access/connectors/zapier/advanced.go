@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Zapier member email or numeric id
 //   - grant.ResourceExternalID -> role slug ("admin","member","viewer")
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func zapierValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

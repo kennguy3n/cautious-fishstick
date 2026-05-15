@@ -19,7 +19,7 @@ import (
 //   - RevokeAccess     -> DELETE /common/v1/admins/{id}
 //   - ListEntitlements -> GET    /common/v1/admins/{id}
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func sophosCentralValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

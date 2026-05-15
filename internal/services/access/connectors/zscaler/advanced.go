@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Zscaler admin user id (email)
 //   - grant.ResourceExternalID -> role slug (Super Admin|Audit Admin|...)
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func zscalerValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

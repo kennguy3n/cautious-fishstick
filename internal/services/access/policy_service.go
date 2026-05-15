@@ -207,7 +207,7 @@ var (
 
 	// ErrPolicyNotSimulated is returned by Promote when the target
 	// draft has no draft_impact stamped — Simulate must run before
-	// Promote (per PROPOSAL §6.5: simulate-before-promote).
+	// Promote (per docs/architecture.md: simulate-before-promote).
 	ErrPolicyNotSimulated = errors.New("access: policy must be simulated before promotion")
 
 	// ErrPolicyNotDraft is returned by Simulate when the target policy
@@ -308,7 +308,7 @@ func (s *PolicyService) GetPolicy(ctx context.Context, workspaceID, policyID str
 // Simulate runs the impact resolver and the conflict detector against
 // the supplied draft policy, merges the results into one ImpactReport,
 // stamps the report into policies.draft_impact, and returns it. Per
-// PROPOSAL §6.5 Simulate is the only path that populates
+// docs/architecture.md Simulate is the only path that populates
 // draft_impact; Promote consults it before flipping IsDraft.
 //
 // Simulate is read-mostly with a single UPDATE at the end. It is safe
@@ -336,7 +336,7 @@ func (s *PolicyService) Simulate(ctx context.Context, workspaceID, policyID stri
 	report.Highlights = buildHighlights(policy, report)
 
 	// Phase 4 AI scoring. PolicyService asks the assessor "how risky
-	// is this draft?". Per PROPOSAL §5.3 the AI is decision-support
+	// is this draft?". Per docs/architecture.md the AI is decision-support
 	// for Simulate — failure leaves the report's RiskScore empty
 	// rather than synthesising "medium". The fallback semantics for
 	// access requests (force "medium" on failure) intentionally do

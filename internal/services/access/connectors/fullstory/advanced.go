@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Fullstory user id or email
 //   - grant.ResourceExternalID -> role name (e.g. "Admin", "Architect", "Standard")
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func fullstoryValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

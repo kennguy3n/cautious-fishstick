@@ -27,7 +27,7 @@ import (
 //   - grant.ResourceExternalID -> ROLEID (admin|user|...) — surfaced
 //     in the USERINFO create envelope and echoed back from list.
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 // Sage Intacct surfaces "already exists" / "does not exist" via the
 // <errormessage> stanza inside the 200 OK envelope; the helpers below
 // detect those wordings instead of relying on HTTP status alone.

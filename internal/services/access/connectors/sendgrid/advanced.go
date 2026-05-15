@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> SendGrid teammate username (or invite email)
 //   - grant.ResourceExternalID -> scope slug (e.g. "mail.send", "marketing", "admin")
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func sendgridValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

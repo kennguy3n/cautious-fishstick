@@ -379,7 +379,7 @@ func (c *GoogleWorkspaceAccessConnector) SyncGroupMembers(
 //     overridden by stripping the `group:` prefix from grant.Role.
 //
 // 409 Conflict on group-add and "already exists" on license-assign are treated
-// as idempotent success per PROPOSAL §2.1.
+// as idempotent success per docs/architecture.md §2.
 func (c *GoogleWorkspaceAccessConnector) ProvisionAccess(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

@@ -53,7 +53,7 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 }
 
 // TestCreateRequest_RiskPersistFailureLogsAndReturnsNilError asserts
-// the contract from PROPOSAL §5.3: a failure to persist the AI risk
+// the contract from docs/architecture.md: a failure to persist the AI risk
 // score must NOT fail the access request. The service logs the
 // failure (so operators have a signal) and returns the in-memory
 // request unchanged with a nil error. The DB row stays without
@@ -71,7 +71,7 @@ func TestCreateRequest_RiskPersistFailureLogsAndReturnsNilError(t *testing.T) {
 
 	got, err := svc.CreateRequest(context.Background(), validInput())
 	if err != nil {
-		t.Fatalf("CreateRequest returned err = %v; want nil (per PROPOSAL §5.3 AI is decision-support)", err)
+		t.Fatalf("CreateRequest returned err = %v; want nil (per docs/architecture.md AI is decision-support)", err)
 	}
 	if got == nil {
 		t.Fatal("CreateRequest returned nil request without error")

@@ -155,7 +155,7 @@ func TestStartCampaign_AutoCertify_EscalateLeavesPending(t *testing.T) {
 }
 
 // TestStartCampaign_AutoCertify_AIUnreachableLeavesPending asserts
-// the PROPOSAL §5.3 fallback: when the automator returns ok=false
+// the docs/architecture.md fallback: when the automator returns ok=false
 // (AI unreachable / unconfigured / unrecognised verdict) every row
 // stays pending. The campaign succeeds without error — AI is
 // decision-support, not critical path.

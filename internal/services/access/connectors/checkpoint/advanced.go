@@ -21,7 +21,7 @@ import (
 // All /web_api/* verbs are POSTs carrying a JSON body and authenticate via
 // the X-chkp-sid session header (shared helper `newPostJSON` in
 // connector.go). Idempotent on (UserExternalID, ResourceExternalID) per
-// PROPOSAL §2.1.
+// docs/architecture.md §2.
 
 func checkpointValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

@@ -81,7 +81,7 @@ func tfRelationshipPayload(userID string) []byte {
 }
 
 // ProvisionAccess adds the user to the team. Idempotent on the
-// (user, team) pair per PROPOSAL §2.1.
+// (user, team) pair per docs/architecture.md §2.
 func (c *TerraformAccessConnector) ProvisionAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
 	if err := terraformValidateGrant(grant); err != nil {
 		return err

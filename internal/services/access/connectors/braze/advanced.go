@@ -29,7 +29,7 @@ import (
 //
 // Auth uses the SCIM bearer token (reusing the newRequest helper which
 // sets "Accept: application/scim+json"). Idempotent on
-// (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func brazeValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

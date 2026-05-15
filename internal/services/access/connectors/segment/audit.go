@@ -27,7 +27,7 @@ const (
 //
 // The audit-trail API requires a Workspace Owner Public API token; lesser
 // tokens surface 401 / 403 / 404 which the connector soft-skips via
-// access.ErrAuditNotAvailable per PROPOSAL §2.1.
+// access.ErrAuditNotAvailable per docs/architecture.md §2.
 func (c *SegmentAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

@@ -27,7 +27,7 @@ const (
 //
 // Audit trail access requires the `audit:read` permission on the API
 // session; lower permissions return 401 / 403 / 404 which the connector
-// soft-skips via access.ErrAuditNotAvailable per PROPOSAL §2.1.
+// soft-skips via access.ErrAuditNotAvailable per docs/architecture.md §2.
 func (c *BillDotComAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

@@ -18,7 +18,7 @@ import (
 //   - RevokeAccess     -> DELETE /api/0/organizations/{org}/members/{email}/
 //   - ListEntitlements -> GET    /api/0/organizations/{org}/members/{email}/
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 func TestSentryConnectorFlow_FullLifecycle(t *testing.T) {
 	const orgSlug = "acme"
 	const email = "alice@example.com"

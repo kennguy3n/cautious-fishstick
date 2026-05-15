@@ -116,7 +116,7 @@ func (c *CloseAccessConnector) RevokeAccess(ctx context.Context, configRaw, secr
 		return err
 	}
 	if assignmentID == "" {
-		// No matching assignment found — already revoked. Idempotent per PROPOSAL §2.1.
+		// No matching assignment found — already revoked. Idempotent per docs/architecture.md §2.
 		return nil
 	}
 

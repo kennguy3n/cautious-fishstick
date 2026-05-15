@@ -25,7 +25,7 @@ import (
 // "grant" maps to authorising the device against the tailnet so the
 // user (UserExternalID) can route through it. Revoke clears the
 // authorized flag. Both calls are idempotent on
-// (grant.UserExternalID, grant.ResourceExternalID) per PROPOSAL §2.1
+// (grant.UserExternalID, grant.ResourceExternalID) per docs/architecture.md §2
 // — Tailscale returns 200 OK for repeated PUTs and 404 when the
 // device is unknown.
 

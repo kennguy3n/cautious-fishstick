@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Buffer profile id or service handle
 //   - grant.ResourceExternalID -> service slug (e.g. "twitter", "facebook", "linkedin")
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func bufferValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

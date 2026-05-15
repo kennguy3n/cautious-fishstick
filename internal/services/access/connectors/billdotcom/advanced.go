@@ -26,7 +26,7 @@ import (
 //
 // Auth reuses the existing newRequest helper (devKey + sessionId
 // headers). Idempotent on (UserExternalID, ResourceExternalID) per
-// PROPOSAL §2.1 — Bill.com returns 409 / 422 "already" on duplicate
+// docs/architecture.md §2 — Bill.com returns 409 / 422 "already" on duplicate
 // invites and 404 on already-deleted users.
 
 func billdotcomValidateGrant(g access.AccessGrant) error {

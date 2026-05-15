@@ -27,7 +27,7 @@ const (
 //
 // The audit-log API requires a HelloSign Team / Business token; personal
 // tokens surface 401 / 403 / 404 which the connector soft-skips via
-// access.ErrAuditNotAvailable per PROPOSAL §2.1.
+// access.ErrAuditNotAvailable per docs/architecture.md §2.
 func (c *HelloSignAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

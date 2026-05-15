@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Prisma Cloud user email
 //   - grant.ResourceExternalID -> role slug ("System Admin","Account Group Admin","Account Group Read Only",...)
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func paloaltoValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

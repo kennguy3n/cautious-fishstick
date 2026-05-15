@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Wix member id or login email
 //   - grant.ResourceExternalID -> role name (e.g. "MEMBER", "CONTRIBUTOR")
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func wixValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

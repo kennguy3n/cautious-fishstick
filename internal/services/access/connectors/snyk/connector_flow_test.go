@@ -18,7 +18,7 @@ import (
 //   - RevokeAccess     -> DELETE /rest/orgs/{orgID}/members/{userID}
 //   - ListEntitlements -> GET    /rest/orgs/{orgID}/members/{userID}
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 func TestSnykConnectorFlow_FullLifecycle(t *testing.T) {
 	const orgID = "org_uuid_alpha"
 	const userID = "user_alice_uuid"

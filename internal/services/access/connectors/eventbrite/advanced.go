@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Eventbrite user id (email)
 //   - grant.ResourceExternalID -> role slug (owner|admin|sales|...)
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func eventbriteValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

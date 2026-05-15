@@ -386,7 +386,7 @@ func validateGrantPair(grant access.AccessGrant) error {
 // the (siteId, userId) pair: re-running it after the user is already
 // associated returns 200/204; some InsightVM versions return 409 with
 // an "already exists" envelope, which IsIdempotentProvisionStatus
-// recognises as success per PROPOSAL §2.1.
+// recognises as success per docs/architecture.md §2.
 func (c *Rapid7AccessConnector) ProvisionAccess(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},
@@ -424,7 +424,7 @@ func (c *Rapid7AccessConnector) ProvisionAccess(
 
 // RevokeAccess disassociates the user from the supplied site via
 // DELETE /api/3/sites/{siteId}/users/{userId}. 404 / "not found"
-// responses are treated as idempotent success per PROPOSAL §2.1.
+// responses are treated as idempotent success per docs/architecture.md §2.
 func (c *Rapid7AccessConnector) RevokeAccess(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

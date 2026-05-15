@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Magento customer numeric id or email
 //   - grant.ResourceExternalID -> Magento customer group id (e.g. "1" for General, "3" for Retailer)
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func magentoValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

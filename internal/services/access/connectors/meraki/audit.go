@@ -27,7 +27,7 @@ const (
 //
 // The action-batches API requires the dashboard "Organization read" role;
 // non-eligible API keys surface 401 / 403 / 404 which the connector
-// soft-skips via access.ErrAuditNotAvailable per PROPOSAL §2.1.
+// soft-skips via access.ErrAuditNotAvailable per docs/architecture.md §2.
 func (c *MerakiAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

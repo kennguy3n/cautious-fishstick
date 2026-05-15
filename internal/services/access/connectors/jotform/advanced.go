@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Jotform sub-user id or email
 //   - grant.ResourceExternalID -> permission slug ("admin", "editor", "viewer")
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func jotformValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

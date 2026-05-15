@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Navan user id (email or numeric id)
 //   - grant.ResourceExternalID -> role / permission slug
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1:
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2:
 // Navan returns 409 on duplicate POST and 404 on missing-user DELETE.
 
 func navanValidateGrant(g access.AccessGrant) error {

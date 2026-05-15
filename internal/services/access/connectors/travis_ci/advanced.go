@@ -30,7 +30,7 @@ import (
 //
 // All mutations are idempotent: re-activating an already-active repo
 // or deactivating an inactive repo is treated as success per
-// PROPOSAL §2.1.
+// docs/architecture.md §2.
 
 func travisValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {
@@ -104,7 +104,7 @@ func (c *TravisCIAccessConnector) ProvisionAccess(ctx context.Context, configRaw
 }
 
 // RevokeAccess deactivates the repo. 404 / 422 / already-deactivated
-// is treated as idempotent success per PROPOSAL §2.1.
+// is treated as idempotent success per docs/architecture.md §2.
 func (c *TravisCIAccessConnector) RevokeAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
 	if err := travisValidateGrant(grant); err != nil {
 		return err

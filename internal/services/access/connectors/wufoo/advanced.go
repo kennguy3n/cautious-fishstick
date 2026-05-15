@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Wufoo user id or email
 //   - grant.ResourceExternalID -> role slug ("administrator", "user", "viewer")
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func wufooValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

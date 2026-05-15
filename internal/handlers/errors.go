@@ -10,7 +10,7 @@ import (
 )
 
 // errorEnvelope is the canonical 4xx / 5xx body shape. Operator-
-// facing strings use the SN360 vocabulary (PROPOSAL §8) — "rule" not
+// facing strings use the SN360 vocabulary (docs/architecture.md) — "rule" not
 // "policy", "access check-up" not "review campaign" — so admin-UI
 // translations stay in lockstep with the service layer.
 type errorEnvelope struct {

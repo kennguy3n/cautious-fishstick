@@ -64,7 +64,7 @@ func (c *DockerHubAccessConnector) doRaw(req *http.Request) (int, []byte, error)
 }
 
 // ProvisionAccess adds the user to the group. Idempotent on the
-// (user, group) pair per PROPOSAL §2.1.
+// (user, group) pair per docs/architecture.md §2.
 func (c *DockerHubAccessConnector) ProvisionAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
 	if err := dockerValidateGrant(grant); err != nil {
 		return err

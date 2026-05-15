@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Jasper member id or email
 //   - grant.ResourceExternalID -> role slug ("owner", "admin", "editor", "viewer")
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func jasperValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

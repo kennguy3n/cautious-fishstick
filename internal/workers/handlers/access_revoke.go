@@ -22,7 +22,7 @@ type revokeAccessPayload struct {
 // AccessRevoke is the worker handler for revoke_access jobs. It
 // decodes the payload into an access.AccessGrant and calls
 // AccessConnector.RevokeAccess. Connector-level idempotency is
-// required (per docs/PROPOSAL §5.4).
+// required (per docs/docs/architecture.md).
 func AccessRevoke(ctx context.Context, jc JobContext, jobID string) error {
 	return runJob(ctx, jc, jobID, func(ctx context.Context, conn access.AccessConnector, job *models.AccessJob, cfg, secrets map[string]interface{}) error {
 		payload := []byte(job.Payload)

@@ -27,7 +27,7 @@ const (
 //
 // The audit API requires the OAuth2 "AUDIT" scope; tokens without it
 // surface 401 / 403 / 404 which the connector soft-skips via
-// access.ErrAuditNotAvailable per PROPOSAL §2.1.
+// access.ErrAuditNotAvailable per docs/architecture.md §2.
 func (c *SAPConcurAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

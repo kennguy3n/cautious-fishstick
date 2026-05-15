@@ -320,7 +320,7 @@ func TestHandleMover_GainsAndLosesTeams(t *testing.T) {
 
 // TestHandleMover_ProvisionsBeforeRevokes asserts the mover lane
 // provisions the gained-team grants BEFORE revoking the lost-team
-// grants. PROPOSAL §5.4 mandates "no partial-access window": doing
+// grants. docs/architecture.md mandates "no partial-access window": doing
 // the revoke first would leave the user with neither old nor new
 // access for the duration of the connector round-trip; doing the
 // provision first means the user briefly has both, which is the

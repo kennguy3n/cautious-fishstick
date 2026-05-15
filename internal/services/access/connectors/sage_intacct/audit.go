@@ -28,7 +28,7 @@ const sageIntacctAuditMaxPages = 200
 // Audit history visibility requires the user role to include "View
 // Audit Trail"; lower roles return XML error envelopes with auth/
 // permission markers (the connector also soft-skips on HTTP 401/403/
-// 404 per PROPOSAL §2.1).
+// 404 per docs/architecture.md §2).
 func (c *SageIntacctAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

@@ -26,7 +26,7 @@ import (
 //   - grant.ResourceExternalID -> AC userGroup id
 //
 // Auth uses the Api-Token header (already set by newRequest).
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func acValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

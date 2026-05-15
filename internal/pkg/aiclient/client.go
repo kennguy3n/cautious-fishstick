@@ -10,7 +10,7 @@
 // body.
 //
 // Failure semantics: AI is decision-support, not critical path
-// (PROPOSAL §5.3). InvokeSkill never panics; transport / decode
+// (docs/architecture.md). InvokeSkill never panics; transport / decode
 // errors surface to the caller, but the access platform's
 // service layer wraps the call site with a fallback that defaults to
 // risk_score=medium so a momentarily-unreachable AI never blocks an
@@ -248,7 +248,7 @@ type AnomalyDetectionPayload struct {
 // access_anomaly_detection skill and returns the (possibly empty)
 // AnomalyEvent slice from the response. Failure modes mirror
 // InvokeSkill — callers wrap with DetectAnomaliesWithFallback to
-// get the PROPOSAL §5.3 fallback (empty list on unreachable AI).
+// get the docs/architecture.md fallback (empty list on unreachable AI).
 func (c *AIClient) DetectAnomalies(ctx context.Context, grantID string, usageData map[string]interface{}) ([]AnomalyEvent, error) {
 	payload := AnomalyDetectionPayload{
 		GrantID:   grantID,

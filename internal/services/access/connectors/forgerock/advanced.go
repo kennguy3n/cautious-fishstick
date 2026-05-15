@@ -21,7 +21,7 @@ import (
 //
 // CREST PUT is used for create-or-replace; If-None-Match: * would make it
 // strictly create-only but we keep PUT idempotent so re-running ProvisionAccess
-// converges. Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// converges. Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func forgerockValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

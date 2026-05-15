@@ -32,7 +32,7 @@ import (
 // PATCH is naturally idempotent, so re-running ProvisionAccess with
 // the same role is a no-op. RevokeAccess restores the default
 // "REGULAR" role and 404 on a missing user is treated as success per
-// PROPOSAL §2.1.
+// docs/architecture.md §2.
 
 const driftDefaultRole = "REGULAR"
 
@@ -114,7 +114,7 @@ func (c *DriftAccessConnector) ProvisionAccess(ctx context.Context, configRaw, s
 }
 
 // RevokeAccess restores the default "REGULAR" role. 404 on a
-// non-existent user is treated as idempotent success per PROPOSAL §2.1.
+// non-existent user is treated as idempotent success per docs/architecture.md §2.
 func (c *DriftAccessConnector) RevokeAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
 	if err := driftValidateGrant(grant); err != nil {
 		return err

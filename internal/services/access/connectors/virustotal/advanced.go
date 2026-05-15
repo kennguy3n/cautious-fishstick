@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> VirusTotal user ID/email
 //   - grant.ResourceExternalID -> group ID (e.g. premium-services-tenant slug)
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func vtValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> WordPress.com user login/id/email
 //   - grant.ResourceExternalID -> role slug (e.g. "administrator","editor","author","contributor","subscriber")
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func wordpressValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {
