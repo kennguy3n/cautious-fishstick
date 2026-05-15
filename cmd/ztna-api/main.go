@@ -10,13 +10,28 @@
 // reconciler, JML). If ACCESS_DATABASE_URL is unset the binary still
 // boots so dev `go run` works without provisioning Postgres — handlers
 // that need a service simply return 503 until the DB is configured.
+//
+// Connector credential encryption: when ACCESS_CREDENTIAL_DEK is set
+// to a base64 32-byte key the binary wires the production AES-GCM
+// encryptor; when it is unset the binary falls back to
+// PassthroughEncryptor with a loud boot-log warning. A set-but-
+// malformed env var aborts boot rather than silently downgrade.
+//
+// Graceful shutdown: on SIGINT / SIGTERM the binary calls
+// http.Server.Shutdown with a 10s timeout so in-flight requests
+// finish before the process exits. Matches the worker's cron drain
+// and the workflow engine's HTTP shutdown.
 package main
 
 import (
+	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/kennguy3n/cautious-fishstick/internal/config"
@@ -272,7 +287,7 @@ func main() {
 		}
 		log.Printf("ztna-api: postgres connected; migrations applied")
 
-		encryptor := access.PassthroughEncryptor{}
+		encryptor := loadCredentialEncryptor("ztna-api")
 		policySvc := access.NewPolicyService(db)
 		requestSvc := access.NewAccessRequestService(db)
 		provSvc := access.NewAccessProvisioningService(db)
@@ -305,10 +320,63 @@ func main() {
 	if addr == "" {
 		addr = ":8080"
 	}
-	log.Printf("ztna-api: HTTP server listening on %s", addr)
-	if err := http.ListenAndServe(addr, r); err != nil {
-		log.Fatalf("ztna-api: server exited: %v", err)
+	httpServer := &http.Server{
+		Addr:              addr,
+		Handler:           r,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
+
+	serverErr := make(chan error, 1)
+	go func() {
+		log.Printf("ztna-api: HTTP server listening on %s", addr)
+		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
+			return
+		}
+		serverErr <- nil
+	}()
+
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	select {
+	case err := <-serverErr:
+		if err != nil {
+			log.Fatalf("ztna-api: server exited: %v", err)
+		}
+		return
+	case sig := <-signals:
+		log.Printf("ztna-api: received %s; shutting down", sig)
+	}
+
+	// Bound the graceful shutdown so a wedged connection can't keep
+	// the binary alive past the SIGTERM grace period Kubernetes
+	// gives it. Matches the worker's shutdownDrainTimeout and the
+	// workflow engine's HTTP server shutdown.
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelShutdown()
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("ztna-api: graceful shutdown: %v", err)
+	}
+}
+
+// loadCredentialEncryptor reads ACCESS_CREDENTIAL_DEK and returns
+// the production AES-GCM encryptor when the env var is set to a
+// valid base64 32-byte key. When the env var is unset the binary
+// falls back to PassthroughEncryptor with a loud warning so the
+// degraded posture is observable in the boot log. A set-but-
+// malformed env var aborts boot via log.Fatalf so a typo cannot
+// silently downgrade encryption to plaintext.
+func loadCredentialEncryptor(binary string) access.CredentialEncryptor {
+	enc, err := access.LoadAESGCMEncryptorFromEnv()
+	if err != nil {
+		log.Fatalf("%s: ACCESS_CREDENTIAL_DEK invalid: %v", binary, err)
+	}
+	if enc != nil {
+		log.Printf("%s: connector credential encryption ENABLED (AES-256-GCM, static DEK)", binary)
+		return enc
+	}
+	log.Printf("%s: WARNING ACCESS_CREDENTIAL_DEK unset; connector credentials will be stored as plaintext via PassthroughEncryptor \u2014 set ACCESS_CREDENTIAL_DEK to a base64 32-byte key before storing real provider secrets", binary)
+	return access.PassthroughEncryptor{}
 }
 
 // runHealthcheck issues a short-timeout GET against the local

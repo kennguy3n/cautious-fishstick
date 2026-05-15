@@ -18,6 +18,13 @@
 // any in-flight tick (e.g. a partway-through upstream revoke) finishes
 // before the process exits, while a wedged tick can't keep the binary
 // alive indefinitely.
+//
+// Connector credential encryption: when ACCESS_CREDENTIAL_DEK is set
+// to a base64 32-byte key the binary wires the production AES-GCM
+// encryptor onto the credentials loader and the provisioning service;
+// when it is unset the binary falls back to PassthroughEncryptor
+// with a loud boot-log warning so a misconfigured env var doesn't
+// silently downgrade storage to plaintext.
 package main
 
 import (
@@ -547,6 +554,28 @@ func BuildCredentialExpiryNotifier(cfg config.Access) cron.NotificationSender {
 // the same under signal-driven shutdown.
 const shutdownDrainTimeout = 10 * time.Second
 
+// loadCredentialEncryptor reads ACCESS_CREDENTIAL_DEK and returns the
+// production AES-GCM encryptor when the env var is set to a valid
+// base64 32-byte key. When the env var is unset the binary falls back
+// to PassthroughEncryptor with a loud warning so the degraded posture
+// is observable in the boot log. A set-but-malformed env var aborts
+// boot via log.Fatalf so a typo cannot silently downgrade encryption
+// to plaintext. The same helper lives in cmd/ztna-api/main.go; the
+// two copies are intentional so each binary owns its boot-log
+// surface and neither imports a shared cmd-level helper package.
+func loadCredentialEncryptor(binary string) access.CredentialEncryptor {
+	enc, err := access.LoadAESGCMEncryptorFromEnv()
+	if err != nil {
+		log.Fatalf("%s: ACCESS_CREDENTIAL_DEK invalid: %v", binary, err)
+	}
+	if enc != nil {
+		log.Printf("%s: connector credential encryption ENABLED (AES-256-GCM, static DEK)", binary)
+		return enc
+	}
+	log.Printf("%s: WARNING ACCESS_CREDENTIAL_DEK unset; connector credentials will be stored as plaintext via PassthroughEncryptor \u2014 set ACCESS_CREDENTIAL_DEK to a base64 32-byte key before storing real provider secrets", binary)
+	return access.PassthroughEncryptor{}
+}
+
 func main() {
 	log.Printf("access-connector-worker: starting; registered access connectors: %v", access.ListRegisteredProviders())
 
@@ -575,7 +604,7 @@ func main() {
 		}
 		log.Printf("access-connector-worker: postgres connected; migrations applied")
 
-		encryptor := access.PassthroughEncryptor{}
+		encryptor := loadCredentialEncryptor("access-connector-worker")
 		provSvc = access.NewAccessProvisioningService(db)
 		credLoader = access.NewConnectorCredentialsLoader(db, encryptor)
 		// AnomalyDetectionService.ScanWorkspace satisfies

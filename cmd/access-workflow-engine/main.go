@@ -29,7 +29,6 @@ import (
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 
-	"github.com/kennguy3n/cautious-fishstick/internal/models"
 	"github.com/kennguy3n/cautious-fishstick/internal/pkg/database"
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access/workflow_engine"
@@ -302,10 +301,16 @@ func main() {
 
 // openDatabase returns a gorm DB. ACCESS_DATABASE_URL takes priority —
 // when set the engine opens the shared Postgres pool the rest of the
-// access platform uses and AutoMigrates the workflow models against
-// it. Otherwise it falls back to SQLite (ACCESS_WORKFLOW_ENGINE_SQLITE_PATH
-// or in-memory) so dev / smoke binaries can boot without provisioning a
-// database. The returned description is logged at startup.
+// access platform uses and runs the full access-platform migration
+// set (via database.RunMigrations) against it. Otherwise it falls
+// back to SQLite (ACCESS_WORKFLOW_ENGINE_SQLITE_PATH or in-memory)
+// so dev / smoke binaries can boot without provisioning a database.
+//
+// Both paths route through database.RunMigrations so the schema is
+// uniform across Postgres and SQLite — if service-layer code
+// queries a table outside the workflow set, the same query works
+// against either backend rather than blowing up only in the SQLite
+// fallback. The returned description is logged at startup.
 func openDatabase() (*gorm.DB, string, error) {
 	if pgDSN := os.Getenv("ACCESS_DATABASE_URL"); pgDSN != "" {
 		db, err := database.OpenPostgres(pgDSN)
@@ -332,12 +337,12 @@ func openDatabase() (*gorm.DB, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	if err := db.AutoMigrate(
-		&models.AccessRequest{},
-		&models.AccessWorkflow{},
-		&models.AccessRequestStateHistory{},
-		&models.AccessWorkflowStepHistory{},
-	); err != nil {
+	// Run the full access-platform migration set against the
+	// SQLite fallback too so the workflow engine sees the same
+	// schema it would under Postgres. database.RunMigrations
+	// short-circuits the pg_advisory_lock path on non-Postgres
+	// dialects so there's no extra cost on SQLite.
+	if err := database.RunMigrations(db); err != nil {
 		return nil, "", err
 	}
 	desc := "in-memory sqlite (workflows will not persist)"
