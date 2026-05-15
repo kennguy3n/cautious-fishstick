@@ -67,7 +67,7 @@ Desktop Extension (Electron)  ┘                  │
                                                  ├──▶ Redis       (queues, staging, locks)
                                                  ├──▶ Keycloak    (SSO federation)
                                                  ├──▶ OpenZiti    (ServicePolicy)
-                                                 ├──▶ Kafka       (audit envelope)
+                                                 ├──▶ Kafka       (audit envelope) †
                                                  └──▶ Access Connector Worker
                                                           │
                                                           └──▶ Access Connectors (200 providers)
@@ -77,6 +77,8 @@ ZTNA Business Layer ◀──HTTP─▶ Access Workflow Engine
 ```
 
 See [`docs/architecture.md`](docs/architecture.md) for the full diagrams, service contracts, and data model.
+
+† Kafka delivery is not yet wired end-to-end. The audit pipeline currently runs through `NoOpAuditProducer`; `ACCESS_KAFKA_BROKERS` is plumbed but the real producer lands in a follow-up. Every other arrow in the diagram is operational.
 
 ---
 
@@ -131,7 +133,7 @@ The full per-provider matrix lives in [`docs/connectors.md`](docs/connectors.md)
 
 | Layer              | Stack                                                        |
 |--------------------|--------------------------------------------------------------|
-| Backend            | Go 1.25+, Gin, GORM, PostgreSQL, Redis, Kafka                |
+| Backend            | Go 1.25+, Gin, GORM, PostgreSQL, Redis, Kafka *(producer in follow-up)* |
 | Admin frontend     | React (Next.js), TypeScript — [`ztna-frontend`](https://github.com/uneycom/ztna-frontend) |
 | Mobile SDKs        | Swift Package (iOS), Kotlin library (Android)                |
 | Desktop extension  | Electron + TypeScript                                        |

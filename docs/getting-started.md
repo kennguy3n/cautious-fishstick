@@ -69,7 +69,7 @@ make ci            # vet + test + swagger-check + sn360-check + model-check
 make lint          # static gates only, no test suite
 ```
 
-Each Go binary is wired through a shared `internal/pkg/database` helper, so all three services run their migrations against the same Postgres instance Compose provisions. See [`architecture.md`](architecture.md) for the wiring details and [`CONTRIBUTING.md`](../CONTRIBUTING.md) for the full dev loop and PR checklist.
+Each Go binary is wired through a shared `internal/pkg/database` helper, so all three Go services run their migrations against the same Postgres instance Compose provisions. (The fourth service, `access-ai-agent`, is a Python sidecar with no database of its own.) See [`architecture.md`](architecture.md) for the wiring details and [`CONTRIBUTING.md`](../CONTRIBUTING.md) for the full dev loop and PR checklist.
 
 ## Tear down
 
