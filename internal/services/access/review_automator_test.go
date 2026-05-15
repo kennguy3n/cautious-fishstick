@@ -67,7 +67,7 @@ func TestReviewAutomatorAdapter_AutomateReview_EscalateHighRisk(t *testing.T) {
 // TestReviewAutomatorAdapter_AutomateReview_UnknownDecisionFallback
 // asserts that an unexpected decision string (e.g. AI hallucinates
 // "delete") trips the fallback. AccessReviewService must NOT trust
-// arbitrary decisions per docs/docs/architecture.md.
+// arbitrary decisions per docs/architecture.md.
 func TestReviewAutomatorAdapter_AutomateReview_UnknownDecisionFallback(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(aiclient.SkillResponse{
