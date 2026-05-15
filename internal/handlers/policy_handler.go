@@ -84,11 +84,7 @@ func (h *PolicyHandler) CreateDraft(c *gin.Context) {
 func (h *PolicyHandler) ListDrafts(c *gin.Context) {
 	wsID := GetPtrStringQuery(c, "workspace_id")
 	if wsID == nil || *wsID == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "workspace_id query parameter is required",
-			Code:    "validation_failed",
-			Message: "workspace_id query parameter is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "workspace_id query parameter is required", "validation_failed", "workspace_id query parameter is required")
 		return
 	}
 	drafts, err := h.policyService.ListDrafts(c.Request.Context(), *wsID)
@@ -108,11 +104,7 @@ func (h *PolicyHandler) GetPolicy(c *gin.Context) {
 	id := GetStringParam(c, "id")
 	wsID := GetPtrStringQuery(c, "workspace_id")
 	if wsID == nil || *wsID == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "workspace_id query parameter is required",
-			Code:    "validation_failed",
-			Message: "workspace_id query parameter is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "workspace_id query parameter is required", "validation_failed", "workspace_id query parameter is required")
 		return
 	}
 	policy, err := h.policyService.GetPolicy(c.Request.Context(), *wsID, id)
@@ -157,11 +149,7 @@ func (h *PolicyHandler) Diff(c *gin.Context) {
 	id := GetStringParam(c, "id")
 	wsID := GetPtrStringQuery(c, "workspace_id")
 	if wsID == nil || *wsID == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "workspace_id query parameter is required",
-			Code:    "validation_failed",
-			Message: "workspace_id query parameter is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "workspace_id query parameter is required", "validation_failed", "workspace_id query parameter is required")
 		return
 	}
 	report, err := h.policyService.DiffPolicy(c.Request.Context(), *wsID, id)

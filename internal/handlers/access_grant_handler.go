@@ -63,19 +63,11 @@ func (h *AccessGrantHandler) Register(r *gin.Engine) {
 func (h *AccessGrantHandler) ListEntitlements(c *gin.Context) {
 	id := GetStringParam(c, "id")
 	if id == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "id path parameter is required",
-			Code:    "validation_failed",
-			Message: "id path parameter is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "id path parameter is required", "validation_failed", "id path parameter is required")
 		return
 	}
 	if h.entitlementsReader == nil {
-		c.AbortWithStatusJSON(http.StatusServiceUnavailable, errorEnvelope{
-			Error:   "app permission lookup not configured",
-			Code:    "unavailable",
-			Message: "app permission lookup not configured on this deployment",
-		})
+		abortWithError(c, http.StatusServiceUnavailable, "app permission lookup not configured", "unavailable", "app permission lookup not configured on this deployment")
 		return
 	}
 	out, err := h.entitlementsReader.ListGrantEntitlements(c.Request.Context(), id)
@@ -106,11 +98,7 @@ func (h *AccessGrantHandler) ListGrants(c *gin.Context) {
 	userID := GetPtrStringQuery(c, "user_id")
 	connectorID := GetPtrStringQuery(c, "connector_id")
 	if userID == nil && connectorID == nil {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "user_id or connector_id query parameter is required",
-			Code:    "validation_failed",
-			Message: "user_id or connector_id query parameter is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "user_id or connector_id query parameter is required", "validation_failed", "user_id or connector_id query parameter is required")
 		return
 	}
 	out, err := h.grantReader.ListGrants(c.Request.Context(), ListGrantsQuery{

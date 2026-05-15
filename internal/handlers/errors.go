@@ -33,10 +33,18 @@ func writeError(c *gin.Context, status int, err error) {
 		return
 	}
 	resolvedStatus, code := mapServiceError(err, status)
-	c.AbortWithStatusJSON(resolvedStatus, errorEnvelope{
-		Error:     err.Error(),
+	abortWithError(c, resolvedStatus, err.Error(), code, err.Error())
+}
+
+// abortWithError is the canonical way to abort a request with an error
+// envelope. It guarantees RequestID is populated from
+// RequestIDMiddleware so every error body carries the same correlation
+// key swagger advertises, regardless of which handler emitted it.
+func abortWithError(c *gin.Context, status int, errText, code, message string) {
+	c.AbortWithStatusJSON(status, errorEnvelope{
+		Error:     errText,
 		Code:      code,
-		Message:   err.Error(),
+		Message:   message,
 		RequestID: GetRequestID(c),
 	})
 }
