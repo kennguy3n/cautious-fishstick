@@ -32,7 +32,9 @@ import (
 // the variadic; the helper supplies the DisableRateLimiter default.
 func routerForTest(t *testing.T, mutators ...func(d *Dependencies)) *gin.Engine {
 	t.Helper()
-	gin.SetMode(gin.TestMode)
+	// Router() unconditionally calls gin.SetMode(gin.ReleaseMode), so
+	// there is no point clobbering the global mode here — the helper
+	// just builds the engine and lets Router() pick the mode.
 	d := Dependencies{DisableRateLimiter: true}
 	for _, m := range mutators {
 		m(&d)
@@ -196,12 +198,13 @@ func TestRouter_JSONValidationRejectsMalformedBody(t *testing.T) {
 }
 
 func TestRouter_RateLimiterTripsOnAccessPaths(t *testing.T) {
-	// With a hyper-aggressive limiter (0.01 RPS / capacity 1) the
-	// second request to a /access/* path within the same workspace
-	// bucket must come back 429. This catches regressions where the
-	// limiter middleware is mis-ordered (it must run *before* handler
-	// routing).
-	limiter := NewRateLimiterWithRPS(0.01)
+	// 0.75 RPS × the default burst factor of 2 = bucket capacity 1.5,
+	// so the first request is admitted (1.5 >= 1.0, leaving 0.5
+	// tokens) and the next two are denied — exercising the
+	// admit-then-deny transition rather than denying every request.
+	// This catches regressions where the limiter middleware is
+	// mis-ordered (it must run *before* handler routing).
+	limiter := NewRateLimiterWithRPS(0.75)
 	r := routerForTest(t, func(d *Dependencies) {
 		d.RateLimiter = limiter
 		d.DisableRateLimiter = false
