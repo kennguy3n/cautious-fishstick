@@ -2,7 +2,7 @@
 
 Surfaces structured anomaly observations on a single access grant's
 recent usage. The Go side wraps every call with
-DetectAnomaliesWithFallback (docs/architecture.md) so a failure here
+DetectAnomaliesWithFallback (docs/architecture.md §9) so a failure here
 defaults to an empty list.
 
 Phase 4 stub: deterministic rule-based anomaly detection from the
@@ -81,7 +81,7 @@ def run(payload: Dict[str, Any]) -> Dict[str, Any]:
     # workspace mean and standard deviation and flag the grant if
     # its usage is more than ``baseline_threshold_sigma`` (default
     # 2.5) standard deviations above the mean. This is the
-    # cross-grant histogram view docs/architecture.md calls for.
+    # cross-grant histogram view docs/architecture.md §9 calls for.
     baseline_series = payload.get("baseline_usage_per_day")
     grant_usage_per_day = usage.get("usage_per_day")
     threshold = payload.get("baseline_threshold_sigma", 2.5)
@@ -141,7 +141,7 @@ def _baseline_outlier(
 
     Returns ``None`` for any malformed input — anomaly detection
     must NEVER raise on bad shape because the Go side wraps every
-    call with DetectAnomaliesWithFallback (docs/architecture.md) and
+    call with DetectAnomaliesWithFallback (docs/architecture.md §9) and
     treats a non-empty ``anomalies`` array as authoritative. A
     spurious anomaly is worse than a missed one in this module.
     """

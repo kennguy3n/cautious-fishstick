@@ -47,7 +47,7 @@ type Resource struct {
 }
 
 // TableName overrides the default plural so the table name is exactly
-// resources (matching the migration and docs/architecture.md).
+// resources (matching the migration and docs/architecture.md §11).
 func (Resource) TableName() string {
 	return "resources"
 }

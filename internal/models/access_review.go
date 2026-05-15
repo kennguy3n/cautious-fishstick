@@ -49,7 +49,7 @@ type AccessReview struct {
 }
 
 // TableName overrides the default plural so the table name is exactly
-// access_reviews (matching the migration and docs/architecture.md).
+// access_reviews (matching the migration and docs/architecture.md §11).
 func (AccessReview) TableName() string {
 	return "access_reviews"
 }

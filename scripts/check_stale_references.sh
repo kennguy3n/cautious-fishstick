@@ -32,13 +32,20 @@ cd "$repo_root"
 # enforces filename specificity. The second alternation catches bare
 # shorthand like `PROPOSAL §5.3` or `ARCHITECTURE §10` — those still
 # cite the retired document even without the `.md` extension and need
-# to be rewritten to the lowercase successors. `\<` / `\>` are GNU
-# grep word boundaries so we don't false-match on substrings.
+# to be rewritten to the lowercase successors.
+#
+# Word boundaries: POSIX ERE has no portable `\b` / `\<` / `\>`
+# (those are GNU extensions and may silently fail to match if `git`
+# is built against a non-GNU regex backend). Instead we enforce the
+# left boundary explicitly with `(^|[^A-Za-z0-9_])` (start-of-line
+# or a non-word character) so we don't false-match on substrings.
+# The right boundary is enforced implicitly by the `(\.md|[[:space:]]+§)`
+# alternation: both branches begin with a non-word character.
 #
 # The allowlist below drops paths that are allowed to mention the
 # retired filenames in prose (the script itself, the CHANGELOG
 # retirement note, and the internal trackers under docs/internal/).
-patterns='\<(PROPOSAL|ARCHITECTURE|LISTCONNECTORS|SDK_CONTRACTS)\>(\.md|[[:space:]]+§)'
+patterns='(^|[^A-Za-z0-9_])(PROPOSAL|ARCHITECTURE|LISTCONNECTORS|SDK_CONTRACTS)(\.md|[[:space:]]+§)'
 
 # Search everything tracked by git so vendored or generated trees we
 # do not own are ignored automatically. Per-file allowlist suppresses:

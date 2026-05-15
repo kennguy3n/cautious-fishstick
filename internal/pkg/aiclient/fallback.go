@@ -75,7 +75,7 @@ func fallbackResponse() *SkillResponse {
 // passed to access.AccessRequestService.SetRiskAssessor without the
 // service depending on the aiclient package directly. The adapter
 // composes AssessRiskWithFallback so the request workflow gets the
-// docs/architecture.md fallback for free.
+// docs/architecture.md §9 fallback for free.
 //
 // Inner may be nil (in which case AssessRequestRisk returns the
 // fallback). This makes it cheap to wire in the adapter
@@ -131,7 +131,7 @@ var allowedReviewDecisions = map[string]struct{}{
 }
 
 // AutomateReviewWithFallback wraps AIClient.InvokeSkill(
-// "access_review_automation", payload) with the docs/architecture.md
+// "access_review_automation", payload) with the docs/architecture.md §9
 // fallback semantics:
 //
 //   - On success with a recognised decision: returns (decision,
@@ -176,7 +176,7 @@ func AutomateReviewWithFallback(
 }
 
 // DetectAnomaliesWithFallback wraps AIClient.DetectAnomalies with
-// the same docs/architecture.md fallback semantics as
+// the same docs/architecture.md §9 fallback semantics as
 // AssessRiskWithFallback:
 //
 //   - On success: returns the AnomalyEvent slice (possibly empty).

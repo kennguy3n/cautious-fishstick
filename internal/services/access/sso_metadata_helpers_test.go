@@ -13,7 +13,7 @@ func TestSSOMetadataFromConfig_NilConfig(t *testing.T) {
 
 // TestSSOMetadataFromConfig_MissingMetadataURL verifies that a
 // config without the sso_metadata_url key returns nil so the
-// connector treats SSO as un-configured (docs/architecture.md: SSO is
+// connector treats SSO as un-configured (docs/architecture.md §13: SSO is
 // opt-in per connector).
 func TestSSOMetadataFromConfig_MissingMetadataURL(t *testing.T) {
 	cfg := map[string]interface{}{

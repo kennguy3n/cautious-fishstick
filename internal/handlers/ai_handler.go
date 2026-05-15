@@ -112,7 +112,7 @@ func (h *AIHandler) Suggest(c *gin.Context) {
 
 // writeAIUnconfigured emits the canonical 503 response for the
 // "AI agent isn't configured" condition. Operator-facing wording
-// uses the SN360 vocabulary (docs/architecture.md) — "AI assistant".
+// uses the SN360 vocabulary (docs/architecture.md §9) — "AI assistant".
 func writeAIUnconfigured(c *gin.Context) {
 	c.AbortWithStatusJSON(http.StatusServiceUnavailable, errorEnvelope{
 		Error:   aiclient.ErrAIUnconfigured.Error(),

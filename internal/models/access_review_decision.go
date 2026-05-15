@@ -52,7 +52,7 @@ type AccessReviewDecision struct {
 }
 
 // TableName overrides the default plural so the table name is exactly
-// access_review_decisions (matching the migration and docs/architecture.md).
+// access_review_decisions (matching the migration and docs/architecture.md §11).
 func (AccessReviewDecision) TableName() string {
 	return "access_review_decisions"
 }

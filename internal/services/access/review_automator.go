@@ -29,7 +29,7 @@ type ReviewAutomator interface {
 // AccessReviewService can depend on the narrow ReviewAutomator
 // contract without importing aiclient directly. The adapter
 // composes AutomateReviewWithFallback so the auto-certification
-// loop gets the docs/architecture.md fallback for free.
+// loop gets the docs/architecture.md §9 fallback for free.
 //
 // Inner may be nil — in that case AutomateReview returns the
 // fallback ("", "", false) so dev / test binaries stay healthy

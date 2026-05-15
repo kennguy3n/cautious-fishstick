@@ -2,7 +2,7 @@
 
 Scores an access request (or policy change) on a low / medium / high
 scale plus a structured risk_factors list. The Go side wraps every
-call with AssessRiskWithFallback (docs/architecture.md) so a failure here
+call with AssessRiskWithFallback (docs/architecture.md §9) so a failure here
 defaults to risk_score="medium" and routes the request through
 manager_approval.
 

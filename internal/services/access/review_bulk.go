@@ -44,7 +44,7 @@ type BulkDecisionSummary struct {
 // upstream-revoke logic continues to apply); failures on one decision
 // do NOT prevent subsequent decisions from running.
 //
-// This mirrors the SN360 bulk-action design (docs/architecture.md): the
+// This mirrors the SN360 bulk-action design (docs/architecture.md §7): the
 // caller sees a per-row result list and a roll-up summary so partial
 // success is visible. A single transaction would arguably be cleaner
 // for the DB but it would also mean one bad grant id rolls back every

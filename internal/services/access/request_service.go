@@ -160,7 +160,7 @@ func (s *AccessRequestService) CreateRequest(ctx context.Context, in CreateAcces
 	// assessor or an unreachable agent leaves RiskScore empty (when
 	// no assessor is wired) or stamps the fallback score from the
 	// pkg/aiclient.AssessRiskWithFallback helper. We never roll back
-	// the request because of an AI failure — per docs/architecture.md AI is
+	// the request because of an AI failure — per docs/architecture.md §9 AI is
 	// decision-support, not on the critical path.
 	if s.riskAssessor != nil {
 		score, factors, _ := s.riskAssessor.AssessRequestRisk(ctx, riskAssessmentPayload{
@@ -185,7 +185,7 @@ func (s *AccessRequestService) CreateRequest(ctx context.Context, in CreateAcces
 				Model(&models.AccessRequest{}).
 				Where("id = ?", req.ID).
 				Updates(update).Error; uerr != nil {
-				// Per docs/architecture.md the AI agent is decision-support,
+				// Per docs/architecture.md §9 the AI agent is decision-support,
 				// not on the request critical path. Log the persist
 				// failure here (operators care about it) and return
 				// the in-memory request with the score populated so
@@ -216,7 +216,7 @@ type riskAssessmentPayload struct {
 }
 
 // SuggestedWorkflowStep returns the workflow step type that best
-// matches risk per docs/architecture.md. The mapping is:
+// matches risk per docs/architecture.md §9. The mapping is:
 //
 //	low    → auto_approve
 //	medium → manager_approval
