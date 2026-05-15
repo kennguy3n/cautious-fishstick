@@ -115,6 +115,7 @@ func Router(deps Dependencies) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(RequestIDMiddleware())
 	r.Use(JSONLoggerMiddleware())
 	r.Use(MetricsMiddleware(deps.Metrics))
 	limiter := deps.RateLimiter

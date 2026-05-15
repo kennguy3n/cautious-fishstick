@@ -249,9 +249,15 @@ func (l *RateLimiter) Middleware() gin.HandlerFunc {
 		ok, retryAfter := l.Allow(id)
 		if !ok {
 			c.Writer.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+			// Hand-rolled envelope (rather than abortWithError) so the
+			// 429 body can carry the retry_after_seconds hint clients
+			// rely on alongside the standard error / code / message /
+			// request_id fields the rest of the platform emits.
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"error":   "rate_limit_exceeded",
-				"message": "too many requests; retry later",
+				"error":               "rate_limit_exceeded",
+				"code":                "rate_limit_exceeded",
+				"message":             "too many requests; retry later",
+				"request_id":          GetRequestID(c),
 				"retry_after_seconds": retryAfter,
 			})
 			return

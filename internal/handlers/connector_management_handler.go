@@ -84,11 +84,7 @@ func (h *ConnectorManagementHandler) CreateConnector(c *gin.Context) {
 func (h *ConnectorManagementHandler) DeleteConnector(c *gin.Context) {
 	id := GetStringParam(c, "id")
 	if id == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "id path parameter is required",
-			Code:    "validation_failed",
-			Message: "id path parameter is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "id path parameter is required", "validation_failed", "id path parameter is required")
 		return
 	}
 	if err := h.service.Disconnect(c.Request.Context(), id); err != nil {
@@ -112,11 +108,7 @@ type connectorSecretBody struct {
 func (h *ConnectorManagementHandler) RotateSecret(c *gin.Context) {
 	id := GetStringParam(c, "id")
 	if id == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "id path parameter is required",
-			Code:    "validation_failed",
-			Message: "id path parameter is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "id path parameter is required", "validation_failed", "id path parameter is required")
 		return
 	}
 	var body connectorSecretBody
@@ -147,11 +139,7 @@ type connectorPatchBody struct {
 func (h *ConnectorManagementHandler) PatchConnector(c *gin.Context) {
 	id := GetStringParam(c, "id")
 	if id == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "id path parameter is required",
-			Code:    "validation_failed",
-			Message: "id path parameter is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "id path parameter is required", "validation_failed", "id path parameter is required")
 		return
 	}
 	var body connectorPatchBody
@@ -160,11 +148,7 @@ func (h *ConnectorManagementHandler) PatchConnector(c *gin.Context) {
 		return
 	}
 	if body.AccessMode == nil {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "no patchable fields supplied",
-			Code:    "validation_failed",
-			Message: "no patchable fields supplied",
-		})
+		abortWithError(c, http.StatusBadRequest, "no patchable fields supplied", "validation_failed", "no patchable fields supplied")
 		return
 	}
 	mode := *body.AccessMode
@@ -185,11 +169,7 @@ func (h *ConnectorManagementHandler) PatchConnector(c *gin.Context) {
 func (h *ConnectorManagementHandler) TriggerSync(c *gin.Context) {
 	id := GetStringParam(c, "id")
 	if id == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "id path parameter is required",
-			Code:    "validation_failed",
-			Message: "id path parameter is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "id path parameter is required", "validation_failed", "id path parameter is required")
 		return
 	}
 	jobID, err := h.service.TriggerSync(c.Request.Context(), id)

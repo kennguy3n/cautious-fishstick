@@ -61,11 +61,7 @@ func (h *AIHandler) Explain(c *gin.Context) {
 		return
 	}
 	if req.PolicyID == "" && req.GrantID == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "policy_id or grant_id is required",
-			Code:    "validation_failed",
-			Message: "policy_id or grant_id is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "policy_id or grant_id is required", "validation_failed", "policy_id or grant_id is required")
 		return
 	}
 	resp, err := h.aiService.InvokeSkill(c.Request.Context(), "policy_recommendation", req)
@@ -114,20 +110,12 @@ func (h *AIHandler) Suggest(c *gin.Context) {
 // "AI agent isn't configured" condition. Operator-facing wording
 // uses the SN360 vocabulary (docs/architecture.md §9) — "AI assistant".
 func writeAIUnconfigured(c *gin.Context) {
-	c.AbortWithStatusJSON(http.StatusServiceUnavailable, errorEnvelope{
-		Error:   aiclient.ErrAIUnconfigured.Error(),
-		Code:    "ai_unconfigured",
-		Message: "AI assistant is not configured for this workspace",
-	})
+	abortWithError(c, http.StatusServiceUnavailable, aiclient.ErrAIUnconfigured.Error(), "ai_unconfigured", "AI assistant is not configured for this workspace")
 }
 
 // writeAIUpstream emits a 502 response wrapping the upstream error.
 // Distinct from writeAIUnconfigured because the failure mode is
 // different — the agent IS configured but not responding.
 func writeAIUpstream(c *gin.Context, err error) {
-	c.AbortWithStatusJSON(http.StatusBadGateway, errorEnvelope{
-		Error:   err.Error(),
-		Code:    "ai_upstream_failed",
-		Message: "AI assistant request failed",
-	})
+	abortWithError(c, http.StatusBadGateway, err.Error(), "ai_upstream_failed", "AI assistant request failed")
 }

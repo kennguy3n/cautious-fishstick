@@ -165,11 +165,7 @@ func (h *AIHandler) Assistant(c *gin.Context) {
 		return
 	}
 	if strings.TrimSpace(req.Query) == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "query is required",
-			Code:    "validation_failed",
-			Message: "query is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "query is required", "validation_failed", "query is required")
 		return
 	}
 
@@ -179,11 +175,7 @@ func (h *AIHandler) Assistant(c *gin.Context) {
 		skill = classifyIntent(req.Query)
 		intent = skill
 	} else if !isValidSkillOverride(skill) {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "unknown_skill",
-			Code:    "validation_failed",
-			Message: "skill must be one of access_risk_assessment, access_anomaly_detection, connector_setup_assistant, policy_recommendation",
-		})
+		abortWithError(c, http.StatusBadRequest, "unknown_skill", "validation_failed", "skill must be one of access_risk_assessment, access_anomaly_detection, connector_setup_assistant, policy_recommendation")
 		return
 	}
 

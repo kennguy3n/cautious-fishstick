@@ -10,13 +10,17 @@ import (
 )
 
 // errorEnvelope is the canonical 4xx / 5xx body shape. Operator-
-// facing strings use the SN360 vocabulary (docs/architecture.md §9) — "rule" not
-// "policy", "access check-up" not "review campaign" — so admin-UI
-// translations stay in lockstep with the service layer.
+// facing strings use the SN360 vocabulary (docs/architecture.md §9) —
+// "rule" not "policy", "access check-up" not "review campaign" — so
+// admin-UI translations stay in lockstep with the service layer.
+// RequestID is the X-Request-ID stamped by RequestIDMiddleware and
+// echoed here so a client filing a support ticket can quote a single
+// correlation key.
 type errorEnvelope struct {
-	Error   string `json:"error"`
-	Code    string `json:"code,omitempty"`
-	Message string `json:"message,omitempty"`
+	Error     string `json:"error"`
+	Code      string `json:"code,omitempty"`
+	Message   string `json:"message,omitempty"`
+	RequestID string `json:"request_id,omitempty"`
 }
 
 // writeError serialises err to the response with the HTTP status
@@ -29,10 +33,19 @@ func writeError(c *gin.Context, status int, err error) {
 		return
 	}
 	resolvedStatus, code := mapServiceError(err, status)
-	c.AbortWithStatusJSON(resolvedStatus, errorEnvelope{
-		Error:   err.Error(),
-		Code:    code,
-		Message: err.Error(),
+	abortWithError(c, resolvedStatus, err.Error(), code, err.Error())
+}
+
+// abortWithError is the canonical way to abort a request with an error
+// envelope. It guarantees RequestID is populated from
+// RequestIDMiddleware so every error body carries the same correlation
+// key swagger advertises, regardless of which handler emitted it.
+func abortWithError(c *gin.Context, status int, errText, code, message string) {
+	c.AbortWithStatusJSON(status, errorEnvelope{
+		Error:     errText,
+		Code:      code,
+		Message:   message,
+		RequestID: GetRequestID(c),
 	})
 }
 

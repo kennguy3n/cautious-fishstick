@@ -43,11 +43,7 @@ func (h *ConnectorListHandler) Register(r *gin.Engine) {
 func (h *ConnectorListHandler) ListConnectors(c *gin.Context) {
 	wsID := GetPtrStringQuery(c, "workspace_id")
 	if wsID == nil || *wsID == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "workspace_id query parameter is required",
-			Code:    "validation_failed",
-			Message: "workspace_id query parameter is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "workspace_id query parameter is required", "validation_failed", "workspace_id query parameter is required")
 		return
 	}
 	q := access.ListConnectorsQuery{

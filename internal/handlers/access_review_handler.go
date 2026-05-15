@@ -91,11 +91,7 @@ type submitDecisionRequest struct {
 func (h *AccessReviewHandler) SubmitDecision(c *gin.Context) {
 	reviewID := GetStringParam(c, "id")
 	if reviewID == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "id path parameter is required",
-			Code:    "validation_failed",
-			Message: "id path parameter is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "id path parameter is required", "validation_failed", "id path parameter is required")
 		return
 	}
 	var req submitDecisionRequest
@@ -159,11 +155,7 @@ type bulkDecisionsRequest struct {
 func (h *AccessReviewHandler) SubmitBulkDecisions(c *gin.Context) {
 	reviewID := GetStringParam(c, "id")
 	if reviewID == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "id path parameter is required",
-			Code:    "validation_failed",
-			Message: "id path parameter is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "id path parameter is required", "validation_failed", "id path parameter is required")
 		return
 	}
 	var req bulkDecisionsRequest
@@ -196,11 +188,7 @@ func (h *AccessReviewHandler) SubmitBulkDecisions(c *gin.Context) {
 func (h *AccessReviewHandler) CloseCampaign(c *gin.Context) {
 	reviewID := GetStringParam(c, "id")
 	if reviewID == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "id path parameter is required",
-			Code:    "validation_failed",
-			Message: "id path parameter is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "id path parameter is required", "validation_failed", "id path parameter is required")
 		return
 	}
 	if err := h.reviewService.CloseCampaign(c.Request.Context(), reviewID); err != nil {
@@ -218,11 +206,7 @@ func (h *AccessReviewHandler) CloseCampaign(c *gin.Context) {
 func (h *AccessReviewHandler) AutoRevoke(c *gin.Context) {
 	reviewID := GetStringParam(c, "id")
 	if reviewID == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "id path parameter is required",
-			Code:    "validation_failed",
-			Message: "id path parameter is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "id path parameter is required", "validation_failed", "id path parameter is required")
 		return
 	}
 	if err := h.reviewService.AutoRevoke(c.Request.Context(), reviewID); err != nil {
@@ -240,11 +224,7 @@ func (h *AccessReviewHandler) AutoRevoke(c *gin.Context) {
 func (h *AccessReviewHandler) GetCampaignMetrics(c *gin.Context) {
 	reviewID := GetStringParam(c, "id")
 	if reviewID == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "id path parameter is required",
-			Code:    "validation_failed",
-			Message: "id path parameter is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "id path parameter is required", "validation_failed", "id path parameter is required")
 		return
 	}
 	metrics, err := h.reviewService.GetCampaignMetrics(c.Request.Context(), reviewID)
@@ -270,11 +250,7 @@ type patchCampaignRequest struct {
 func (h *AccessReviewHandler) PatchCampaign(c *gin.Context) {
 	reviewID := GetStringParam(c, "id")
 	if reviewID == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "id path parameter is required",
-			Code:    "validation_failed",
-			Message: "id path parameter is required",
-		})
+		abortWithError(c, http.StatusBadRequest, "id path parameter is required", "validation_failed", "id path parameter is required")
 		return
 	}
 	var req patchCampaignRequest
@@ -283,11 +259,7 @@ func (h *AccessReviewHandler) PatchCampaign(c *gin.Context) {
 		return
 	}
 	if req.AutoCertifyEnabled == nil {
-		c.AbortWithStatusJSON(http.StatusBadRequest, errorEnvelope{
-			Error:   "no editable fields in payload",
-			Code:    "validation_failed",
-			Message: "auto_certify_enabled is the only editable field; supply it explicitly",
-		})
+		abortWithError(c, http.StatusBadRequest, "no editable fields in payload", "validation_failed", "auto_certify_enabled is the only editable field; supply it explicitly")
 		return
 	}
 	if err := h.reviewService.SetAutoCertifyEnabled(c.Request.Context(), reviewID, *req.AutoCertifyEnabled); err != nil {
