@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -123,4 +124,127 @@ func TestSetLogger_NilSilencesOutput(t *testing.T) {
 	// Reaching here without panicking is half the test; also make
 	// sure a subsequent Info call doesn't blow up.
 	Logger().Info("ignored", slog.String("k", "v"))
+}
+
+// TestJSONLoggerMiddleware_DoesNotLogRequestBody asserts that even
+// when a handler receives a request body containing what looks like
+// a secret, the structured log line emitted by the middleware never
+// echoes the body or any of its keys. This locks in the contract
+// that the middleware logs ONLY the route shape + timing + status
+// — never inbound payload data.
+func TestJSONLoggerMiddleware_DoesNotLogRequestBody(t *testing.T) {
+	buf, restore := captureLogger(t)
+	defer restore()
+
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.Use(JSONLoggerMiddleware())
+	engine.POST("/echo", func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
+
+	body := `{"client_secret":"supersecret-shhh","password":"hunter2","api_token":"tok_abc123"}`
+	req := httptest.NewRequest(http.MethodPost, "/echo", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	logged := buf.String()
+	for _, leak := range []string{"supersecret-shhh", "hunter2", "tok_abc123", "client_secret", "password", "api_token"} {
+		if strings.Contains(logged, leak) {
+			t.Errorf("log line leaked %q from request body:\n%s", leak, logged)
+		}
+	}
+}
+
+// TestJSONLoggerMiddleware_DoesNotLogSensitiveHeaders asserts the
+// middleware never echoes Authorization / Cookie / X-Api-Key
+// headers. These would be the most damaging accidental log leaks
+// per docs/PHASES.md cross-cutting criterion "No secret/token/PII
+// logged".
+func TestJSONLoggerMiddleware_DoesNotLogSensitiveHeaders(t *testing.T) {
+	buf, restore := captureLogger(t)
+	defer restore()
+
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.Use(JSONLoggerMiddleware())
+	engine.GET("/ok", func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
+
+	req := httptest.NewRequest(http.MethodGet, "/ok", nil)
+	req.Header.Set("Authorization", "Bearer secret-bearer-token-xyz")
+	req.Header.Set("Cookie", "session=secret-session-cookie")
+	req.Header.Set("X-Api-Key", "secret-api-key-abc")
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	logged := buf.String()
+	for _, leak := range []string{"secret-bearer-token-xyz", "secret-session-cookie", "secret-api-key-abc"} {
+		if strings.Contains(logged, leak) {
+			t.Errorf("log line leaked sensitive header value %q:\n%s", leak, logged)
+		}
+	}
+}
+
+// TestJSONLoggerMiddleware_DurationIsMeasured asserts the
+// "duration" field on the log line is at least the handler's
+// observed sleep — i.e. the middleware actually times the handler
+// rather than emitting a hard-coded zero. The lower bound is
+// intentionally loose (90% of the sleep) to absorb scheduler
+// variance on CI.
+func TestJSONLoggerMiddleware_DurationIsMeasured(t *testing.T) {
+	buf, restore := captureLogger(t)
+	defer restore()
+
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.Use(JSONLoggerMiddleware())
+	const sleep = 10 * time.Millisecond
+	engine.GET("/slow", func(c *gin.Context) {
+		time.Sleep(sleep)
+		c.JSON(200, gin.H{"ok": true})
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/slow", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	var parsed map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &parsed); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, buf.String())
+	}
+	durNS, ok := parsed["duration"].(float64)
+	if !ok {
+		t.Fatalf("duration field type = %T; want float64 (slog duration → ns int)", parsed["duration"])
+	}
+	if durNS < float64(sleep)*0.9 {
+		t.Errorf("duration = %.0f ns; want >= %.0f ns (handler slept %v)", durNS, float64(sleep)*0.9, sleep)
+	}
+}
+
+// TestJSONLoggerMiddleware_UnmatchedRouteBucketsAsUnmatched asserts
+// scanner traffic hitting random URLs lands under path="unmatched"
+// so the log aggregator's path cardinality is bounded. The raw URL
+// is still recorded under raw_path for forensic spelunking.
+func TestJSONLoggerMiddleware_UnmatchedRouteBucketsAsUnmatched(t *testing.T) {
+	buf, restore := captureLogger(t)
+	defer restore()
+
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.Use(JSONLoggerMiddleware())
+	// no routes — every request is unmatched
+
+	req := httptest.NewRequest(http.MethodGet, "/random/scanner/path", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	var parsed map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &parsed); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, buf.String())
+	}
+	if parsed["path"] != "unmatched" {
+		t.Errorf("path = %v; want %q (cardinality cap)", parsed["path"], "unmatched")
+	}
+	if parsed["raw_path"] != "/random/scanner/path" {
+		t.Errorf("raw_path = %v; want %q (forensics)", parsed["raw_path"], "/random/scanner/path")
+	}
 }

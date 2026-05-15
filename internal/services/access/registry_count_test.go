@@ -18,6 +18,7 @@
 package access_test
 
 import (
+	"os"
 	"testing"
 
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
@@ -241,8 +242,10 @@ const expectedSessionRevokerCount = 14
 // enforcement verification) uses this set for the orphan
 // reconciler's daily SSO-regression scan. The count grows when a
 // connector adds a CheckSSOEnforcement implementation; the matching
-// docs MUST be updated in the same PR.
-const expectedSSOEnforcementCheckerCount = 12
+// docs MUST be updated in the same PR. Group B T13/T14 bumped this
+// to 14 by adding Dropbox + Zoom — keep this number aligned with
+// README.md's connector list and the §2 entry in docs/PROGRESS.md.
+const expectedSSOEnforcementCheckerCount = 14
 
 // TestRegistry_ExactConnectorCount fails when the connector count
 // drifts from expectedConnectorCount. It is intentionally an
@@ -295,4 +298,141 @@ func TestRegistry_SSOEnforcementCheckerCount(t *testing.T) {
 	if got != expectedSSOEnforcementCheckerCount {
 		t.Fatalf("SSOEnforcementChecker implementations = %d; want %d (update docs + README.md count)", got, expectedSSOEnforcementCheckerCount)
 	}
+}
+
+// TestRegistry_NoOrphanDirectories asserts every directory under
+// internal/services/access/connectors/ maps to a registered
+// provider. The check protects against the failure mode where a
+// connector package is added but its blank-import is missed from
+// cmd/<binary>/main.go (or this test file), which silently drops
+// the provider out of the registry without tripping
+// TestRegistry_ExactConnectorCount (the count check only verifies
+// 200 — not that the 200 are the expected 200).
+//
+// The mapping from directory name to provider name is the
+// directory's ProviderName constant; nearly every package uses the
+// same string for the directory and the registry key, but we still
+// resolve via the directory's ProviderName-vs-registry lookup so
+// renames don't quietly slip through.
+func TestRegistry_NoOrphanDirectories(t *testing.T) {
+	// directoryToProvider captures every directory whose
+	// ProviderName constant differs from the directory name.
+	// Production registers connectors by their ProviderName, so
+	// the registry guard MUST translate via this map rather than
+	// assume directory == provider. Add an entry here whenever a
+	// new connector picks a divergent registry key.
+	directoryToProvider := map[string]string{
+		"duo": "duo_security",
+	}
+	const connectorsDir = "connectors"
+	entries, err := os.ReadDir(connectorsDir)
+	if err != nil {
+		t.Fatalf("read connectors dir: %v", err)
+	}
+	registered := make(map[string]struct{}, expectedConnectorCount)
+	for _, p := range access.ListRegisteredProviders() {
+		registered[p] = struct{}{}
+	}
+	dirs := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dirs++
+		provider := e.Name()
+		if alt, ok := directoryToProvider[provider]; ok {
+			provider = alt
+		}
+		if _, ok := registered[provider]; !ok {
+			t.Errorf("connectors/%s/ has no matching registry entry (forgot the blank-import in cmd/*/main.go or registry_count_test.go? or add to directoryToProvider above)", e.Name())
+		}
+	}
+	if dirs != expectedConnectorCount {
+		t.Errorf("connectors/ directory count = %d; want %d (mismatch with expectedConnectorCount)", dirs, expectedConnectorCount)
+	}
+}
+
+// expectedSCIMProvisionerCount is the canonical number of
+// AccessConnector implementations that also satisfy
+// SCIMProvisioner. docs/PROGRESS.md §3 currently says
+// "all 10 Tier-1 connectors" but the actual implementation count
+// at HEAD is 8 — the docs discrepancy is tracked in the Group C
+// (docs-consistency) batch of the same plan. This test asserts the
+// true count so a future SCIM implementation can't silently slip
+// past the regression guard.
+const expectedSCIMProvisionerCount = 8
+
+// expectedGroupSyncerCount is the canonical number of
+// AccessConnector implementations that also satisfy GroupSyncer.
+// docs/PROGRESS.md §4 changelog lists "GroupSyncer for top-5
+// connectors"; the actual count at HEAD is 5.
+const expectedGroupSyncerCount = 5
+
+// expectedIdentityDeltaSyncerCount is the canonical number of
+// AccessConnector implementations that also satisfy
+// IdentityDeltaSyncer (delta-sync hardening per docs/PROGRESS.md
+// §4). The actual count at HEAD is 3.
+const expectedIdentityDeltaSyncerCount = 3
+
+// expectedAccessAuditorCount is the canonical number of
+// AccessConnector implementations that also satisfy AccessAuditor.
+// docs/PROGRESS.md §3 reports "audit logs across 198 (2 n/a)"; the
+// actual count at HEAD is 198, matching the docs.
+const expectedAccessAuditorCount = 198
+
+// TestRegistry_SCIMProvisionerCount fails when the count of
+// connectors implementing SCIMProvisioner drifts. Bumping this
+// count requires updating the README + docs/PROGRESS.md §3 in the
+// same PR.
+func TestRegistry_SCIMProvisionerCount(t *testing.T) {
+	got := countImpls[access.SCIMProvisioner]()
+	if got != expectedSCIMProvisionerCount {
+		t.Fatalf("SCIMProvisioner implementations = %d; want %d (update docs/PROGRESS.md §3 + README.md)", got, expectedSCIMProvisionerCount)
+	}
+}
+
+// TestRegistry_GroupSyncerCount fails when the count of connectors
+// implementing GroupSyncer drifts.
+func TestRegistry_GroupSyncerCount(t *testing.T) {
+	got := countImpls[access.GroupSyncer]()
+	if got != expectedGroupSyncerCount {
+		t.Fatalf("GroupSyncer implementations = %d; want %d (update docs/PROGRESS.md §4)", got, expectedGroupSyncerCount)
+	}
+}
+
+// TestRegistry_IdentityDeltaSyncerCount fails when the count of
+// connectors implementing IdentityDeltaSyncer drifts.
+func TestRegistry_IdentityDeltaSyncerCount(t *testing.T) {
+	got := countImpls[access.IdentityDeltaSyncer]()
+	if got != expectedIdentityDeltaSyncerCount {
+		t.Fatalf("IdentityDeltaSyncer implementations = %d; want %d (update docs/PROGRESS.md §4)", got, expectedIdentityDeltaSyncerCount)
+	}
+}
+
+// TestRegistry_AccessAuditorCount fails when the count of
+// connectors implementing AccessAuditor drifts.
+func TestRegistry_AccessAuditorCount(t *testing.T) {
+	got := countImpls[access.AccessAuditor]()
+	if got != expectedAccessAuditorCount {
+		t.Fatalf("AccessAuditor implementations = %d; want %d (update docs/PROGRESS.md §3 + README.md)", got, expectedAccessAuditorCount)
+	}
+}
+
+// countImpls returns the number of registered AccessConnectors
+// whose concrete type satisfies the optional interface T. The
+// generic shape keeps the per-interface tests above to a single
+// line each so adding a new optional interface boils down to a
+// new const + a new TestRegistry_<...>Count test.
+func countImpls[T any]() int {
+	n := 0
+	for _, p := range access.ListRegisteredProviders() {
+		c, err := access.GetAccessConnector(p)
+		if err != nil || c == nil {
+			continue
+		}
+		if _, ok := any(c).(T); ok {
+			n++
+		}
+	}
+	return n
 }
