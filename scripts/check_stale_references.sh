@@ -27,11 +27,14 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
 
-# Retired doc-file basenames. Matched as whole words via grep -w so
-# substrings (e.g. CHANGELOG.md containing "PROPOSAL.md" inside a
-# code-fenced retirement note) only match when the basename appears
-# bare. Allowlist below still drops the CHANGELOG line explicitly so
-# the guard is robust to future grep-flag changes.
+# Retired doc-file basenames. Matched via `git grep -nE` (extended
+# regex, no `-w`), so the literal `\.md` suffix in each pattern is what
+# enforces specificity — bare shorthand like `PROPOSAL §5` is not
+# caught by design (the guard targets filename references, not informal
+# shorthand). The allowlist below drops paths that are allowed to
+# mention the retired filenames in prose (the script itself, the
+# CHANGELOG retirement note, and the internal trackers under
+# docs/internal/).
 patterns='PROPOSAL\.md|ARCHITECTURE\.md|LISTCONNECTORS\.md|SDK_CONTRACTS\.md'
 
 # Search everything tracked by git so vendored or generated trees we
