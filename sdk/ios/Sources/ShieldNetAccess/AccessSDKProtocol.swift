@@ -4,7 +4,7 @@
 // This file defines the `AccessSDKClient` protocol that every concrete
 // implementation in a host iOS application must satisfy. The SDK is a
 // **thin REST client** — every method maps 1:1 to an HTTP endpoint on
-// `ztna-api` (see `docs/PROPOSAL.md` §11.4).
+// `ztna-api` (see `docs/architecture.md` §11.4).
 //
 // There is **no on-device inference** in this SDK. There are no
 // `import CoreML` / `import MLX` statements and no bundled model files
@@ -14,7 +14,7 @@
 // Python skill server via A2A. This rule is enforced by
 // `scripts/check_no_model_files.sh` in CI.
 //
-// REST endpoint mapping (per PROPOSAL.md §11.4):
+// REST endpoint mapping (per docs/architecture.md):
 //   createRequest      → POST   /access/requests
 //   listRequests       → GET    /access/requests
 //   approveRequest     → POST   /access/requests/:id/approve

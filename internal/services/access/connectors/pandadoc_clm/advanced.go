@@ -24,7 +24,7 @@ import (
 //   - grant.ResourceExternalID -> pandadoc_clm role identifier (round-trips in ListEntitlements)
 //
 // Idempotency is delegated to access.IsIdempotentProvisionStatus /
-// access.IsIdempotentRevokeStatus per docs/PROPOSAL.md §2.1.
+// access.IsIdempotentRevokeStatus per docs/architecture.md §2.
 
 func pandadoc_clmValidateGrant(g access.AccessGrant) error {
 if strings.TrimSpace(g.UserExternalID) == "" {

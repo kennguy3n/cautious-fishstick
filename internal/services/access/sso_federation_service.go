@@ -26,7 +26,7 @@ import (
 //   - DELETE /admin/realms/{realm}/identity-providers/instances/{alias}
 //   - GET    /admin/realms/{realm}/identity-providers/instances/{alias}
 //
-// Per docs/ARCHITECTURE.md §2 the access-platform calls
+// Per docs/architecture.md §2 the access-platform calls
 // ConfigureBroker after AccessConnector.Connect + GetSSOMetadata, so
 // the IdP is wired into Keycloak as part of the connector setup
 // transaction. The service does NOT touch SAML signing keys / OIDC

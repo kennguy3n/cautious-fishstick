@@ -13,7 +13,7 @@
 // their own `URLSession` (e.g. one with custom certificate pinning
 // or background configuration) via the initializer.
 //
-// REST endpoint mapping is per `docs/PROPOSAL.md` §11.4.
+// REST endpoint mapping is per `docs/architecture.md` §11.4.
 //
 
 import Foundation

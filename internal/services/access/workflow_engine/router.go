@@ -54,7 +54,7 @@ const (
 const SensitiveTag = "sensitive_resource"
 
 // RiskRouter maps a (risk bucket, resource tags) tuple to the
-// appropriate WorkflowType per PROPOSAL.md §5.2 and PHASES.md Phase 8.
+// appropriate WorkflowType per docs/architecture.md §8 and PHASES.md Phase 8.
 //
 // Decision table:
 //

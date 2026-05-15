@@ -7,8 +7,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// Policy mirrors the policies table per docs/PROPOSAL.md §6 and
-// docs/ARCHITECTURE.md §5. The table holds both draft and live policies;
+// Policy mirrors the policies table per docs/architecture.md §6 and
+// docs/architecture.md §11. The table holds both draft and live policies;
 // IsDraft is the discriminator. Drafts are platform-side abstractions
 // only — no OpenZiti ServicePolicy is created until Promote flips
 // IsDraft to false.

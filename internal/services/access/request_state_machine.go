@@ -46,7 +46,7 @@ var ErrInvalidStateTransition = errors.New("access: invalid request state transi
 // allowedTransitions is the source of truth for the request lifecycle FSM.
 // Keys are "from" states; values are the set of legal "to" states.
 //
-// Lifecycle (per docs/PHASES.md Phase 2 + docs/ARCHITECTURE.md §4):
+// Lifecycle (per docs/PHASES.md Phase 2 + docs/architecture.md §4):
 //
 //	requested        → approved | denied | cancelled
 //	approved         → provisioning | cancelled

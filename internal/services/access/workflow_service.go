@@ -74,7 +74,7 @@ type WorkflowResolution struct {
 //
 // Phase 4 may extend this to include risk_score buckets and group
 // membership; until then keep this struct in lockstep with
-// docs/ARCHITECTURE.md §10.
+// docs/architecture.md §5.
 type matchRule struct {
 	ConnectorID     string `json:"connector_id,omitempty"`
 	Role            string `json:"role,omitempty"`

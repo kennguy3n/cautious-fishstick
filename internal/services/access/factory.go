@@ -21,7 +21,7 @@ var (
 
 // RegisterAccessConnector registers a connector instance for the given
 // provider key. Provider keys are lowercased, snake_case (per
-// docs/PROPOSAL.md §3.1): "microsoft", "google_workspace", "okta",
+// docs/architecture.md §3): "microsoft", "google_workspace", "okta",
 // "generic_saml", ...
 //
 // Re-registration of an already-registered key panics. Two connectors

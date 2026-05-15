@@ -6,7 +6,7 @@ import (
 
 // AccessSyncState persists the per-(connector, kind) delta-link
 // cursor the access-connector-worker uses to resume incremental
-// sync. Per docs/PROPOSAL.md §9.1 and docs/ARCHITECTURE.md §3 each
+// sync. Per docs/architecture.md §11 and docs/architecture.md §3 each
 // connector tracks one cursor per sync kind:
 //
 //   - "identity" — cursor for the IdentityDeltaSyncer pipeline
@@ -49,7 +49,7 @@ type AccessSyncState struct {
 }
 
 // TableName overrides the default plural so the table name matches
-// docs/PROPOSAL.md §9.1.
+// docs/architecture.md §11.
 func (AccessSyncState) TableName() string {
 	return "access_sync_state"
 }

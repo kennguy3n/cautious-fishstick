@@ -173,7 +173,7 @@ func TestOrphanHandler_Reconcile_DryRun(t *testing.T) {
 // TestOrphanHandler_Reconcile_PartialFailure_WetRun asserts that when
 // the reconciler returns rows from successful connectors alongside an
 // aggregated error from failed connectors (the round-9 best-effort
-// contract — see docs/ARCHITECTURE.md §12.2), the handler surfaces
+// contract — see docs/architecture.md §12), the handler surfaces
 // the rows with HTTP 200 and exposes the aggregated error via the
 // "partial_failure" field rather than discarding the partial set with
 // a 500. Without this, operators relying on POST /access/orphans/

@@ -31,7 +31,7 @@ func newAccessModeTestDB(t *testing.T) *gorm.DB {
 }
 
 // TestConnectorManagementService_Connect_ClassifiesAPIOnlyDefault
-// asserts the docs/PROPOSAL.md §13 default: a SaaS connector with
+// asserts the docs/architecture.md §13 default: a SaaS connector with
 // no SSO realm configured and no private-resource hints lands at
 // access_mode == "api_only" and the value is persisted to the
 // access_connectors row.

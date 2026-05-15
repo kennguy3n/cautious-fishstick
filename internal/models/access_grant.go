@@ -6,7 +6,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// AccessGrant mirrors the access_grants table per docs/ARCHITECTURE.md §10.
+// AccessGrant mirrors the access_grants table per docs/architecture.md §5.
 // One row per (user, resource, role) entitlement that is currently or was
 // previously live. The lifecycle column is the pair (RevokedAt, ExpiresAt):
 // a grant is "active" iff RevokedAt is nil and (ExpiresAt is nil or in the

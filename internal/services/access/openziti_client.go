@@ -4,7 +4,7 @@ import "context"
 
 // OpenZitiClient is the narrow contract the access-platform service
 // layer uses to ask the OpenZiti control plane to disable an identity
-// (per docs/PROPOSAL.md §5.4 and docs/ARCHITECTURE.md §7).
+// (per docs/architecture.md §8 and docs/architecture.md §9).
 //
 // Phase 6 wires this contract into JMLService.HandleLeaver: after
 // every active grant has been revoked and the user has been removed

@@ -9,7 +9,7 @@ import (
 )
 
 // ConnectorManagementHandler bundles the HTTP entry points for the
-// connector lifecycle described in docs/ARCHITECTURE.md §2:
+// connector lifecycle described in docs/architecture.md §2:
 //
 //   - POST   /access/connectors             — create a new connector
 //   - DELETE /access/connectors/:id         — soft-delete + revoke grants
@@ -30,7 +30,7 @@ func NewConnectorManagementHandler(service *access.ConnectorManagementService) *
 }
 
 // Register wires the handler's routes onto r. Routes follow the
-// shape in docs/PROPOSAL.md §11 ("POST /access/connectors" + verbs).
+// shape in docs/architecture.md §2 ("POST /access/connectors" + verbs).
 func (h *ConnectorManagementHandler) Register(r *gin.Engine) {
 	g := r.Group("/access/connectors")
 	g.POST("", h.CreateConnector)
@@ -133,14 +133,14 @@ func (h *ConnectorManagementHandler) RotateSecret(c *gin.Context) {
 
 // connectorPatchBody is the request body for
 // PATCH /access/connectors/:id. The only mutable field today is
-// access_mode (docs/PROPOSAL.md §13). Future Phase 11 follow-ups
+// access_mode (docs/architecture.md §13). Future Phase 11 follow-ups
 // can extend the body — the handler ignores unknown keys.
 type connectorPatchBody struct {
 	AccessMode *string `json:"access_mode,omitempty"`
 }
 
 // PatchConnector handles PATCH /access/connectors/:id. Currently
-// supports admin override of the connector's docs/PROPOSAL.md §13
+// supports admin override of the connector's docs/architecture.md §13
 // access_mode (one of tunnel | sso_only | api_only). Returns 200
 // with the connector ID + new mode on success, 400 on a malformed
 // mode, and 500 on a service-level failure.

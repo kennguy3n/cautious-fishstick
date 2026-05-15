@@ -138,7 +138,7 @@ func (s *OrphanReconcilerScheduler) Run(ctx context.Context) error {
 		// connectors_scanned reflects rows the reconciler actually
 		// processed in this pass. On a partial failure the reconciler
 		// is best-effort across connectors (see
-		// docs/ARCHITECTURE.md §12.2), so connectors_failed counts the
+		// docs/architecture.md §12), so connectors_failed counts the
 		// per-connector failures rather than collapsing the whole pass
 		// to a single 1.
 		connectorsScanned := 0
@@ -183,7 +183,7 @@ func (s *OrphanReconcilerScheduler) Run(ctx context.Context) error {
 				DurationMS: dur.Milliseconds(),
 			})
 		}
-		// Best-effort across connectors (see docs/ARCHITECTURE.md
+		// Best-effort across connectors (see docs/architecture.md
 		// §12.2): orphans surfaced by successful connectors must be
 		// dispatched to the notifier even when other connectors in the
 		// same workspace failed. The reconciler persists those rows

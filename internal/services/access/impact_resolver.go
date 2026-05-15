@@ -15,7 +15,7 @@ import (
 // ImpactResolver is the read-side helper that walks a draft policy's
 // AttributesSelector → matching Teams → expanded TeamMembers and the
 // ResourceSelector → matching Resources, then assembles an
-// ImpactReport per docs/PROPOSAL.md §6.2.
+// ImpactReport per docs/architecture.md §6.
 //
 // The resolver is deliberately stateless beyond its *gorm.DB handle —
 // callers can construct one per simulation if they want fresh DB
@@ -32,7 +32,7 @@ func NewImpactResolver(db *gorm.DB) *ImpactResolver {
 
 // ImpactReport is the structured output of ResolveImpact, persisted as
 // the draft_impact JSON blob on policies. The shape mirrors
-// docs/PROPOSAL.md §6.2 (fields are stable across versions; renaming
+// docs/architecture.md §6 (fields are stable across versions; renaming
 // any of them is a JSON-schema migration). Counts are intentionally
 // flat int values (not int64) because ImpactReport is meant to be
 // rendered in an admin UI and the counts will fit in 32 bits for the

@@ -4,7 +4,7 @@
 //
 // The view depends on the `AccessSDKClient` protocol, not the
 // concrete class — this matches the DI pattern documented in
-// `docs/SDK_CONTRACTS.md`. Production hosts substitute a custom
+// `docs/sdk.md`. Production hosts substitute a custom
 // client (e.g. with auth-aware URLSession) without touching the UI.
 //
 

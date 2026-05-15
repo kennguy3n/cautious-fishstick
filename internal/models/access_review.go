@@ -7,8 +7,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// AccessReview mirrors the access_reviews table per docs/PROPOSAL.md
-// §9 and docs/ARCHITECTURE.md §6. One row per access-review campaign;
+// AccessReview mirrors the access_reviews table per docs/architecture.md
+// §9 and docs/architecture.md §7. One row per access-review campaign;
 // each campaign holds many AccessReviewDecision rows (one per
 // access_grant in scope).
 //

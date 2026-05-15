@@ -377,7 +377,7 @@ func (c *MSTeamsAccessConnector) findMembershipIDForUser(ctx context.Context, cl
 // team via POST /teams/{teamId}/members. The payload uses the Graph
 // aadUserConversationMember odata type. Idempotency: a 409 Conflict
 // and a 400 Bad Request response whose body mentions a duplicate-member
-// error code are both treated as success per PROPOSAL.md §2.1.
+// error code are both treated as success per docs/architecture.md §2.
 func (c *MSTeamsAccessConnector) ProvisionAccess(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

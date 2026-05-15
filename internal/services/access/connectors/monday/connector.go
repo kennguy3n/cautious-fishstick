@@ -313,7 +313,7 @@ func (c *MondayAccessConnector) SyncIdentities(
 // ProvisionAccess subscribes a user to a Monday board via the
 // add_users_to_board GraphQL mutation. ResourceExternalID is the
 // board_id (numeric). "already subscribed" errors are mapped to
-// idempotent success per PROPOSAL.md §2.1.
+// idempotent success per docs/architecture.md §2.
 func (c *MondayAccessConnector) ProvisionAccess(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},
