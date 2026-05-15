@@ -580,7 +580,7 @@ Per-runtime profile (SN360 standard): API services target `cpu=200m mem=1Gi` wit
 
 Phase 11 adds three runtime concepts to the architecture: an
 access-mode classifier, an unused-app-account reconciler, and a
-five-layer leaver kill switch. Together they let SN360 run a hybrid
+six-layer leaver kill switch. Together they let SN360 run a hybrid
 on-prem + SaaS estate without paying OpenZiti tunnel overhead on every
 SaaS app and without leaving stale upstream sessions behind when
 someone leaves the org.
