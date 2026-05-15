@@ -1,6 +1,8 @@
-# ShieldNet 360 Access Platform — Phase Definitions & Exit Criteria
+# Phase definitions & exit criteria
 
-This document collects the planned milestones in one place so reviewers and operators share a vocabulary. A phase is **shippable** only when *all* its exit criteria are demonstrably met. Phases stack: a later phase assumes the invariants of every earlier phase.
+> **Internal document.** This is a development tracker for maintainers. Public-facing documentation lives under [`docs/`](../) — start with [`docs/overview.md`](../overview.md) and [`docs/architecture.md`](../architecture.md).
+
+This document collects the planned milestones so reviewers and operators share a vocabulary. A phase is shippable only when all its exit criteria are demonstrably met. Phases stack: a later phase assumes the invariants of every earlier phase.
 
 | Status legend |  |
 |---------------|--|
