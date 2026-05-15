@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 )
 
 // CheckSSOEnforcement implements access.SSOEnforcementChecker for
@@ -26,7 +27,7 @@ func (c *ZoomAccessConnector) CheckSSOEnforcement(ctx context.Context, configRaw
 	if err != nil {
 		return false, "", fmt.Errorf("zoom: sso-enforcement token: %w", err)
 	}
-	path := "/accounts/" + cfg.AccountID + "/settings?option=security"
+	path := "/accounts/" + url.PathEscape(cfg.AccountID) + "/settings?option=security"
 	req, err := c.newRequest(ctx, tok, http.MethodGet, path)
 	if err != nil {
 		return false, "", err
