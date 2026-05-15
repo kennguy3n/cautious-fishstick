@@ -22,12 +22,41 @@ package migrations
 
 import (
 	"os"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+// libpqKeyValuePasswordRE matches the libpq key=value DSN password
+// token (`password=hunter2` or `password='hun ter 2'`) so the test
+// can strip it before logging the DSN on a connection failure.
+// Mirrors the production helper in cmd/access-workflow-engine/main.go;
+// duplicated here rather than imported to avoid the migrations →
+// cmd cycle.
+var libpqKeyValuePasswordRE = regexp.MustCompile(`(?i)\bpassword\s*=\s*(?:'[^']*'|\S+)`)
+
+// redactDSN strips the password from either a URL-form DSN
+// (postgres://user:pass@host/db) or a libpq key=value DSN
+// (host=... password=...). Equivalent to the production helper in
+// cmd/access-workflow-engine/main.go.
+func redactDSN(dsn string) string {
+	if !strings.Contains(dsn, "://") {
+		return libpqKeyValuePasswordRE.ReplaceAllString(dsn, "password=[redacted]")
+	}
+	at := strings.LastIndex(dsn, "@")
+	if at < 0 {
+		return dsn
+	}
+	scheme := strings.Index(dsn, "://")
+	if scheme < 0 || scheme >= at {
+		return dsn
+	}
+	return dsn[:scheme+3] + "[redacted]" + dsn[at:]
+}
 
 // openIntegrationDB opens whichever database the workflow points at
 // (Postgres in CI, in-memory SQLite for local `make test-integration`)
@@ -40,7 +69,7 @@ func openIntegrationDB(t *testing.T) *gorm.DB {
 	if dsn := os.Getenv("ACCESS_DATABASE_URL"); dsn != "" {
 		db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 		if err != nil {
-			t.Fatalf("open postgres at %s: %v", dsn, err)
+			t.Fatalf("open postgres at %s: %v", redactDSN(dsn), err)
 		}
 		t.Cleanup(func() {
 			sqlDB, err := db.DB()
