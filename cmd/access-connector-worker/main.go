@@ -1,23 +1,31 @@
 // Command access-connector-worker runs the queue handlers that exercise the
 // access connector framework (sync_identities, provision_access, ...) plus
 // the periodic crons that drive the access platform: anomaly detection,
-// credential expiry checks, and (Phase 5) campaign scheduling.
+// credential expiry checks, grant-expiry enforcement, and orphan
+// reconciliation.
 //
-// The Phase 0 scaffold logs startup and the registered providers so the
-// binary builds and serves as the blank-import host for connector init()
-// side-effects. Phase 6 wiring exposes WireCronJobs as a pure function so
-// the cron set is unit-testable without actually starting goroutines.
+// Production wiring: when ACCESS_DATABASE_URL is set the binary opens a
+// GORM Postgres pool, runs every migration in internal/migrations,
+// constructs the per-cron service dependencies (provisioning, credential
+// loader, orphan reconciler) and launches the cron set on a context that
+// cancels on SIGINT / SIGTERM. If ACCESS_DATABASE_URL is unset the binary
+// still boots with an empty cron set so dev `go run` works without
+// provisioning Postgres.
 package main
 
 import (
 	"context"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"gorm.io/gorm"
 
 	"github.com/kennguy3n/cautious-fishstick/internal/config"
 	"github.com/kennguy3n/cautious-fishstick/internal/cron"
+	"github.com/kennguy3n/cautious-fishstick/internal/pkg/database"
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 	"github.com/kennguy3n/cautious-fishstick/internal/services/notification"
 
@@ -448,25 +456,24 @@ func BuildOrphanReconciler(
 }
 
 // BuildAuditProducer constructs the audit producer for the worker
-// binary from the loaded config. When ACCESS_KAFKA_BROKERS is unset,
-// the function returns a NoOpAuditProducer so the binary still boots
-// on dev / on-prem deployments without Kafka.
+// binary from the loaded config. The current release ships only the
+// NoOpAuditProducer — Kafka delivery is not yet implemented and the
+// log line at boot makes the degraded mode obvious to operators so
+// SIEM ingestion is not silently dropped on the floor.
 //
-// Production deployments are expected to inject a real KafkaWriter
-// implementation here (e.g. segmentio/kafka-go); the audit handler
-// (internal/workers/handlers/access_audit.go) is agnostic to which
-// AuditProducer is plugged in.
+// TODO(kafka): wire a real KafkaAuditProducer that publishes
+// ShieldnetLogEvent v1 envelopes through segmentio/kafka-go (or a
+// thin sarama wrapper). The audit handler
+// (internal/workers/handlers/access_audit.go) is already agnostic to
+// which AuditProducer is plugged in, so the only outstanding work is
+// adding the producer adapter and threading the broker list through
+// here. Tracked alongside the Phase 10 audit hardening backlog.
 func BuildAuditProducer(cfg config.Access) access.AuditProducer {
 	if cfg.KafkaBrokers == "" {
-		log.Printf("access-connector-worker: ACCESS_KAFKA_BROKERS unset; audit pipeline using NoOpAuditProducer")
+		log.Printf("access-connector-worker: ACCESS_KAFKA_BROKERS unset; audit pipeline using NoOpAuditProducer (Kafka audit not yet implemented)")
 		return &access.NoOpAuditProducer{}
 	}
-	// Phase 10 scaffold: the Kafka writer is supplied by the deployment
-	// wrapper that imports segmentio/kafka-go to avoid pulling the
-	// dependency into the access platform module itself. For now, log
-	// and degrade to NoOp so the binary boots even when brokers are
-	// configured but the writer adapter is not wired.
-	log.Printf("access-connector-worker: ACCESS_KAFKA_BROKERS=%q but Kafka writer adapter is not wired; using NoOpAuditProducer", cfg.KafkaBrokers)
+	log.Printf("access-connector-worker: ACCESS_KAFKA_BROKERS=%q but Kafka audit is not yet implemented; using NoOpAuditProducer (TODO: wire KafkaAuditProducer)", cfg.KafkaBrokers)
 	return &access.NoOpAuditProducer{}
 }
 
@@ -512,51 +519,74 @@ func BuildCredentialExpiryNotifier(cfg config.Access) cron.NotificationSender {
 func main() {
 	log.Printf("access-connector-worker: starting; registered access connectors: %v", access.ListRegisteredProviders())
 
-	// Phase 0 scaffold: the production binary will Load() the
-	// config, open the DB pool, construct AnomalyDetectionService /
-	// NotificationService, and wire the crons via WireCronJobs +
-	// runCron. The current scaffold compiles WireCronJobs into the
-	// binary so the set is exercised by `go build ./...` without
-	// requiring a live DB.
-	//
-	// T25 (credential rotation alerting) wires the
-	// CredentialExpiryNotifier even when db is nil — the cron
-	// itself short-circuits on a nil db but the notifier
-	// construction is exercised so a misconfigured channel surfaces
-	// at boot rather than at the first credential rotation.
 	cfg := config.Load()
 	credNotifier := BuildCredentialExpiryNotifier(*cfg)
-	// Phase 11 (docs/PROPOSAL.md §13): the production binary will
-	// pass a real *access.AccessProvisioningService as the revoker
-	// and a real *access.ConnectorCredentialsLoader as the loader.
-	// The current scaffold runs without a DB so both are nil — the
-	// GrantExpiryEnforcer is omitted by WireCronJobs in that case
-	// and the binary still boots.
-	// BuildOrphanReconciler returns a concrete *access.OrphanReconciler
-	// (nil in the scaffold path). Assigning a typed-nil pointer
-	// directly to the interface variable would yield a non-nil
-	// interface wrapping a nil pointer (classic Go nil-interface
-	// trap) and defeat WireCronJobs' nil-check. Assigning only when
-	// the concrete pointer is non-nil keeps the interface properly
-	// nil so WireCronJobs correctly omits the orphan cron.
-	orphanReconcilerImpl := BuildOrphanReconciler(nil, nil, nil, *cfg)
+	auditProducer := BuildAuditProducer(*cfg)
+
+	// Open Postgres and wire the per-cron service dependencies
+	// when ACCESS_DATABASE_URL is set. Without a DB the cron set
+	// stays empty (WireCronJobs short-circuits on nil db) so dev
+	// `go run` works without provisioning a database.
+	var (
+		db         *gorm.DB
+		provSvc    *access.AccessProvisioningService
+		credLoader *access.ConnectorCredentialsLoader
+		scanner    cron.WorkspaceScanner
+	)
+	if dsn := os.Getenv("ACCESS_DATABASE_URL"); dsn != "" {
+		var err error
+		db, err = database.OpenPostgres(dsn)
+		if err != nil {
+			log.Fatalf("access-connector-worker: open postgres: %v", err)
+		}
+		if err := database.RunMigrations(db); err != nil {
+			log.Fatalf("access-connector-worker: run migrations: %v", err)
+		}
+		log.Printf("access-connector-worker: postgres connected; migrations applied")
+
+		encryptor := access.PassthroughEncryptor{}
+		provSvc = access.NewAccessProvisioningService(db)
+		credLoader = access.NewConnectorCredentialsLoader(db, encryptor)
+		// AnomalyDetectionService.ScanWorkspace satisfies
+		// cron.WorkspaceScanner. The AI detector is nil here — the
+		// service degrades gracefully to an empty observation list
+		// per docs/PROPOSAL.md §5.3 so the cron stays useful even
+		// without the agent.
+		scanner = access.NewAnomalyDetectionService(db, nil)
+	} else {
+		log.Printf("access-connector-worker: ACCESS_DATABASE_URL unset; running without DB — cron set will be empty")
+	}
+
+	orphanReconcilerImpl := BuildOrphanReconciler(db, provSvc, credLoader, *cfg)
 	var orphanReconciler cron.WorkspaceOrphanReconciler
 	if orphanReconcilerImpl != nil {
 		orphanReconciler = orphanReconcilerImpl
 	}
-	auditProducer := BuildAuditProducer(*cfg)
 	// Phase 11 batch 6 round-7: the grant-expiry notifier hook is
-	// not yet wired in the scaffold path (no production
-	// NotificationService method exists for grant-revoke yet).
-	// Passing nil here exercises the SetNotifier(nil) branch in
-	// WireCronJobs — the enforcer falls back to Status="skipped"
-	// so the wiring is observable in SIEM without a panic. When
-	// the notification service grows SendGrantRevokedNotification
-	// / SendGrantExpiryWarning methods, the adapter lands in
-	// internal/services/access/ and is wired here exactly like
-	// credNotifier above.
+	// not yet wired — no NotificationService method exists for the
+	// grant-revoke fan-out today. Passing nil exercises the
+	// SetNotifier(nil) branch in WireCronJobs; the enforcer falls
+	// back to Status="skipped" so the wiring is observable in SIEM
+	// without a panic.
 	var grantExpiryNotifier cron.GrantExpiryNotifier
-	jobs := WireCronJobs(nil, nil, credNotifier, nil, nil, grantExpiryNotifier, auditProducer, orphanReconciler, *cfg)
+
+	// revoker is satisfied by *access.AccessProvisioningService via
+	// its RevokeAccess method — the same one ConnectorManagementService
+	// already calls during Disconnect. loader is the same credLoader
+	// the orphan reconciler uses.
+	var (
+		revoker cron.GrantRevoker
+		loader  cron.ConnectorCredentialsLoader
+	)
+	if provSvc != nil {
+		revoker = provSvc
+	}
+	if credLoader != nil {
+		loader = credLoader
+	}
+
+	jobs := WireCronJobs(db, scanner, credNotifier, revoker, loader, grantExpiryNotifier, auditProducer, orphanReconciler, *cfg)
+
 	// T28 — connector health webhook dispatcher. The dispatcher
 	// short-circuits to a no-op when the URL is unset so dev
 	// binaries can run without external infrastructure; the boot
@@ -572,8 +602,20 @@ func main() {
 	log.Printf("access-connector-worker: health webhook dispatcher wired (configured=%t)",
 		healthWebhook.Configured(),
 	)
-	_ = jobs
-	_ = runCron
-	_ = auditProducer
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		sig := <-signals
+		log.Printf("access-connector-worker: received %s; shutting down crons", sig)
+		cancel()
+	}()
+
+	StartCronJobs(ctx, jobs)
+	log.Printf("access-connector-worker: cron set started; awaiting shutdown signal")
+	<-ctx.Done()
+	log.Printf("access-connector-worker: shutdown complete")
 	_ = healthWebhook
 }

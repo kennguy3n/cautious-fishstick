@@ -8,9 +8,9 @@
 // The engine listens on ACCESS_WORKFLOW_ENGINE_LISTEN_ADDR (default
 // :8082) and shuts down gracefully on SIGINT / SIGTERM. Database access
 // is via the same gorm postgres URL the rest of the platform uses
-// (DATABASE_URL); when DATABASE_URL is unset the binary falls back to a
-// short-lived in-memory SQLite so smoke tests can boot without
-// provisioning a database.
+// (ACCESS_DATABASE_URL); when ACCESS_DATABASE_URL is unset the binary
+// falls back to a short-lived in-memory SQLite so smoke tests can boot
+// without provisioning a database.
 package main
 
 import (
@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
 	"github.com/kennguy3n/cautious-fishstick/internal/models"
@@ -299,14 +300,29 @@ func main() {
 	}
 }
 
-// openDatabase returns a gorm DB. ACCESS_WORKFLOW_ENGINE_SQLITE_PATH is
-// honoured when set so operators can persist workflow state to disk;
-// otherwise an in-memory SQLite is opened so the binary can smoke-test
-// without provisioning storage. Postgres support lives in
-// internal/migrations and will be wired into the engine once the
-// migration runner is hooked up to this binary in Phase 9. The returned
-// description is logged at startup.
+// openDatabase returns a gorm DB. ACCESS_DATABASE_URL takes priority —
+// when set the engine opens the shared Postgres pool the rest of the
+// access platform uses and AutoMigrates the workflow models against
+// it. Otherwise it falls back to SQLite (ACCESS_WORKFLOW_ENGINE_SQLITE_PATH
+// or in-memory) so dev / smoke binaries can boot without provisioning a
+// database. The returned description is logged at startup.
 func openDatabase() (*gorm.DB, string, error) {
+	if pgDSN := os.Getenv("ACCESS_DATABASE_URL"); pgDSN != "" {
+		db, err := gorm.Open(postgres.Open(pgDSN), &gorm.Config{})
+		if err != nil {
+			return nil, "", err
+		}
+		if err := db.AutoMigrate(
+			&models.AccessRequest{},
+			&models.AccessWorkflow{},
+			&models.AccessRequestStateHistory{},
+			&models.AccessWorkflowStepHistory{},
+		); err != nil {
+			return nil, "", err
+		}
+		return db, "postgres at " + redactDSN(pgDSN), nil
+	}
+
 	dsn := os.Getenv("ACCESS_WORKFLOW_ENGINE_SQLITE_PATH")
 	if dsn == "" {
 		dsn = ":memory:"
@@ -328,6 +344,21 @@ func openDatabase() (*gorm.DB, string, error) {
 		desc = "sqlite at " + dsn
 	}
 	return db, desc, nil
+}
+
+// redactDSN strips the user:password segment from a libpq URL so the
+// startup log never echoes the Postgres password. Anything that isn't
+// a `scheme://user:pass@host/...` URL is returned unchanged.
+func redactDSN(dsn string) string {
+	at := strings.LastIndex(dsn, "@")
+	if at < 0 {
+		return dsn
+	}
+	scheme := strings.Index(dsn, "://")
+	if scheme < 0 || scheme >= at {
+		return dsn
+	}
+	return dsn[:scheme+3] + "[redacted]" + dsn[at:]
 }
 
 // runEscalationChecker polls every minute until ctx is cancelled. The

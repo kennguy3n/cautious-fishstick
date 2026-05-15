@@ -3,11 +3,13 @@
 // in docs/PROPOSAL.md §11, and blank-imports every Phase 0 connector
 // so the process-global registry is populated.
 //
-// The binary is intentionally minimal: env-var-driven configuration
-// (via internal/config), no DB connection in this scaffold (services
-// are wired in only when ACCESS_DB_DSN is provided in a future phase),
-// and a /health endpoint that is always available so Kubernetes
-// probes are happy from second zero.
+// Production wiring: when ACCESS_DATABASE_URL is set the binary opens
+// a GORM Postgres pool, runs every migration in internal/migrations,
+// and constructs the full service set (policy, access-request,
+// access-review, connector-management, connector-list, orphan-
+// reconciler, JML). If ACCESS_DATABASE_URL is unset the binary still
+// boots so dev `go run` works without provisioning Postgres — handlers
+// that need a service simply return 503 until the DB is configured.
 package main
 
 import (
@@ -20,6 +22,7 @@ import (
 	"github.com/kennguy3n/cautious-fishstick/internal/config"
 	"github.com/kennguy3n/cautious-fishstick/internal/handlers"
 	"github.com/kennguy3n/cautious-fishstick/internal/pkg/aiclient"
+	"github.com/kennguy3n/cautious-fishstick/internal/pkg/database"
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 
 	// Blank-imports register each connector with the process-global
@@ -252,6 +255,50 @@ func main() {
 	if cfg.AIConfigured() {
 		deps.AIService = aiclient.NewAIClient(cfg.AIAgentBaseURL, cfg.AIAgentAPIKey)
 	}
+
+	// Open Postgres and wire the service layer when the DSN is
+	// configured. The dev binary still boots with an empty deps set
+	// when ACCESS_DATABASE_URL is unset so `go run ./cmd/ztna-api`
+	// works without provisioning a database (handlers that need a
+	// service short-circuit to 503 in that case — see
+	// internal/handlers/router.go for the per-route nil-checks).
+	if dsn := os.Getenv("ACCESS_DATABASE_URL"); dsn != "" {
+		db, err := database.OpenPostgres(dsn)
+		if err != nil {
+			log.Fatalf("ztna-api: open postgres: %v", err)
+		}
+		if err := database.RunMigrations(db); err != nil {
+			log.Fatalf("ztna-api: run migrations: %v", err)
+		}
+		log.Printf("ztna-api: postgres connected; migrations applied")
+
+		encryptor := access.PassthroughEncryptor{}
+		policySvc := access.NewPolicyService(db)
+		requestSvc := access.NewAccessRequestService(db)
+		provSvc := access.NewAccessProvisioningService(db)
+		reviewSvc := access.NewAccessReviewService(db, provSvc)
+		// ssoSvc is intentionally nil here — Keycloak broker
+		// registration is wired in a follow-up once the SSO
+		// federation service has a production constructor.
+		connMgmtSvc := access.NewConnectorManagementService(db, encryptor, provSvc, nil)
+		connListSvc := access.NewAccessConnectorListService(db)
+		credLoader := access.NewConnectorCredentialsLoader(db, encryptor)
+		orphanReconciler := access.NewOrphanReconciler(db, provSvc, credLoader)
+		jmlSvc := access.NewJMLService(db, provSvc)
+		grantQuerySvc := access.NewAccessGrantQueryService(db)
+
+		deps.PolicyService = policySvc
+		deps.AccessRequestService = requestSvc
+		deps.AccessReviewService = reviewSvc
+		deps.AccessGrantReader = &handlers.AccessGrantReaderAdapter{Inner: grantQuerySvc}
+		deps.ConnectorManagementService = connMgmtSvc
+		deps.ConnectorListReader = connListSvc
+		deps.OrphanReconciler = orphanReconciler
+		deps.JMLService = jmlSvc
+	} else {
+		log.Printf("ztna-api: ACCESS_DATABASE_URL unset; running without DB — handlers will return 503")
+	}
+
 	r := handlers.Router(deps)
 
 	addr := os.Getenv("ZTNA_API_LISTEN_ADDR")
