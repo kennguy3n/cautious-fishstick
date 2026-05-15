@@ -33,7 +33,7 @@ As of this writing, the catalogue is at **200 / 200 across all five tiers** — 
 
 ## What "an app connection" actually gives you
 
-Every app connection lands one or more of the following capabilities. The set per connection is documented in the marketplace UI and in `docs/LISTCONNECTORS.md`.
+Every app connection lands one or more of the following capabilities. The set per connection is documented in the marketplace UI and in `docs/connectors.md`.
 
 | Capability | What it does | Example use |
 |------------|--------------|-------------|
@@ -180,7 +180,7 @@ Every secret you give us — API tokens, client secrets, signing keys, refresh t
 - **Decryption is scoped to one job execution.** Workers decrypt secrets only at the moment they're used, and never write them to logs, metrics, or audit envelopes.
 - **Key-version pinning.** Each row records the DEK version used to encrypt it. When the org rotates its DEK, old ciphertext stays readable; re-encryption is lazy and offline.
 
-If you ever wonder how a connection's credentials are handled, the full chapter is in `docs/PROPOSAL.md` §4. The TL;DR is that the model is the same one ShieldNet 360 has been using in the connector framework for years — proven pattern, reused unchanged.
+If you ever wonder how a connection's credentials are handled, the full chapter is in `docs/overview.md` §4. The TL;DR is that the model is the same one ShieldNet 360 has been using in the connector framework for years — proven pattern, reused unchanged.
 
 ## Identity sync, full and delta
 

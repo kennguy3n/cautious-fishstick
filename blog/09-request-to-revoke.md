@@ -164,7 +164,7 @@ Three things happen in a defined order:
 2. The grant row is inserted in the database. This is the moment the platform considers the access *real*.
 3. Best-effort propagation to Keycloak (group membership) and OpenZiti (identity attributes, service-policy effective set). Failures here are surfaced as warnings on the grant but never roll back step 1 or step 2.
 
-The atomicity rules are spelled out in `docs/PROPOSAL.md` §5. The connector retry policy is in `docs/PROPOSAL.md` §2.1 — 4xx errors are permanent, 5xx errors are retried with exponential backoff.
+The atomicity rules are spelled out in `docs/overview.md` §5. The connector retry policy is in `docs/overview.md` §2.1 — 4xx errors are permanent, 5xx errors are retried with exponential backoff.
 
 If provisioning fails permanently, the request transitions to `provision_failed`. This is the only state in the lifecycle that requires operator intervention — usually a credential rotation on the connector or a permission scope change.
 
@@ -253,7 +253,7 @@ The same data drives the executive dashboards: average time-to-approval, auto-ap
 
 ## SN360 language alignment
 
-Every public-facing string in the admin UI, mobile SDKs, desktop extension, and audit log uses the SN360 column from `docs/PROPOSAL.md` §8 — "access" instead of "access grant", "turn the rule on" instead of "promote draft policy", "company directory" instead of "identity provider", "auto-sync users" instead of "SCIM provisioning", "risk level" instead of "risk score", "access check-up" instead of "access certification campaign", "app connection" instead of "connector". The translation table is enforced by a CI check that grep's user-facing message keys for the engineering vocabulary.
+Every public-facing string in the admin UI, mobile SDKs, desktop extension, and audit log uses the SN360 column from `docs/overview.md` §8 — "access" instead of "access grant", "turn the rule on" instead of "promote draft policy", "company directory" instead of "identity provider", "auto-sync users" instead of "SCIM provisioning", "risk level" instead of "risk score", "access check-up" instead of "access certification campaign", "app connection" instead of "connector". The translation table is enforced by a CI check that grep's user-facing message keys for the engineering vocabulary.
 
 ## Reference
 
@@ -264,7 +264,7 @@ Every public-facing string in the admin UI, mobile SDKs, desktop extension, and 
 - HTTP handlers: `internal/handlers/access_request_handler.go`, `access_grant_handler.go`.
 - State history: `internal/migrations/002_create_access_request_tables.go`.
 - Workflow engine: `cmd/access-workflow-engine/main.go`, `internal/services/access/workflow_engine/*.go`.
-- Design contract: `docs/PROPOSAL.md` §5; flow diagram in `docs/ARCHITECTURE.md` §4.
+- Design contract: `docs/overview.md` §5; flow diagram in `docs/architecture.md` §4.
 
 ## What's next
 

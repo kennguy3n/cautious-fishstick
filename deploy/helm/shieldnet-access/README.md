@@ -16,7 +16,7 @@ can roll out, upgrade, and tune the stack per environment.
 Each Deployment ships with its own ConfigMap, Secret (placeholder
 values — replace before production), ServiceAccount, and (where
 applicable) Service. Sizing follows the SN360 deployment pattern in
-`docs/PROPOSAL.md` §10.2 and `docs/ARCHITECTURE.md` §11:
+`docs/overview.md` §10.2 and `docs/architecture.md` §11:
 
 - API services: `cpu=200m mem=1Gi`, `GOMEMLIMIT=900MiB GOGC=100`
 - Worker:       `cpu=2 mem=400Mi`, `GOMEMLIMIT=360MiB GOGC=75`

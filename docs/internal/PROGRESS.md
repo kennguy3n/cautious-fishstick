@@ -360,7 +360,7 @@ Use this section sparingly. If something belongs here for more than two sprints,
 
 | Area | Problem | Tracking |
 |------|---------|----------|
-| Documentation drift | Per-cell tables in §1 and the statistics in [`LISTCONNECTORS.md`](LISTCONNECTORS.md) can lag reality after large batches land. Mitigated by CI drift checks (swagger, SN360 language) and the `scripts/sync_listconnectors.py` helper. | (closed) |
+| Documentation drift | Per-cell tables in §1 and the statistics in [`docs/connectors.md`](../connectors.md) can lag reality after large batches land. Mitigated by CI drift checks (swagger, SN360 language) and the `scripts/sync_listconnectors.py` helper. | (closed) |
 
 ---
 

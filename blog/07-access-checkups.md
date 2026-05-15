@@ -243,7 +243,7 @@ The combination is what continuous certification means in practice. Routine gran
 - Migrations: `internal/migrations/004_create_access_review_tables.go`, `005_create_access_campaign_schedules.go`, `010_create_push_subscriptions.go`.
 - AI skill: `cmd/access-ai-agent/skills/access_review_automation.py`.
 - Notifier adapter: `internal/services/access/notification_adapter.go`.
-- Design contract: `docs/PROPOSAL.md` §5 and §7 (covers the AI integration), `docs/ARCHITECTURE.md` §6.
+- Design contract: `docs/overview.md` §5 and §7 (covers the AI integration), `docs/architecture.md` §6.
 
 ## What's next
 

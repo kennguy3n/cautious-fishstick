@@ -75,7 +75,7 @@ Three properties to call out:
 - **The Python agent never persists state.** It is a pure RPC server. State lives in PostgreSQL on the Go side.
 - **The workflow engine is a separate process.** Multi-step orchestration is its own concern; the request service is not in the business of polling for approval timeouts.
 
-The complete deployment map is in `docs/PROPOSAL.md` §10.
+The complete deployment map is in `docs/overview.md` §10.
 
 ## The A2A protocol
 

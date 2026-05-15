@@ -176,7 +176,7 @@ The leaver flow runs synchronously and aims for tens-of-seconds end to end. The 
 
 For an operator setting up JML at a 100-person company, the first time:
 
-1. **Connect the company directory.** Five minutes through the marketplace wizard (`docs/PROPOSAL.md` §3 is the connector list).
+1. **Connect the company directory.** Five minutes through the marketplace wizard (`docs/overview.md` §3 is the connector list).
 2. **Map directory attributes to Teams.** "Department = Engineering means join the engineering Team. Department = Finance means join the finance Team." Defaults are sensible; the operator reviews and tweaks.
 3. **Define default access rules per Team.** "Engineering gets Slack + GitHub + Notion + AWS dev account." Five rules per Team, on average.
 4. **Connect the top five SaaS apps.** Each one a three-minute wizard. The platform infers which apps the existing directory users currently have access to.

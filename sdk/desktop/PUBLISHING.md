@@ -82,4 +82,4 @@ Override `publishConfig.registry` (or pass `--registry` to `npm publish`) and se
 - [ ] `bash scripts/check_no_model_files.sh` passes.
 - [ ] `sdk/desktop/package.json` version is bumped.
 - [ ] `sdk/desktop/CHANGELOG.md` has a new entry on top.
-- [ ] `docs/SDK_CONTRACTS.md` "Versioning" table is updated.
+- [ ] `docs/sdk.md` "Versioning" table is updated.

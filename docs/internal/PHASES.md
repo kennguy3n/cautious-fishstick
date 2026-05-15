@@ -132,7 +132,7 @@ Catalogue grows from 10 to **200 connectors** across all categories. Every conne
 - [x] **Tier 4 — HR / Finance / Legal / Sales / Marketing** (50 / 50).
 - [x] **Tier 5 — Vertical / Niche** (70 / 70): security tooling, GenAI, vertical SaaS, e-commerce, web platforms, analytics, social.
 
-See [`LISTCONNECTORS.md`](LISTCONNECTORS.md) for the full per-provider matrix.
+See [`docs/connectors.md`](../connectors.md) for the full per-provider matrix.
 
 ---
 
@@ -178,7 +178,7 @@ Beyond the minimum capabilities of Phase 7: real `ProvisionAccess` / `RevokeAcce
 Phase 11 introduces an access-mode classification per connector, an
 "unused app account" reconciler, SSO-only enforcement verification,
 session revocation, a six-layer leaver kill switch, and automatic
-grant-expiry enforcement (docs/PROPOSAL.md §13).
+grant-expiry enforcement (see [`docs/architecture.md`](../architecture.md#13-hybrid-access-model)).
 
 ### WS1 — Per-connector access mode
 
@@ -293,7 +293,7 @@ grant-expiry enforcement (docs/PROPOSAL.md §13).
 
 - [x] PROPOSAL §13 (Hybrid Access Model).
 - [x] PHASES.md Phase 11 section (this section).
-- [x] ARCHITECTURE.md §12 (Hybrid Access Model & kill switch flow).
+- [x] `docs/architecture.md` (Hybrid Access Model & kill switch flow).
 - [x] PROGRESS.md Phase 11 rows + changelog.
 - [x] README.md feature list updated.
 

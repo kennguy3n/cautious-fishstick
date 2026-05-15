@@ -6,7 +6,7 @@ A long-form blog series covering ShieldNet Access — the access management prod
 - **Product** — written for IT generalists and admins. Concrete workflows, screenshots-in-words, and the value each capability unlocks.
 - **Technical** — written for technical evaluators, integration partners, and security architects. Deep architecture, code references, and integration points.
 
-All user-facing language follows the SN360 language table from `docs/PROPOSAL.md` §8 — access rules instead of policies, app connections instead of connectors, access check-ups instead of access reviews, risk level instead of risk score. Technical posts may use the engineering vocabulary but always note the SN360 equivalent on first use.
+All user-facing language follows the product-language table in [`docs/overview.md`](../docs/overview.md#product-language) — access rules instead of policies, app connections instead of connectors, access check-ups instead of access reviews, risk level instead of risk score. Technical posts may use the engineering vocabulary but always note the product equivalent on first use.
 
 ## Series index
 
@@ -32,11 +32,11 @@ All user-facing language follows the SN360 language table from `docs/PROPOSAL.md
 
 ## Reference material
 
-The posts in this series cite four primary specification documents:
+The posts in this series cite four primary docs:
 
-- [`docs/PROPOSAL.md`](../docs/PROPOSAL.md) — the long-form design contract.
-- [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) — diagrams and data flows.
-- [`docs/PHASES.md`](../docs/PHASES.md) — phase definitions and exit criteria.
-- [`docs/PROGRESS.md`](../docs/PROGRESS.md) — what is and isn't implemented yet.
+- [`docs/overview.md`](../docs/overview.md) — product overview and design principles.
+- [`docs/architecture.md`](../docs/architecture.md) — service topology, request lifecycles, and data model.
+- [`docs/connectors.md`](../docs/connectors.md) — per-provider capability matrix for all 200 connectors.
+- [`docs/sdk.md`](../docs/sdk.md) — mobile and desktop SDK contract.
 
 Where the implementation differs from these documents, the code is the source of truth and the documents are updated to match.

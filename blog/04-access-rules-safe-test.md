@@ -225,7 +225,7 @@ None of these stories involves a production outage. None of them involves "let's
 - HTTP handler: `internal/handlers/policy_handler.go`.
 - Integration test enforcing the invariant: `internal/services/access/policy_service_test.go::TestPromote_DoesNotInvokeOpenZiti`.
 - Migration that introduced the draft columns: `internal/migrations/003_create_policy_tables.go`.
-- Design contract: `docs/PROPOSAL.md` §6.
+- Design contract: `docs/overview.md` §6.
 
 ## What's next
 

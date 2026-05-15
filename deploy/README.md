@@ -10,15 +10,15 @@ platform. Two equivalent paths:
 
 ## What gets deployed
 
-Four runtime services per `docs/PROPOSAL.md` §10.2 and
-`docs/ARCHITECTURE.md` §11:
+Four runtime services per `docs/overview.md` §10.2 and
+`docs/architecture.md` §11:
 
 - **ztna-api** — public HTTP surface (port 8080). HPA 2–10 replicas.
 - **access-connector-worker** — Redis-queue consumer (no Service).
 - **access-workflow-engine** — cluster-internal webhook engine (port 8082).
 - **access-ai-agent** — Python A2A skill server (port 8090).
 
-Per `docs/PROPOSAL.md` §10.3, only `ztna-api` is exposed publicly;
+Per `docs/overview.md` §10.3, only `ztna-api` is exposed publicly;
 the other three live on the cluster-internal network and
 authenticate via the shared `ACCESS_AI_AGENT_API_KEY` /
 `X-API-Key` header.
