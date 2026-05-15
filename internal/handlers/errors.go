@@ -10,13 +10,17 @@ import (
 )
 
 // errorEnvelope is the canonical 4xx / 5xx body shape. Operator-
-// facing strings use the SN360 vocabulary (PROPOSAL §8) — "rule" not
-// "policy", "access check-up" not "review campaign" — so admin-UI
-// translations stay in lockstep with the service layer.
+// facing strings use the SN360 vocabulary (docs/connectors.md) —
+// "rule" not "policy", "access check-up" not "review campaign" — so
+// admin-UI translations stay in lockstep with the service layer.
+// RequestID is the X-Request-ID stamped by RequestIDMiddleware and
+// echoed here so a client filing a support ticket can quote a single
+// correlation key.
 type errorEnvelope struct {
-	Error   string `json:"error"`
-	Code    string `json:"code,omitempty"`
-	Message string `json:"message,omitempty"`
+	Error     string `json:"error"`
+	Code      string `json:"code,omitempty"`
+	Message   string `json:"message,omitempty"`
+	RequestID string `json:"request_id,omitempty"`
 }
 
 // writeError serialises err to the response with the HTTP status
@@ -30,9 +34,10 @@ func writeError(c *gin.Context, status int, err error) {
 	}
 	resolvedStatus, code := mapServiceError(err, status)
 	c.AbortWithStatusJSON(resolvedStatus, errorEnvelope{
-		Error:   err.Error(),
-		Code:    code,
-		Message: err.Error(),
+		Error:     err.Error(),
+		Code:      code,
+		Message:   err.Error(),
+		RequestID: GetRequestID(c),
 	})
 }
 
