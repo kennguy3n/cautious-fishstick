@@ -9,13 +9,13 @@ import (
 )
 
 // Migration006CreateAccessSyncState creates the access_sync_state
-// table per docs/PROPOSAL.md §9.1 + docs/ARCHITECTURE.md §3 using
+// table per docs/overview.md §9.1 + docs/architecture.md §3 using
 // GORM AutoMigrate. The unique composite index on (connector_id,
 // kind) is declared on the model struct tags and materialised here
 // — a single connector never holds two open cursors of the same
 // kind (identity / group / audit).
 //
-// No FOREIGN KEY constraints (per docs/PHASES.md cross-cutting
+// No FOREIGN KEY constraints (per docs/internal/PHASES.md cross-cutting
 // criteria); referential integrity to access_connectors is enforced
 // at the service layer.
 func Migration006CreateAccessSyncState(db *gorm.DB) error {

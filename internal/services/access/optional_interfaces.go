@@ -132,7 +132,7 @@ type SCIMProvisioner interface {
 
 // SSOEnforcementChecker is implemented by SaaS connectors that can
 // answer "is password / non-SSO login disabled on this tenant?".
-// Phase 11 (docs/PROPOSAL.md §13) uses the check at connector
+// Phase 11 (docs/overview.md §13) uses the check at connector
 // setup time, on the connector-health endpoint, and on the daily
 // orphan-account reconciler so an SSO-only connector that silently
 // regresses (e.g. an admin re-enables basic auth) surfaces in the
@@ -163,7 +163,7 @@ type SSOEnforcementChecker interface {
 
 // SessionRevoker is implemented by SaaS connectors that can sign
 // a user out of every active session on the tenant. Phase 11
-// (docs/PROPOSAL.md §13) calls this from the leaver flow as one
+// (docs/overview.md §13) calls this from the leaver flow as one
 // of the six layers of the kill switch — terminating long-lived
 // SaaS sessions matters even after the IdP itself has been
 // disabled, because many SaaS apps re-validate IdP only on session

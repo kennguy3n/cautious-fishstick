@@ -1,6 +1,6 @@
 // Package aiclient is the Go-side stub for the access-ai-agent A2A
-// (agent-to-agent) skill server per docs/PROPOSAL.md §7.1 and
-// docs/ARCHITECTURE.md §8.
+// (agent-to-agent) skill server per docs/overview.md §7.1 and
+// docs/architecture.md §8.
 //
 // The client speaks plain JSON over HTTPS — `POST {baseURL}/a2a/invoke`
 // with an `X-API-Key` header. The Python A2A server hosts five
@@ -101,7 +101,7 @@ const defaultTimeout = 5 * time.Second
 // is appended internally.
 //
 // apiKey is sent in the X-API-Key request header per
-// docs/PROPOSAL.md §10.3 (AI agent only authenticated via shared
+// docs/overview.md §10.3 (AI agent only authenticated via shared
 // secret on the cluster-internal network).
 //
 // Both arguments may be empty. An AIClient with an empty baseURL is a

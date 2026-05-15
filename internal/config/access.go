@@ -1,7 +1,7 @@
 // Package config holds the authoritative process-level configuration
 // for the ShieldNet 360 Access Platform binaries (cmd/ztna-api,
 // cmd/access-connector-worker, cmd/access-workflow-engine). Per
-// docs/PROPOSAL.md §10.2 the access platform reads its knobs from
+// docs/overview.md §10.2 the access platform reads its knobs from
 // environment variables; this package centralises the reads so a
 // future migration to TOML / YAML / Vault is one file change.
 package config
@@ -13,7 +13,7 @@ import (
 )
 
 // Default values for the access-platform knobs. Mirrors the table in
-// docs/PROPOSAL.md §10.2.
+// docs/overview.md §10.2.
 const (
 	// DefaultFullResyncInterval is the cadence at which the
 	// access-connector-worker runs a full enumeration of identities,
@@ -55,7 +55,7 @@ const (
 	// DefaultGrantExpiryCheckInterval is the cadence at which the
 	// access-connector-worker scans access_grants for rows whose
 	// expires_at has passed and pushes a revoke to the upstream
-	// connector. Phase 11 (docs/PROPOSAL.md §13) introduces grant-
+	// connector. Phase 11 (docs/overview.md §13) introduces grant-
 	// expiry enforcement as the automated counterpart to the
 	// reviewer-driven Phase 5 revoke flow; one hour is the right
 	// default for a JIT "15-minute grant" workload — the worst-case
@@ -97,11 +97,11 @@ type Access struct {
 	// server. Empty means "AI is intentionally unconfigured" — the
 	// service layer's AssessRiskWithFallback recognises this and
 	// short-circuits to the medium-risk fallback per
-	// docs/PROPOSAL.md §5.3.
+	// docs/overview.md §5.3.
 	AIAgentBaseURL string
 
 	// AIAgentAPIKey is the shared secret for X-API-Key header per
-	// docs/PROPOSAL.md §10.3. Never logged.
+	// docs/overview.md §10.3. Never logged.
 	AIAgentAPIKey string
 
 	// WorkflowEngineBaseURL is the root URL of the
@@ -159,7 +159,7 @@ type Access struct {
 	// GrantExpiryCheckInterval is the cadence at which the
 	// access-connector-worker walks access_grants for expired rows
 	// and revokes each one through the upstream connector. Phase 11
-	// (docs/PROPOSAL.md §13) automation. Defaults to
+	// (docs/overview.md §13) automation. Defaults to
 	// DefaultGrantExpiryCheckInterval.
 	GrantExpiryCheckInterval time.Duration
 

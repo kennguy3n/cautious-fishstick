@@ -10,7 +10,7 @@ import (
 )
 
 // assistantRequest is the wire shape for POST /access/assistant. It
-// is the Phase 4 "AI assistant chat" surface from docs/PROPOSAL.md
+// is the Phase 4 "AI assistant chat" surface from docs/overview.md
 // §11: a free-form natural-language question paired with optional
 // hints (workspace, focused entity, explicit skill override).
 //
@@ -41,7 +41,7 @@ type assistantResponse struct {
 }
 
 // classifyIntent maps a free-text query to one of the four
-// canonical AI skills documented in docs/PROPOSAL.md §11
+// canonical AI skills documented in docs/overview.md §11
 // ("Phase 4 AI agent skills"):
 //
 //   - access_risk_assessment    — "is this risky?"

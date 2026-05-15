@@ -8,7 +8,7 @@ import (
 )
 
 // AccessWorkflow mirrors the access_workflows table per
-// docs/ARCHITECTURE.md §10. Encodes a configurable approval chain: which
+// docs/architecture.md §10. Encodes a configurable approval chain: which
 // requests should match it (MatchRule) and what to do once they do (Steps).
 //
 // Notable invariants:

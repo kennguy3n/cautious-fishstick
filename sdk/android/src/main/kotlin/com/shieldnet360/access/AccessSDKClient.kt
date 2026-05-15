@@ -4,9 +4,9 @@
  * REST-only client for the ShieldNet 360 Access Platform `ztna-api`. This
  * package defines the `AccessSDKClient` interface plus the request /
  * response data classes that mirror the JSON payloads documented in
- * `docs/PROPOSAL.md` §11.4.
+ * `docs/overview.md` §11.4.
  *
- * REST endpoint mapping (per PROPOSAL.md §11.4):
+ * REST endpoint mapping (per docs/overview.md §11.4):
  *   createRequest      → POST   /access/requests
  *   listRequests       → GET    /access/requests
  *   approveRequest     → POST   /access/requests/:id/approve
@@ -22,8 +22,8 @@
  * (`explainPolicy`, `suggestResources`) are REST calls to `/access/explain`
  * and `/access/suggest`, which the backend forwards to the
  * `access-ai-agent` Python skill server via A2A. This rule is enforced by
- * `scripts/check_no_model_files.sh` in CI. See `docs/PROPOSAL.md` §11.2 and
- * `docs/SDK_CONTRACTS.md`.
+ * `scripts/check_no_model_files.sh` in CI. See `docs/overview.md` §11.2 and
+ * `docs/sdk.md`.
  */
 package com.shieldnet360.access
 
@@ -100,7 +100,7 @@ enum class AccessRequestRiskScore(val value: String) {
 
 /**
  * Persisted access request row. Mirrors the `access_requests` table
- * (`docs/ARCHITECTURE.md` §10). Returned by `POST /access/requests` and
+ * (`docs/architecture.md` §10). Returned by `POST /access/requests` and
  * `GET /access/requests`.
  */
 data class AccessRequest(

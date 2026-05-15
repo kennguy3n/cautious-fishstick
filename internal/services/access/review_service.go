@@ -16,8 +16,8 @@ import (
 )
 
 // AccessReviewService is the service layer for the access_reviews and
-// access_review_decisions tables per docs/PROPOSAL.md §6 (Access
-// Review Campaigns) and docs/ARCHITECTURE.md §6.
+// access_review_decisions tables per docs/overview.md §6 (Access
+// Review Campaigns) and docs/architecture.md §6.
 //
 // The service owns the campaign lifecycle:
 //
@@ -52,7 +52,7 @@ type AccessReviewService struct {
 // notification.NotificationService satisfies it via a small adapter
 // (see notification_adapter.go).
 //
-// Per docs/PHASES.md Phase 5 exit criteria notifications are
+// Per docs/internal/PHASES.md Phase 5 exit criteria notifications are
 // best-effort — implementations MUST NOT roll back the underlying
 // campaign transaction. The interface returns an error only for
 // observability; the service ignores it.
@@ -119,7 +119,7 @@ func (s *AccessReviewService) SetNotifier(notifier ReviewNotifier, resolver Revi
 // existing NewAccessReviewService signature stays stable while Phase
 // 5 adds the optional auto-certification path.
 //
-// Per docs/PHASES.md Phase 5 the wire-in is best-effort: an
+// Per docs/internal/PHASES.md Phase 5 the wire-in is best-effort: an
 // unreachable AI agent leaves every decision pending and the
 // campaign proceeds normally.
 func (s *AccessReviewService) SetReviewAutomator(automator ReviewAutomator) {
@@ -261,7 +261,7 @@ func (s *AccessReviewService) dispatchPendingNotifications(
 // not abort the loop. The campaign proceeds with whatever subset of
 // rows were successfully auto-certified.
 //
-// Per docs/PHASES.md Phase 5: AI is decision-support, not critical
+// Per docs/internal/PHASES.md Phase 5: AI is decision-support, not critical
 // path. AI failures (transport / decode / unrecognised verdict) are
 // logged inside AutomateReviewWithFallback and surface here as
 // ok=false; we leave the row pending in that case.
@@ -667,7 +667,7 @@ func (s *AccessReviewService) AutoRevoke(ctx context.Context, reviewID string) e
 // UI. The struct is the canonical shape both the service and the
 // HTTP handler return.
 //
-// Per docs/PHASES.md Phase 5 exit criteria the platform tracks an
+// Per docs/internal/PHASES.md Phase 5 exit criteria the platform tracks an
 // auto-certification rate so operators can see the AI agent's
 // signal-to-noise on a real campaign. AutoCertificationRate is in
 // [0.0, 1.0] and is auto_certified / total_decisions. Total of zero

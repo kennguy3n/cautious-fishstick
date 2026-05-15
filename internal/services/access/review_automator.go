@@ -18,7 +18,7 @@ import (
 // reachable. Callers MUST treat ok=false as "AI is down; leave the
 // decision pending and continue".
 //
-// Per docs/PHASES.md Phase 5 the wire-in MUST be best-effort: an
+// Per docs/internal/PHASES.md Phase 5 the wire-in MUST be best-effort: an
 // unreachable AI agent leaves every decision pending and the
 // campaign proceeds normally.
 type ReviewAutomator interface {

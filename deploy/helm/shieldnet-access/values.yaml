@@ -33,7 +33,7 @@ image:
   accessWorkflowTag: ""
   accessAiAgentTag: ""
 
-# Sizing follows docs/PROPOSAL.md §10.2 and docs/ARCHITECTURE.md §11.
+# Sizing follows docs/overview.md §10.2 and docs/architecture.md §11.
 ztnaApi:
   enabled: true
   replicaCount: 2

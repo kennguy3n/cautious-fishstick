@@ -19,7 +19,7 @@ import (
 // row. Operators can revoke or dismiss orphan accounts through the
 // /access/orphans HTTP surface.
 //
-// Per docs/PROPOSAL.md §13.4, "orphan accounts" surface in the UI
+// Per docs/overview.md §13.4, "orphan accounts" surface in the UI
 // as "unused app accounts" — the SN360 user-facing term is set in
 // the handler layer, not here.
 //
@@ -211,7 +211,7 @@ func (r *OrphanReconciler) reconcileWorkspace(ctx context.Context, workspaceID s
 		scanned++
 		rows, err := r.reconcileConnector(ctx, conn, dryRun)
 		if err != nil {
-			// Per docs/PHASES.md and docs/ARCHITECTURE.md §12.2 the
+			// Per docs/internal/PHASES.md and docs/architecture.md §12.2 the
 			// reconciler is best-effort across connectors: log this
 			// connector's failure and continue to the next one so a
 			// single broken upstream cannot mask orphans in the rest

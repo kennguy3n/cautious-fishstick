@@ -25,7 +25,7 @@ import (
 //
 // Bearer auth via MyCaseAccessConnector.newRequest. Idempotency is delegated to
 // access.IsIdempotentProvisionStatus / access.IsIdempotentRevokeStatus
-// per docs/PROPOSAL.md §2.1.
+// per docs/overview.md §2.1.
 
 func mycaseValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

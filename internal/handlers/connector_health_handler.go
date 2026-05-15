@@ -60,7 +60,7 @@ type ConnectorHealth struct {
 
 // ConnectorHealthService is the production-backed implementation of
 // ConnectorHealthReader. It executes two SELECTs against GORM (no
-// raw SQL per the cross-cutting rules in docs/PHASES.md): one on
+// raw SQL per the cross-cutting rules in docs/internal/PHASES.md): one on
 // access_connectors and one on access_sync_state. Both are bounded
 // by the supplied context.
 type ConnectorHealthService struct {
@@ -80,7 +80,7 @@ func NewConnectorHealthService(db *gorm.DB) *ConnectorHealthService {
 }
 
 // staleAuditWindow is the threshold beyond which we flag the audit
-// cursor as stalled. Per docs/PHASES.md Phase 7 the operator alert
+// cursor as stalled. Per docs/internal/PHASES.md Phase 7 the operator alert
 // fires at 24h; we surface the same threshold here so the UI does
 // not have to re-derive it.
 const staleAuditWindow = 24 * time.Hour

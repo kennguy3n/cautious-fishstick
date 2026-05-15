@@ -81,7 +81,7 @@ func TestConnectorFlow_FullLifecycle(t *testing.T) {
 
 // TestConnectorFlow_ProvisionFailsOn403 confirms that a hard 4xx from
 // Cloudflare propagates as an error to the worker (which will then
-// emit a permanent fail per docs/PHASES.md).
+// emit a permanent fail per docs/internal/PHASES.md).
 func TestConnectorFlow_ProvisionFailsOn403(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)

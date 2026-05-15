@@ -68,7 +68,7 @@ type Dependencies struct {
 
 	// ConnectorManagementService backs POST /access/connectors, DELETE
 	// /access/connectors/:id, PUT /access/connectors/:id/secret and
-	// POST /access/connectors/:id/sync (per docs/ARCHITECTURE.md §2).
+	// POST /access/connectors/:id/sync (per docs/architecture.md §2).
 	// May be nil in dev binaries that read connectors out of a static
 	// fixture; the routes are only registered when wired.
 	ConnectorManagementService *access.ConnectorManagementService
@@ -105,7 +105,7 @@ type Dependencies struct {
 
 // Router builds the *gin.Engine that serves the access platform's
 // HTTP API. It registers /health and the access-platform routes
-// described in docs/PHASES.md (Phase 2 + Phase 3 + Phase 4 + Phase 5).
+// described in docs/internal/PHASES.md (Phase 2 + Phase 3 + Phase 4 + Phase 5).
 //
 // Router never panics on a partial Dependencies — handlers that need
 // a missing service short-circuit to 503. This is intentional: a dev

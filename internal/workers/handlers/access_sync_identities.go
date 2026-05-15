@@ -25,7 +25,7 @@ type syncIdentitiesPayload struct {
 // tombstoneFraction * previousIdentityCount aborts with
 // ErrTombstoneSafetyThreshold instead of soft-deleting the missing
 // rows. The 70 % threshold is the SN360 default per
-// docs/PHASES.md Phase 6 sync rules.
+// docs/internal/PHASES.md Phase 6 sync rules.
 const tombstoneFraction = 0.70
 
 // ErrTombstoneSafetyThreshold surfaces when a fresh sync's total

@@ -32,7 +32,7 @@ func (s *stubOpenZitiPolicyWriter) WriteServicePolicy(_ context.Context, policy 
 }
 
 // TestPolicyService_DraftNeverCreatesOpenZitiServicePolicy is the
-// Phase 3 exit-criterion integration test from PHASES.md (line 90):
+// Phase 3 exit-criterion integration test from docs/internal/PHASES.md (line 90):
 // "Drafts do not create OpenZiti ServicePolicy until promotion —
 // verified by an integration test that round-trips a draft → simulate
 // → impact and asserts no Ziti write."

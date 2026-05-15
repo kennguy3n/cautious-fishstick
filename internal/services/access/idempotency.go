@@ -7,12 +7,12 @@ import (
 )
 
 // Helpers in this file codify the connector-side mapping rules from
-// docs/PROPOSAL.md §2.1, so each AccessConnector implementation can use
+// docs/overview.md §2.1, so each AccessConnector implementation can use
 // the same predicate names instead of re-rolling the status / error
 // classification inline. Adopting these helpers in new connectors is
 // strongly preferred; existing connectors may migrate opportunistically.
 //
-// Contract recap (from PROPOSAL.md §2.1):
+// Contract recap (from docs/overview.md §2.1):
 //
 //   - ProvisionAccess MUST be idempotent on
 //     (grant.UserExternalID, grant.ResourceExternalID).

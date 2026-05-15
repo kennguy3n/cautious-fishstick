@@ -8,7 +8,7 @@ Services exposed inside the cluster:
 The access-connector-worker has no Service (headless queue
 consumer). Scale by changing accessWorker.replicaCount.
 
-Per docs/PROPOSAL.md §10.3, only ztna-api should be exposed
+Per docs/overview.md §10.3, only ztna-api should be exposed
 publicly. Configure your ingress controller (Nginx / ALB / etc.) to
 route the public hostname at the ztna-api Service above.
 

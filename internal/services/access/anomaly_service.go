@@ -47,7 +47,7 @@ type AnomalyObservation struct {
 // grants table — the actual review-suggestion plumbing lives in
 // AccessReviewService and is wired up by ScanWorkspace's caller.
 //
-// Per docs/ARCHITECTURE.md §7 the service is one of the AI
+// Per docs/architecture.md §7 the service is one of the AI
 // integration points. Failure modes follow PROPOSAL §5.3 — an
 // unreachable AI agent must NOT block the scan; the service logs
 // and returns an empty anomaly list for that grant.

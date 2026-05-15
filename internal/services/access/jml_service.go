@@ -13,7 +13,7 @@ import (
 )
 
 // JMLService is the service layer for the Joiner / Mover / Leaver
-// lifecycle per docs/PROPOSAL.md §5.4 and docs/ARCHITECTURE.md §7.
+// lifecycle per docs/overview.md §5.4 and docs/architecture.md §7.
 //
 // JML automation is the Phase 6 feature that lets the access platform
 // react to identity-store changes (typically via SCIM) without a

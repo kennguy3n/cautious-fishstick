@@ -4,17 +4,17 @@
 // itself) so they can blank-import every connector to populate the
 // process-global registry. The point of these tests is to fail the
 // build the moment a connector is added or removed without the
-// matching docs / PROGRESS.md update, so the assertion is on exact
+// matching docs / docs/internal/PROGRESS.md update, so the assertion is on exact
 // counts.
 //
 // The expected counts here MUST stay in sync with:
 //
 //   - README.md (connector count, optional-interface counts)
-//   - docs/PHASES.md (Phase 11 status table)
-//   - docs/PROGRESS.md §2 capability status
-//   - docs/ARCHITECTURE.md §12 (Hybrid Access Model)
-//   - docs/LISTCONNECTORS.md
-//   - docs/PROPOSAL.md §13
+//   - docs/internal/PHASES.md (Phase 11 status table)
+//   - docs/internal/PROGRESS.md §2 capability status
+//   - docs/architecture.md §12 (Hybrid Access Model)
+//   - docs/connectors.md
+//   - docs/overview.md §13
 package access_test
 
 import (
@@ -232,19 +232,19 @@ const expectedConnectorCount = 200
 
 // expectedSessionRevokerCount is the canonical number of
 // AccessConnector implementations that also satisfy SessionRevoker.
-// docs/PROPOSAL.md §13.5 (kill-switch) calls this the Tier 1 set
+// docs/overview.md §13.5 (kill-switch) calls this the Tier 1 set
 // for the leaver flow.
 const expectedSessionRevokerCount = 14
 
 // expectedSSOEnforcementCheckerCount is the canonical number of
 // AccessConnector implementations that also satisfy
-// SSOEnforcementChecker. docs/PROPOSAL.md §13.3 (SSO-only
+// SSOEnforcementChecker. docs/overview.md §13.3 (SSO-only
 // enforcement verification) uses this set for the orphan
 // reconciler's daily SSO-regression scan. The count grows when a
 // connector adds a CheckSSOEnforcement implementation; the matching
 // docs MUST be updated in the same PR. Group B T13/T14 bumped this
 // to 14 by adding Dropbox + Zoom — keep this number aligned with
-// README.md's connector list and the §2 entry in docs/PROGRESS.md.
+// README.md's connector list and the §2 entry in docs/internal/PROGRESS.md.
 const expectedSSOEnforcementCheckerCount = 14
 
 // TestRegistry_ExactConnectorCount fails when the connector count
@@ -354,7 +354,7 @@ func TestRegistry_NoOrphanDirectories(t *testing.T) {
 
 // expectedSCIMProvisionerCount is the canonical number of
 // AccessConnector implementations that also satisfy
-// SCIMProvisioner. docs/PROGRESS.md §3 currently says
+// SCIMProvisioner. docs/internal/PROGRESS.md §3 currently says
 // "all 10 Tier-1 connectors" but the actual implementation count
 // at HEAD is 8 — the docs discrepancy is tracked in the Group C
 // (docs-consistency) batch of the same plan. This test asserts the
@@ -364,30 +364,30 @@ const expectedSCIMProvisionerCount = 8
 
 // expectedGroupSyncerCount is the canonical number of
 // AccessConnector implementations that also satisfy GroupSyncer.
-// docs/PROGRESS.md §4 changelog lists "GroupSyncer for top-5
+// docs/internal/PROGRESS.md §4 changelog lists "GroupSyncer for top-5
 // connectors"; the actual count at HEAD is 5.
 const expectedGroupSyncerCount = 5
 
 // expectedIdentityDeltaSyncerCount is the canonical number of
 // AccessConnector implementations that also satisfy
-// IdentityDeltaSyncer (delta-sync hardening per docs/PROGRESS.md
+// IdentityDeltaSyncer (delta-sync hardening per docs/internal/PROGRESS.md
 // §4). The actual count at HEAD is 3.
 const expectedIdentityDeltaSyncerCount = 3
 
 // expectedAccessAuditorCount is the canonical number of
 // AccessConnector implementations that also satisfy AccessAuditor.
-// docs/PROGRESS.md §3 reports "audit logs across 198 (2 n/a)"; the
+// docs/internal/PROGRESS.md §3 reports "audit logs across 198 (2 n/a)"; the
 // actual count at HEAD is 198, matching the docs.
 const expectedAccessAuditorCount = 198
 
 // TestRegistry_SCIMProvisionerCount fails when the count of
 // connectors implementing SCIMProvisioner drifts. Bumping this
-// count requires updating the README + docs/PROGRESS.md §3 in the
+// count requires updating the README + docs/internal/PROGRESS.md §3 in the
 // same PR.
 func TestRegistry_SCIMProvisionerCount(t *testing.T) {
 	got := countImpls[access.SCIMProvisioner]()
 	if got != expectedSCIMProvisionerCount {
-		t.Fatalf("SCIMProvisioner implementations = %d; want %d (update docs/PROGRESS.md §3 + README.md)", got, expectedSCIMProvisionerCount)
+		t.Fatalf("SCIMProvisioner implementations = %d; want %d (update docs/internal/PROGRESS.md §3 + README.md)", got, expectedSCIMProvisionerCount)
 	}
 }
 
@@ -396,7 +396,7 @@ func TestRegistry_SCIMProvisionerCount(t *testing.T) {
 func TestRegistry_GroupSyncerCount(t *testing.T) {
 	got := countImpls[access.GroupSyncer]()
 	if got != expectedGroupSyncerCount {
-		t.Fatalf("GroupSyncer implementations = %d; want %d (update docs/PROGRESS.md §4)", got, expectedGroupSyncerCount)
+		t.Fatalf("GroupSyncer implementations = %d; want %d (update docs/internal/PROGRESS.md §4)", got, expectedGroupSyncerCount)
 	}
 }
 
@@ -405,7 +405,7 @@ func TestRegistry_GroupSyncerCount(t *testing.T) {
 func TestRegistry_IdentityDeltaSyncerCount(t *testing.T) {
 	got := countImpls[access.IdentityDeltaSyncer]()
 	if got != expectedIdentityDeltaSyncerCount {
-		t.Fatalf("IdentityDeltaSyncer implementations = %d; want %d (update docs/PROGRESS.md §4)", got, expectedIdentityDeltaSyncerCount)
+		t.Fatalf("IdentityDeltaSyncer implementations = %d; want %d (update docs/internal/PROGRESS.md §4)", got, expectedIdentityDeltaSyncerCount)
 	}
 }
 
@@ -414,7 +414,7 @@ func TestRegistry_IdentityDeltaSyncerCount(t *testing.T) {
 func TestRegistry_AccessAuditorCount(t *testing.T) {
 	got := countImpls[access.AccessAuditor]()
 	if got != expectedAccessAuditorCount {
-		t.Fatalf("AccessAuditor implementations = %d; want %d (update docs/PROGRESS.md §3 + README.md)", got, expectedAccessAuditorCount)
+		t.Fatalf("AccessAuditor implementations = %d; want %d (update docs/internal/PROGRESS.md §3 + README.md)", got, expectedAccessAuditorCount)
 	}
 }
 

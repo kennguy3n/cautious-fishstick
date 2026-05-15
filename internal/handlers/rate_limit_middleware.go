@@ -1,7 +1,7 @@
 // Package handlers — per-workspace token-bucket rate-limiting
 // middleware.
 //
-// The Phase 8 hardening pass (docs/PROPOSAL.md §10.2 "API hardening")
+// The Phase 8 hardening pass (docs/overview.md §10.2 "API hardening")
 // asks for a configurable rate limit on every /access/* and
 // /workspace/* route. The implementation here is a classic token
 // bucket per identifier (workspace_id when available, falling back

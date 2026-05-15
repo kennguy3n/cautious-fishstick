@@ -235,7 +235,7 @@ func TestWebPushNotifier_IntegratesWithRealHTTP(t *testing.T) {
 //     the service worker uses to deep-link the click action
 //   - a 5xx response from the push endpoint does NOT bubble up as a
 //     NotifyReviewersPending error (best-effort fan-out per
-//     PHASES.md).
+//     docs/internal/PHASES.md).
 func TestWebPushNotifier_NotifyReviewersPendingIntegration(t *testing.T) {
 	t.Run("happy_path", func(t *testing.T) {
 		var captured []map[string]interface{}

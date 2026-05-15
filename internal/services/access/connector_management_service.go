@@ -15,7 +15,7 @@ import (
 )
 
 // ConnectorManagementService is the service layer for the connector
-// lifecycle described in docs/ARCHITECTURE.md §2:
+// lifecycle described in docs/architecture.md §2:
 //
 //   1. Connect    — register a new connector instance and kick off
 //                   the initial sync.
@@ -116,7 +116,7 @@ type ConnectResult struct {
 	SSOProvider string     `json:"sso_provider,omitempty"`
 	MissingCaps []string   `json:"missing_capabilities,omitempty"`
 	CredsExpiry *time.Time `json:"credentials_expires_at,omitempty"`
-	// AccessMode is the docs/PROPOSAL.md §13 access mode the platform
+	// AccessMode is the docs/overview.md §13 access mode the platform
 	// classified this connector into at Connect time. One of "tunnel",
 	// "sso_only", "api_only". The admin UI surfaces this so operators
 	// can see at a glance how the platform will reach the resource and,
@@ -125,7 +125,7 @@ type ConnectResult struct {
 }
 
 // Connect orchestrates the full connector setup lifecycle. The flow
-// follows docs/ARCHITECTURE.md §2 verbatim:
+// follows docs/architecture.md §2 verbatim:
 //
 //   1. Look up the connector from the registry.
 //   2. Validate the supplied (config, secrets).
@@ -187,7 +187,7 @@ func (s *ConnectorManagementService) Connect(ctx context.Context, in ConnectInpu
 	if err != nil {
 		return nil, fmt.Errorf("access: connector verify_permissions failed: %w", err)
 	}
-	// docs/ARCHITECTURE.md §2: when VerifyPermissions reports
+	// docs/architecture.md §2: when VerifyPermissions reports
 	// non-empty missing capabilities, short-circuit with 400 and the
 	// surface list — do NOT persist the connector. Downstream
 	// provisioning / sync would otherwise fail mid-flight against a
@@ -239,7 +239,7 @@ func (s *ConnectorManagementService) Connect(ctx context.Context, in ConnectInpu
 
 	// SSO federation pass — runs BEFORE the access_connectors row
 	// insert so the freshly-inserted row records the correct
-	// AccessMode (per docs/PROPOSAL.md §13). Best-effort: if the
+	// AccessMode (per docs/overview.md §13). Best-effort: if the
 	// connector does not advertise SSO we leave the federation
 	// result fields empty and fall through to the classifier.
 	// A federation failure logs but does NOT abort Connect —
@@ -315,7 +315,7 @@ func (s *ConnectorManagementService) Connect(ctx context.Context, in ConnectInpu
 }
 
 // Disconnect soft-deletes the connector and revokes every active
-// grant produced by it. Lifecycle (per docs/ARCHITECTURE.md §2):
+// grant produced by it. Lifecycle (per docs/architecture.md §2):
 //
 //   1. Look up the row by ID.
 //   2. Enumerate active grants (revoked_at IS NULL).
@@ -479,7 +479,7 @@ func (s *ConnectorManagementService) RotateCredentials(
 }
 
 // UpdateAccessMode is the admin override for the
-// docs/PROPOSAL.md §13 access mode classification. Operators use it
+// docs/overview.md §13 access mode classification. Operators use it
 // from the admin UI when the auto-classifier picked the wrong mode
 // — for example a Salesforce instance that lives behind a private
 // VPN should override to "tunnel" even though Connect saw a public

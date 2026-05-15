@@ -21,7 +21,7 @@ var (
 
 // RegisterAccessConnector registers a connector instance for the given
 // provider key. Provider keys are lowercased, snake_case (per
-// docs/PROPOSAL.md §3.1): "microsoft", "google_workspace", "okta",
+// docs/overview.md §3.1): "microsoft", "google_workspace", "okta",
 // "generic_saml", ...
 //
 // Re-registration of an already-registered key panics. Two connectors
@@ -63,7 +63,7 @@ func GetAccessConnector(provider string) (AccessConnector, error) {
 // ListRegisteredProviders returns the sorted list of provider keys currently
 // in the registry. Intended for diagnostics endpoints and debug logging only —
 // not the source of truth for the provider catalogue (that lives in
-// docs/PROGRESS.md §1).
+// docs/internal/PROGRESS.md §1).
 func ListRegisteredProviders() []string {
 	registryMu.RLock()
 	defer registryMu.RUnlock()

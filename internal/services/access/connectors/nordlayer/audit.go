@@ -27,7 +27,7 @@ const (
 //
 // Authenticated with the same bearer token used for the rest of the
 // connector. Non-eligible workspaces (401 / 403 / 404) soft-skip via
-// access.ErrAuditNotAvailable per PROPOSAL.md §2.1.
+// access.ErrAuditNotAvailable per docs/overview.md §2.1.
 func (c *NordLayerAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

@@ -66,7 +66,7 @@ func TestAIConfigured_NilReceiverReturnsFalse(t *testing.T) {
 }
 
 // TestLoad_GrantExpiryCheckIntervalDefault covers the Phase 11
-// (docs/PROPOSAL.md §13) default: when ACCESS_GRANT_EXPIRY_CHECK_INTERVAL
+// (docs/overview.md §13) default: when ACCESS_GRANT_EXPIRY_CHECK_INTERVAL
 // is unset the loaded config exposes DefaultGrantExpiryCheckInterval
 // (1 hour) so the worker schedules grant-expiry sweeps without
 // requiring operator action.

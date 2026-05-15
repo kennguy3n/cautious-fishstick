@@ -1,7 +1,7 @@
 // Package microsoft implements the access.AccessConnector contract for
 // Microsoft Entra ID (formerly Azure AD).
 //
-// Phase 0 scope (per docs/PHASES.md):
+// Phase 0 scope (per docs/internal/PHASES.md):
 //
 //   - Validate (pure-local), Connect, VerifyPermissions
 //   - CountIdentities, SyncIdentities (user enumeration)
@@ -213,7 +213,7 @@ func (c *M365AccessConnector) SyncIdentities(
 
 // SyncIdentitiesDelta exercises Microsoft Graph's /users/delta endpoint. A
 // 410 Gone from the provider is translated into access.ErrDeltaTokenExpired
-// per docs/PROPOSAL.md §2.2.
+// per docs/overview.md §2.2.
 func (c *M365AccessConnector) SyncIdentitiesDelta(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

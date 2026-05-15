@@ -477,7 +477,7 @@ func TestPromote_AlreadyPromoted(t *testing.T) {
 }
 
 // TestPromote_DoesNotInvokeOpenZiti is the Phase 3 exit-criterion
-// integration test from PHASES.md: "Drafts do not create OpenZiti
+// integration test from docs/internal/PHASES.md: "Drafts do not create OpenZiti
 // ServicePolicy until promotion (integration test)".
 //
 // In this repo the OpenZiti integration is intentionally absent —

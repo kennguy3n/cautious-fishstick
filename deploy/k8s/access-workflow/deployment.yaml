@@ -1,6 +1,6 @@
 # Deployment for access-workflow-engine — the HTTP webhook engine
 # that drives multi-step approval workflows. Cluster-internal only
-# per docs/PROPOSAL.md §10.3; ztna-api reaches it via
+# per docs/overview.md §10.3; ztna-api reaches it via
 # ACCESS_WORKFLOW_ENGINE_BASE_URL on the in-cluster service DNS.
 #
 # Sizing is conservative: workflows are I/O-bound (DB + webhook

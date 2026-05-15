@@ -2,7 +2,7 @@
 # the project module cache, compiles a static (CGO_ENABLED=0) binary
 # under /out/ztna-api, then a distroless runtime stage runs the binary
 # as a non-root user. This matches the SN360 deployment pattern in
-# docs/PROPOSAL.md §10.2.
+# docs/overview.md §10.2.
 
 # syntax=docker/dockerfile:1.7
 

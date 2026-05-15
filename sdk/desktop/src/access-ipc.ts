@@ -12,7 +12,7 @@
  * backend forwards to the `access-ai-agent` Python skill server via A2A.
  * This rule is enforced by `scripts/check_no_model_files.sh` in CI.
  *
- * REST endpoint mapping (per PROPOSAL.md §11.3 and §11.4):
+ * REST endpoint mapping (per docs/overview.md §11.3 and §11.4):
  *   requestAccess.create     → POST   /access/requests
  *   requestAccess.list       → GET    /access/requests
  *   requestAccess.approve    → POST   /access/requests/:id/approve

@@ -8,7 +8,7 @@ import (
 )
 
 // ProviderName is the registry key for the Google Workspace connector.
-// Lowercased, snake_case per docs/PROPOSAL.md §3.1.
+// Lowercased, snake_case per docs/overview.md §3.1.
 const ProviderName = "google_workspace"
 
 // Config is the operator-visible configuration for a Google Workspace

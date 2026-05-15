@@ -351,7 +351,7 @@ func TestOrphanReconcilerScheduler_EmitsPerRunScannedFailedFromReconciler(t *tes
 // dispatches the notifier for the surfaced rows. Skipping the
 // notifier on the error branch would silently drop alerts operators
 // rely on for workspaces with any flaky connector — see the round-9
-// regression discussion in docs/ARCHITECTURE.md §12.2.
+// regression discussion in docs/architecture.md §12.2.
 func TestOrphanReconcilerScheduler_NotifierFiresOnPartialFailure(t *testing.T) {
 	db := newReconcilerSchedDB(t)
 	seedConnectorForWS(t, db, "01HCONN0PARTIALFAIL00001", "ws-partial-notify", "okta")

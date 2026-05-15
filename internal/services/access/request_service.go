@@ -203,7 +203,7 @@ func (s *AccessRequestService) CreateRequest(ctx context.Context, in CreateAcces
 
 // riskAssessmentPayload is the shape AccessRequestService passes to
 // RiskAssessor.AssessRequestRisk. Kept small and stable: the AI
-// agent contract documented in docs/PROPOSAL.md §7 reads exactly
+// agent contract documented in docs/overview.md §7 reads exactly
 // these fields.
 type riskAssessmentPayload struct {
 	WorkspaceID        string `json:"workspace_id"`

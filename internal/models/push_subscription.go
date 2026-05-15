@@ -21,7 +21,7 @@ import "time"
 //     deleting it (e.g. after the browser reports the subscription
 //     expired).
 //
-// No FOREIGN KEY constraints (per docs/PHASES.md cross-cutting
+// No FOREIGN KEY constraints (per docs/internal/PHASES.md cross-cutting
 // criteria).
 type PushSubscription struct {
 	ID          string     `gorm:"primaryKey;type:varchar(26)" json:"id"`

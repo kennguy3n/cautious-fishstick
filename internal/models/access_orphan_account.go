@@ -10,7 +10,7 @@ import (
 // pair where the SaaS app reports a user that the identity provider does
 // NOT recognise. Orphan accounts are the Phase 11 ShieldNet 360 surface
 // area for the “unused app account” workflow described in
-// docs/PROPOSAL.md §13.4 — operators see them in the connector health
+// docs/overview.md §13.4 — operators see them in the connector health
 // page and can either auto-revoke or dismiss.
 //
 // Status state machine:
@@ -22,7 +22,7 @@ import (
 //	                further alerts until detection re-runs.
 //
 // There are no FOREIGN KEY constraints (per SN360 database-index rule
-// and docs/PHASES.md cross-cutting criteria). Referential integrity to
+// and docs/internal/PHASES.md cross-cutting criteria). Referential integrity to
 // access_connectors and workspaces is enforced at the service layer.
 type AccessOrphanAccount struct {
 	ID             string         `gorm:"primaryKey;type:varchar(26)" json:"id"`

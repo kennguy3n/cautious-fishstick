@@ -5,7 +5,7 @@ import (
 )
 
 // AccessReviewDecision mirrors the access_review_decisions table per
-// docs/PROPOSAL.md §9 and docs/ARCHITECTURE.md §6. One row per grant
+// docs/overview.md §9 and docs/architecture.md §6. One row per grant
 // enrolled into an access-review campaign; the row is the
 // authoritative record of "what did the reviewer decide for this
 // grant in this campaign?".

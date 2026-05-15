@@ -9,12 +9,12 @@ import (
 )
 
 // Migration014CreateAccessOrphanAccounts creates the Phase 11
-// access_orphan_accounts table per docs/PROPOSAL.md §13.4 using
+// access_orphan_accounts table per docs/overview.md §13.4 using
 // GORM AutoMigrate.
 //
 // All indexes are declared on the AccessOrphanAccount struct tags
 // and materialised here. No FOREIGN KEY constraints (per SN360
-// database-index rule and docs/PHASES.md cross-cutting criteria);
+// database-index rule and docs/internal/PHASES.md cross-cutting criteria);
 // referential integrity to access_connectors and workspaces is
 // enforced at the service layer.
 //

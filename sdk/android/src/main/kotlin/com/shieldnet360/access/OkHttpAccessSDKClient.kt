@@ -10,7 +10,7 @@
  * Moshi / Gson choice on consumers.
  *
  * REST endpoint mapping follows AccessSDKClient.kt (per
- * docs/PROPOSAL.md §11.4).
+ * docs/overview.md §11.4).
  */
 package com.shieldnet360.access
 

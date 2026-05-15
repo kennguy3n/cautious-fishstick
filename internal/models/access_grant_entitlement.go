@@ -26,7 +26,7 @@ import (
 //   - RiskScore is populated downstream by the AI agent — Phase 6
 //     leaves it nil.
 //
-// No FOREIGN KEY constraints (per docs/PHASES.md cross-cutting
+// No FOREIGN KEY constraints (per docs/internal/PHASES.md cross-cutting
 // criteria); referential integrity to access_connectors is
 // enforced at the service layer.
 type AccessGrantEntitlement struct {
@@ -44,7 +44,7 @@ type AccessGrantEntitlement struct {
 }
 
 // TableName overrides the default plural so the table name matches
-// docs/PROPOSAL.md §9.1.
+// docs/overview.md §9.1.
 func (AccessGrantEntitlement) TableName() string {
 	return "access_grant_entitlements"
 }

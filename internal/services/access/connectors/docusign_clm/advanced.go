@@ -25,7 +25,7 @@ import (
 //
 // Bearer auth via DocuSignCLMAccessConnector.newRequest. Idempotency is
 // delegated to access.IsIdempotentProvisionStatus /
-// access.IsIdempotentRevokeStatus per docs/PROPOSAL.md §2.1.
+// access.IsIdempotentRevokeStatus per docs/overview.md §2.1.
 
 func docusignCLMValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

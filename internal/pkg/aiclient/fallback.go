@@ -8,7 +8,7 @@ import (
 
 // DefaultRiskScore is the value populated on the access_request /
 // ImpactReport when the AI agent is unreachable. Per
-// docs/PROPOSAL.md §5.3 (failure modes), AI is decision-support not
+// docs/overview.md §5.3 (failure modes), AI is decision-support not
 // critical path: a temporarily-down agent must NOT block an access
 // request, so the access_request workflow defaults to "medium" and
 // routes through manager_approval.

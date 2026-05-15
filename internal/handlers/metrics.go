@@ -2,7 +2,7 @@
 // metrics registry.
 //
 // The registry is intentionally tiny: it exposes the four families
-// docs/PROPOSAL.md §11 calls out (HTTP request count/latency,
+// docs/overview.md §11 calls out (HTTP request count/latency,
 // connector sync duration, AI agent call latency, worker queue
 // depth) and emits them in the Prometheus text exposition format
 // (see https://prometheus.io/docs/instrumenting/exposition_formats/).

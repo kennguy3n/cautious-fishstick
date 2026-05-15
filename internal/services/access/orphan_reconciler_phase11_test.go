@@ -190,7 +190,7 @@ func TestOrphanReconciler_DryRunIsolatedFromWet(t *testing.T) {
 // TestOrphanReconciler_BestEffortAcrossConnectors_FailingConnectorDoesNotBlockOthers
 // asserts that when one of N connectors in a workspace fails, the
 // reconciler continues iterating the remaining connectors instead
-// of short-circuiting on the first error (per docs/ARCHITECTURE.md
+// of short-circuiting on the first error (per docs/architecture.md
 // §12.2 the reconciler is best-effort across connectors). The
 // failure surfaces as an aggregated error so the cron can still
 // log it.

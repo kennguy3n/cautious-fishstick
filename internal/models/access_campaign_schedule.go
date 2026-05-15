@@ -8,8 +8,8 @@ import (
 )
 
 // AccessCampaignSchedule mirrors the access_campaign_schedules table
-// per docs/PROPOSAL.md §9 (Phase 5 scheduled campaigns) and
-// docs/ARCHITECTURE.md §6. One row per recurring access-review
+// per docs/overview.md §9 (Phase 5 scheduled campaigns) and
+// docs/architecture.md §6. One row per recurring access-review
 // (access check-up) schedule. The internal/cron CampaignScheduler
 // scans this table for rows whose NextRunAt has elapsed and starts
 // a fresh AccessReview for each — bumping NextRunAt by FrequencyDays
@@ -37,7 +37,7 @@ import (
 //     without deleting it (and losing the historical NextRunAt).
 //   - DeletedAt is the GORM soft-delete column.
 //
-// No FOREIGN KEY constraints (per docs/PHASES.md cross-cutting
+// No FOREIGN KEY constraints (per docs/internal/PHASES.md cross-cutting
 // criteria); referential integrity to workspaces is enforced at the
 // service layer.
 type AccessCampaignSchedule struct {
@@ -71,7 +71,7 @@ const SkipDateLayout = "2006-01-02"
 
 // TableName overrides the default plural so the table name is exactly
 // access_campaign_schedules (matching the migration and the schema in
-// docs/PROPOSAL.md §9).
+// docs/overview.md §9).
 func (AccessCampaignSchedule) TableName() string {
 	return "access_campaign_schedules"
 }

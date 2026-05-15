@@ -36,7 +36,7 @@ func (s *stubOpenZitiEventWriter) WriteServicePolicyEvent(_ context.Context, eve
 }
 
 // TestPolicyService_Promote_EmitsEventWithWorkspaceAccessModes is
-// the Phase 11 (docs/PROPOSAL.md §13) integration test. When the
+// the Phase 11 (docs/overview.md §13) integration test. When the
 // configured writer implements OpenZitiPolicyEventWriter the
 // service must:
 //

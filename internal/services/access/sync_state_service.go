@@ -13,8 +13,8 @@ import (
 )
 
 // SyncStateService is the read / write surface for the
-// access_sync_state table per docs/PROPOSAL.md §9.1 and
-// docs/ARCHITECTURE.md §3. The access-connector-worker calls Get
+// access_sync_state table per docs/overview.md §9.1 and
+// docs/architecture.md §3. The access-connector-worker calls Get
 // before issuing a delta sync request; if the cursor is missing
 // the worker falls back to a full enumeration. After a successful
 // batch the worker calls Set to persist the new cursor.

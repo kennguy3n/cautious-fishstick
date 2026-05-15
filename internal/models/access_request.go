@@ -7,8 +7,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// AccessRequest mirrors the access_requests table per docs/PROPOSAL.md §9.1
-// and docs/ARCHITECTURE.md §10. One row per "user X asks for role Y on
+// AccessRequest mirrors the access_requests table per docs/overview.md §9.1
+// and docs/architecture.md §10. One row per "user X asks for role Y on
 // resource Z" lifecycle. The state column is the source of truth for where
 // the request is in the request_state_machine.go FSM; access_request_state_history
 // keeps the audit trail of every transition.

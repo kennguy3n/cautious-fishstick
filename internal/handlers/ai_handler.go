@@ -32,7 +32,7 @@ func (h *AIHandler) Register(r *gin.Engine) {
 	r.POST("/access/assistant", h.Assistant)
 }
 
-// explainRequest matches the docs/PROPOSAL.md §11 description: the
+// explainRequest matches the docs/overview.md §11 description: the
 // caller supplies either a policy_id or a grant_id to be explained.
 // Both fields are optional; the handler enforces "at least one".
 type explainRequest struct {

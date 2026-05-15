@@ -6,7 +6,7 @@ import (
 
 // AccessSyncState persists the per-(connector, kind) delta-link
 // cursor the access-connector-worker uses to resume incremental
-// sync. Per docs/PROPOSAL.md §9.1 and docs/ARCHITECTURE.md §3 each
+// sync. Per docs/overview.md §9.1 and docs/architecture.md §3 each
 // connector tracks one cursor per sync kind:
 //
 //   - "identity" — cursor for the IdentityDeltaSyncer pipeline
@@ -30,7 +30,7 @@ import (
 //   - The (connector_id, kind) tuple is UNIQUE; a single connector
 //     never has two open cursors of the same kind.
 //
-// No FOREIGN KEY constraints (per docs/PHASES.md cross-cutting
+// No FOREIGN KEY constraints (per docs/internal/PHASES.md cross-cutting
 // criteria); referential integrity to access_connectors is enforced
 // at the service layer.
 type AccessSyncState struct {
@@ -42,14 +42,14 @@ type AccessSyncState struct {
 	// last successful sync. Used by the tombstone safety threshold —
 	// a fresh sync whose total identity count is below 70% of the
 	// previously observed count aborts to protect against a runaway
-	// directory-side deletion (per docs/PHASES.md Phase 6 sync rules).
+	// directory-side deletion (per docs/internal/PHASES.md Phase 6 sync rules).
 	IdentityCount int       `gorm:"not null;default:0" json:"identity_count"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // TableName overrides the default plural so the table name matches
-// docs/PROPOSAL.md §9.1.
+// docs/overview.md §9.1.
 func (AccessSyncState) TableName() string {
 	return "access_sync_state"
 }

@@ -40,7 +40,7 @@ type ApproveRequester interface {
 // notification.NotificationService.NotifyRequester (adapted via
 // notification_adapter.go); passing nil disables the notification.
 //
-// Per docs/PHASES.md Phase 5 / Phase 8 cross-cutting criteria
+// Per docs/internal/PHASES.md Phase 5 / Phase 8 cross-cutting criteria
 // notifications are best-effort: a failed Notify MUST NOT roll back
 // the underlying state-history write.
 type PendingNotifier interface {

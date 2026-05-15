@@ -292,7 +292,7 @@ func TestDAGExecutor_BranchIndexRecorded(t *testing.T) {
 // linear pipelines still write branch_index = 0 (NOT nil) — operators
 // querying for "all step history for branch 0" should see linear
 // workflows too. This is the cross-cutting DLQ invariant in
-// docs/PHASES.md Phase 8.
+// docs/internal/PHASES.md Phase 8.
 func TestDAGExecutor_BranchIndexLinearStaysZero(t *testing.T) {
 	db := newTestDB(t)
 	// Even single-branch workflows route through executeDAG (which

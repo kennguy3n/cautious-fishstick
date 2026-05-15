@@ -342,7 +342,7 @@ func TestListEntitlements_QuoteInUserIDDoesNotInjectSOQL(t *testing.T) {
 // TestRevokeAccess_QueryErrorPropagates is a regression test for the bug
 // where RevokeAccess silently returned nil when the SOQL lookup query
 // failed (5xx, auth failure, network drop). The lookup error must surface
-// to the caller so the worker can retry per PROPOSAL.md §2.1 — a 5xx on
+// to the caller so the worker can retry per docs/overview.md §2.1 — a 5xx on
 // the lookup is NOT the same as "no matching assignment", which is the
 // legitimate idempotency case handled by len(Records) == 0.
 func TestRevokeAccess_QueryErrorPropagates(t *testing.T) {

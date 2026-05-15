@@ -3,7 +3,7 @@ package models
 import "time"
 
 // AccessRequestStateHistory mirrors the access_request_state_history table
-// per docs/ARCHITECTURE.md §10. One row per state transition on an
+// per docs/architecture.md §10. One row per state transition on an
 // AccessRequest. Inserted from inside the same DB transaction that flips
 // AccessRequest.State, so the audit trail can never disagree with the live
 // state column.

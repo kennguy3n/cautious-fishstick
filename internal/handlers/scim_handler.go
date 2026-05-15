@@ -92,7 +92,7 @@ type SCIMPatchOperation struct {
 // PATCH, DELETE on /scim/Users — and routes them through the JML
 // service's joiner / mover / leaver lanes.
 //
-// Per docs/PROPOSAL.md §5.4 SCIM is the canonical inbound channel
+// Per docs/overview.md §5.4 SCIM is the canonical inbound channel
 // for JML automation. The handler is intentionally thin: it parses
 // the payload, classifies the event, asks the resolver for the
 // JML input, and dispatches to the JML service. All policy /

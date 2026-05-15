@@ -15,7 +15,7 @@ import (
 )
 
 // PolicyService is the service layer for the policies table per
-// docs/PROPOSAL.md §6 and docs/ARCHITECTURE.md §5. It owns the
+// docs/overview.md §6 and docs/architecture.md §5. It owns the
 // draft → simulate → promote lifecycle:
 //
 //   - CreateDraft persists a new row with IsDraft=true. Drafts NEVER
@@ -76,7 +76,7 @@ type OpenZitiPolicyWriter interface {
 }
 
 // PolicyPromotionEvent is the richer payload emitted by Promote per
-// docs/PROPOSAL.md §13 (Hybrid Access Model). It wraps the freshly-
+// docs/overview.md §13 (Hybrid Access Model). It wraps the freshly-
 // promoted Policy alongside the access_mode classification of the
 // connectors currently configured in the workspace. Downstream
 // consumers (typically the ZTNA business layer) use the access-mode
@@ -444,7 +444,7 @@ func (s *PolicyService) Promote(ctx context.Context, workspaceID, policyID, acto
 	// the ZTNA business layer reconciles eventually). CreateDraft
 	// and Simulate NEVER reach this branch — Phase 3 exit criterion.
 	//
-	// Phase 11 (docs/PROPOSAL.md §13): when the writer also
+	// Phase 11 (docs/overview.md §13): when the writer also
 	// implements OpenZitiPolicyEventWriter, hand it the richer
 	// PolicyPromotionEvent that carries the workspace's
 	// access-mode snapshot. Writers that only implement the

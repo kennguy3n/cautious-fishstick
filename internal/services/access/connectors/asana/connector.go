@@ -314,7 +314,7 @@ func buildAddRemovePayload(userExternalID string) ([]byte, error) {
 // Asana returns 200 + the team-membership row on success, 403 with a body
 // that mentions "already a member" when the user is already a member, and
 // 404 when either the team or the user is unknown. We treat 403
-// "already member" as idempotent success per PROPOSAL.md §2.1.
+// "already member" as idempotent success per docs/overview.md §2.1.
 func (c *AsanaAccessConnector) ProvisionAccess(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},
