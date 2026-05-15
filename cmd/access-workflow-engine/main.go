@@ -27,10 +27,10 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
 	"github.com/kennguy3n/cautious-fishstick/internal/models"
+	"github.com/kennguy3n/cautious-fishstick/internal/pkg/database"
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access/workflow_engine"
 	"github.com/kennguy3n/cautious-fishstick/internal/services/notification"
@@ -308,16 +308,17 @@ func main() {
 // database. The returned description is logged at startup.
 func openDatabase() (*gorm.DB, string, error) {
 	if pgDSN := os.Getenv("ACCESS_DATABASE_URL"); pgDSN != "" {
-		db, err := gorm.Open(postgres.Open(pgDSN), &gorm.Config{})
+		db, err := database.OpenPostgres(pgDSN)
 		if err != nil {
 			return nil, "", err
 		}
-		if err := db.AutoMigrate(
-			&models.AccessRequest{},
-			&models.AccessWorkflow{},
-			&models.AccessRequestStateHistory{},
-			&models.AccessWorkflowStepHistory{},
-		); err != nil {
+		// Run the full access-platform migration set against
+		// Postgres so the workflow engine sees the same schema
+		// ztna-api and the worker do. The helper takes a
+		// pg_advisory_lock so the three binaries don't race on
+		// catalog writes when docker-compose brings them up in
+		// parallel.
+		if err := database.RunMigrations(db); err != nil {
 			return nil, "", err
 		}
 		return db, "postgres at " + redactDSN(pgDSN), nil
