@@ -11,6 +11,13 @@
 // cancels on SIGINT / SIGTERM. If ACCESS_DATABASE_URL is unset the binary
 // still boots with an empty cron set so dev `go run` works without
 // provisioning Postgres.
+//
+// Graceful shutdown: StartCronJobs returns a *sync.WaitGroup tracking
+// every spawned cron goroutine; on SIGINT/SIGTERM main cancels the
+// context and then bounds a wg.Wait drain by shutdownDrainTimeout so
+// any in-flight tick (e.g. a partway-through upstream revoke) finishes
+// before the process exits, while a wedged tick can't keep the binary
+// alive indefinitely.
 package main
 
 import (
@@ -18,6 +25,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -368,15 +376,31 @@ func WireCronJobs(
 // here so the look-ahead sweep is no longer dead code in the
 // worker binary.
 //
+// The returned *sync.WaitGroup tracks every cron goroutine spawned
+// here so the worker binary can bound a graceful-shutdown drain on
+// it after ctx is cancelled — without this main() would return as
+// soon as <-ctx.Done() unblocks, killing any tick that was mid-
+// flight (e.g. an in-progress upstream revoke) and risking the
+// upstream provider + the local DB drifting out of sync.
+//
 // Nil-safe: jobs entries that are nil are simply skipped, so the
 // scaffold path that constructs an empty CronJobs is a no-op
-// rather than a panic.
-func StartCronJobs(ctx context.Context, jobs CronJobs) {
+// rather than a panic, and the WaitGroup returns with no
+// outstanding counts so wg.Wait() is an immediate no-op too.
+func StartCronJobs(ctx context.Context, jobs CronJobs) *sync.WaitGroup {
+	var wg sync.WaitGroup
+	spawn := func(name string, interval time.Duration, run func(context.Context) error) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			runCron(ctx, name, interval, run)
+		}()
+	}
 	if jobs.Anomaly != nil {
-		go runCron(ctx, "anomaly-scanner", jobs.AnomalyInterval, jobs.Anomaly.Run)
+		spawn("anomaly-scanner", jobs.AnomalyInterval, jobs.Anomaly.Run)
 	}
 	if jobs.CredentialChecker != nil {
-		go runCron(ctx, "credential-checker", jobs.CredentialCheckInterval, jobs.CredentialChecker.Run)
+		spawn("credential-checker", jobs.CredentialCheckInterval, jobs.CredentialChecker.Run)
 	}
 	if jobs.GrantExpiryEnforcer != nil {
 		// The revoke sweep wraps Run so we can collapse the
@@ -384,7 +408,7 @@ func StartCronJobs(ctx context.Context, jobs CronJobs) {
 		// contract runCron expects. The revoked count is already
 		// surfaced via the audit pipeline so dropping it on the
 		// floor here is fine.
-		go runCron(ctx, "grant-expiry-enforcer", jobs.GrantExpiryInterval, func(ctx context.Context) error {
+		spawn("grant-expiry-enforcer", jobs.GrantExpiryInterval, func(ctx context.Context) error {
 			_, err := jobs.GrantExpiryEnforcer.Run(ctx)
 			return err
 		})
@@ -393,14 +417,15 @@ func StartCronJobs(ctx context.Context, jobs CronJobs) {
 		// LastWarnedAt dedup pivot collapses duplicates across
 		// repeated ticks so running both sweeps on the same
 		// cadence is safe. Phase 11 batch 6 round-7.
-		go runCron(ctx, "grant-expiry-warning", jobs.GrantExpiryWarningInterval, func(ctx context.Context) error {
+		spawn("grant-expiry-warning", jobs.GrantExpiryWarningInterval, func(ctx context.Context) error {
 			_, err := jobs.GrantExpiryEnforcer.RunWarning(ctx)
 			return err
 		})
 	}
 	if jobs.OrphanReconcilerScheduler != nil {
-		go runCron(ctx, "orphan-reconciler", jobs.OrphanReconcileInterval, jobs.OrphanReconcilerScheduler.Run)
+		spawn("orphan-reconciler", jobs.OrphanReconcileInterval, jobs.OrphanReconcilerScheduler.Run)
 	}
+	return &wg
 }
 
 // runCron drives the supplied job on a fixed-interval ticker until
@@ -516,6 +541,12 @@ func BuildCredentialExpiryNotifier(cfg config.Access) cron.NotificationSender {
 	return access.NewCredentialExpiryNotifierAdapter(svc)
 }
 
+// shutdownDrainTimeout caps how long main() waits for in-flight cron
+// ticks to finish after SIGINT/SIGTERM. Matches the workflow engine's
+// HTTP-server graceful-shutdown timeout so the two binaries behave
+// the same under signal-driven shutdown.
+const shutdownDrainTimeout = 10 * time.Second
+
 func main() {
 	log.Printf("access-connector-worker: starting; registered access connectors: %v", access.ListRegisteredProviders())
 
@@ -613,9 +644,24 @@ func main() {
 		cancel()
 	}()
 
-	StartCronJobs(ctx, jobs)
+	wg := StartCronJobs(ctx, jobs)
 	log.Printf("access-connector-worker: cron set started; awaiting shutdown signal")
 	<-ctx.Done()
-	log.Printf("access-connector-worker: shutdown complete")
+	// Bound the shutdown drain so a wedged cron tick can't keep
+	// the binary alive forever. shutdownDrainTimeout mirrors the
+	// 10s grace period the workflow engine uses for its HTTP
+	// server shutdown so the two binaries behave the same under
+	// SIGINT.
+	drained := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+		log.Printf("access-connector-worker: shutdown complete")
+	case <-time.After(shutdownDrainTimeout):
+		log.Printf("access-connector-worker: shutdown drain timed out after %s; exiting with in-flight cron ticks still running", shutdownDrainTimeout)
+	}
 	_ = healthWebhook
 }

@@ -314,3 +314,68 @@ func TestWireCronJobs_NilInterfaceTrapDoesNotEnableOrphanCron(t *testing.T) {
 		}
 	})
 }
+
+// TestStartCronJobs_EmptyJobsReturnsResolvedWaitGroup asserts the
+// graceful-shutdown contract Devin Review #3246201801 flagged at
+// the wiring layer: StartCronJobs returns a *sync.WaitGroup so
+// main() can bound a drain on wg.Wait() after ctx.Done(). The
+// scaffold path (empty CronJobs, e.g. when ACCESS_DATABASE_URL is
+// unset) must return a WaitGroup with zero outstanding counts so
+// the drain is an immediate no-op instead of blocking the binary's
+// exit on a cron that was never started.
+func TestStartCronJobs_EmptyJobsReturnsResolvedWaitGroup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	wg := StartCronJobs(ctx, CronJobs{})
+	if wg == nil {
+		t.Fatal("StartCronJobs returned a nil *sync.WaitGroup; main() would panic dereferencing it")
+	}
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("wg.Wait blocked on an empty cron set; want immediate return so the scaffold-path drain is a no-op")
+	}
+}
+
+// TestRunCron_ExitsOnContextCancel pins the per-goroutine drain
+// behaviour StartCronJobs relies on: each runCron invocation must
+// return when its ctx is cancelled so the defer wg.Done() at the
+// StartCronJobs spawn site fires and the parent wg.Wait can
+// resolve. A goroutine that ignores ctx.Done would orphan its
+// WaitGroup count and main()'s drain would always hit the timeout
+// branch.
+func TestRunCron_ExitsOnContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	ran := make(chan struct{}, 1)
+	done := make(chan struct{})
+	go func() {
+		runCron(ctx, "test-job", 5*time.Millisecond, func(ctx context.Context) error {
+			select {
+			case ran <- struct{}{}:
+			default:
+			}
+			return nil
+		})
+		close(done)
+	}()
+
+	// Wait until at least one tick has fired so the goroutine is
+	// definitely inside the runCron select loop, then cancel.
+	select {
+	case <-ran:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runCron never ticked; cannot validate drain semantics")
+	}
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runCron did not return after context cancel; goroutine would leak past wg.Wait")
+	}
+}
