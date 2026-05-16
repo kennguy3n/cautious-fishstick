@@ -230,7 +230,7 @@ const expectedConnectorCount = 200
 // AccessConnector implementations that also satisfy SessionRevoker.
 // docs/architecture.md §8 (kill-switch) calls this the Tier 1 set
 // for the leaver flow.
-const expectedSessionRevokerCount = 14
+const expectedSessionRevokerCount = 18
 
 // expectedSSOEnforcementCheckerCount is the canonical number of
 // AccessConnector implementations that also satisfy
@@ -241,7 +241,7 @@ const expectedSessionRevokerCount = 14
 // docs MUST be updated in the same PR. Group B T13/T14 bumped this
 // to 14 by adding Dropbox + Zoom — keep this number aligned with
 // README.md's connector list and the §2 entry in docs/connectors.md.
-const expectedSSOEnforcementCheckerCount = 14
+const expectedSSOEnforcementCheckerCount = 19
 
 // TestRegistry_ExactConnectorCount fails when the connector count
 // drifts from expectedConnectorCount. It is intentionally an
@@ -350,25 +350,23 @@ func TestRegistry_NoOrphanDirectories(t *testing.T) {
 
 // expectedSCIMProvisionerCount is the canonical number of
 // AccessConnector implementations that also satisfy
-// SCIMProvisioner. docs/connectors.md §3 currently says
-// "all 10 Tier-1 connectors" but the actual implementation count
-// at HEAD is 8 — the docs discrepancy is tracked in the Group C
-// (docs-consistency) batch of the same plan. This test asserts the
-// true count so a future SCIM implementation can't silently slip
-// past the regression guard.
-const expectedSCIMProvisionerCount = 8
+// SCIMProvisioner. Bumping this requires landing the matching
+// scim.go + scim_test.go inside the connector package AND
+// refreshing docs/connectors.md §3 + README.md in the same PR.
+const expectedSCIMProvisionerCount = 21
 
 // expectedGroupSyncerCount is the canonical number of
 // AccessConnector implementations that also satisfy GroupSyncer.
-// docs/connectors.md §4 changelog lists "GroupSyncer for top-5
-// connectors"; the actual count at HEAD is 5.
-const expectedGroupSyncerCount = 5
+// Bumping this requires landing the matching groups.go +
+// groups_test.go inside the connector package AND refreshing
+// docs/connectors.md §4 + README.md in the same PR.
+const expectedGroupSyncerCount = 17
 
 // expectedIdentityDeltaSyncerCount is the canonical number of
 // AccessConnector implementations that also satisfy
 // IdentityDeltaSyncer (delta-sync hardening per docs/connectors.md
-// §4). The actual count at HEAD is 3.
-const expectedIdentityDeltaSyncerCount = 3
+// §4). The actual count at HEAD is 6.
+const expectedIdentityDeltaSyncerCount = 6
 
 // expectedAccessAuditorCount is the canonical number of
 // AccessConnector implementations that also satisfy AccessAuditor.

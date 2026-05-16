@@ -125,6 +125,18 @@ cautious-fishstick/
 
 The full per-provider matrix lives in [`docs/connectors.md`](docs/connectors.md).
 
+Optional capability interfaces are layered on top of the base contract where the upstream provider exposes the underlying API. Current coverage:
+
+| Optional interface       | Implementations |
+|--------------------------|----------------:|
+| `SCIMProvisioner`        |              21 |
+| `GroupSyncer`            |              17 |
+| `SessionRevoker`         |              18 |
+| `SSOEnforcementChecker`  |              19 |
+| `IdentityDeltaSyncer`    |               6 |
+
+These counts are enforced by `internal/services/access/registry_count_test.go` and detailed per-provider in [`docs/connectors.md`](docs/connectors.md#optional-capability-interfaces).
+
 ---
 
 ## Tech stack
