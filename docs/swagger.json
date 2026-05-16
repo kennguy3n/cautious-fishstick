@@ -1414,10 +1414,13 @@
             "description": "OK"
           },
           "400": {
-            "description": "workspace_id required or FSM rejection"
+            "description": "workspace_id required"
           },
           "404": {
             "description": "Lease not found in workspace"
+          },
+          "409": {
+            "description": "Lease already revoked or expired"
           }
         }
       }
@@ -1448,6 +1451,9 @@
           },
           "404": {
             "description": "Lease not found in workspace"
+          },
+          "409": {
+            "description": "Lease already revoked or expired"
           }
         }
       }

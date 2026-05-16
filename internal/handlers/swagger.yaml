@@ -544,8 +544,9 @@ paths:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
         '200': { description: OK }
-        '400': { description: workspace_id required / FSM rejection }
+        '400': { description: workspace_id required }
         '404': { description: Lease not found in workspace }
+        '409': { description: Lease already revoked or expired }
   /pam/leases/{id}/revoke:
     post:
       summary: Revoke an active or pending PAM lease
@@ -560,6 +561,7 @@ paths:
         '200': { description: OK }
         '400': { description: workspace_id required }
         '404': { description: Lease not found in workspace }
+        '409': { description: Lease already revoked or expired }
   /swagger:
     get:
       summary: Serve this OpenAPI 3.0 spec
