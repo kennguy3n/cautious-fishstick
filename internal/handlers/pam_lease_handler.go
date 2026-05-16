@@ -105,13 +105,16 @@ func (h *PAMLeaseHandler) ListLeases(c *gin.Context) {
 
 // approveLeaseBody captures the approver identity + an optional
 // duration override. When DurationMinutes is omitted the service
-// falls back to a 60-minute default.
+// falls back to a 60-minute default. WorkspaceID is required so
+// the service can scope the lease lookup to the calling tenant.
 type approveLeaseBody struct {
+	WorkspaceID     string `json:"workspace_id"`
 	ApproverID      string `json:"approver_id"`
 	DurationMinutes int    `json:"duration_minutes,omitempty"`
 }
 
-// ApproveLease handles POST /pam/leases/:id/approve.
+// ApproveLease handles POST /pam/leases/:id/approve. workspace_id
+// is required in the body so cross-tenant approval is impossible.
 func (h *PAMLeaseHandler) ApproveLease(c *gin.Context) {
 	id := GetStringParam(c, "id")
 	if id == "" {
@@ -123,7 +126,11 @@ func (h *PAMLeaseHandler) ApproveLease(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, err)
 		return
 	}
-	lease, err := h.leaseService.ApproveLease(c.Request.Context(), id, body.ApproverID, body.DurationMinutes)
+	if body.WorkspaceID == "" {
+		abortWithError(c, http.StatusBadRequest, "workspace_id is required", "validation_failed", "workspace_id is required")
+		return
+	}
+	lease, err := h.leaseService.ApproveLease(c.Request.Context(), body.WorkspaceID, id, body.ApproverID, body.DurationMinutes)
 	if err != nil {
 		writePAMError(c, err)
 		return
@@ -131,14 +138,18 @@ func (h *PAMLeaseHandler) ApproveLease(c *gin.Context) {
 	c.JSON(http.StatusOK, lease)
 }
 
-// revokeLeaseBody captures the free-text revocation reason. The
-// reason is stored on the audit producer side; on the row itself we
-// only persist revoked_at.
+// revokeLeaseBody captures the free-text revocation reason and the
+// calling tenant. The reason is stored on the audit producer side;
+// on the row itself we only persist revoked_at. WorkspaceID is
+// required so the service can scope the lease lookup to the
+// calling tenant.
 type revokeLeaseBody struct {
-	Reason string `json:"reason,omitempty"`
+	WorkspaceID string `json:"workspace_id"`
+	Reason      string `json:"reason,omitempty"`
 }
 
-// RevokeLease handles POST /pam/leases/:id/revoke.
+// RevokeLease handles POST /pam/leases/:id/revoke. workspace_id is
+// required in the body so cross-tenant revocation is impossible.
 func (h *PAMLeaseHandler) RevokeLease(c *gin.Context) {
 	id := GetStringParam(c, "id")
 	if id == "" {
@@ -146,9 +157,15 @@ func (h *PAMLeaseHandler) RevokeLease(c *gin.Context) {
 		return
 	}
 	var body revokeLeaseBody
-	// Allow a missing body — revocation reason is optional.
-	_ = c.ShouldBindJSON(&body)
-	lease, err := h.leaseService.RevokeLease(c.Request.Context(), id, body.Reason)
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeError(c, http.StatusBadRequest, err)
+		return
+	}
+	if body.WorkspaceID == "" {
+		abortWithError(c, http.StatusBadRequest, "workspace_id is required", "validation_failed", "workspace_id is required")
+		return
+	}
+	lease, err := h.leaseService.RevokeLease(c.Request.Context(), body.WorkspaceID, id, body.Reason)
 	if err != nil {
 		writePAMError(c, err)
 		return

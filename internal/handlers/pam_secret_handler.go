@@ -189,13 +189,22 @@ func (h *PAMSecretHandler) RotateSecret(c *gin.Context) {
 // the rotation-event audit trail derived from the row's
 // LastRotatedAt timestamp; the full Kafka-backed audit trail lands
 // in a follow-up milestone.
+//
+// workspace_id is required as a query parameter so the lookup is
+// tenant-scoped — without it a caller who knew a secret ULID from
+// another workspace could probe rotation timestamps.
 func (h *PAMSecretHandler) GetRotationHistory(c *gin.Context) {
 	id := GetStringParam(c, "id")
 	if id == "" {
 		abortWithError(c, http.StatusBadRequest, "id path parameter is required", "validation_failed", "id path parameter is required")
 		return
 	}
-	history, err := h.broker.GetRotationHistory(c.Request.Context(), id)
+	wsID := GetPtrStringQuery(c, "workspace_id")
+	if wsID == nil || *wsID == "" {
+		abortWithError(c, http.StatusBadRequest, "workspace_id query parameter is required", "validation_failed", "workspace_id query parameter is required")
+		return
+	}
+	history, err := h.broker.GetRotationHistory(c.Request.Context(), *wsID, id)
 	if err != nil {
 		writePAMError(c, err)
 		return

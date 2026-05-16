@@ -17,9 +17,14 @@ import (
 // uses to flip expired leases into a terminal state. The production
 // implementation is *pam.PAMLeaseService; tests substitute a stub
 // that captures every call.
+//
+// ExpireLeasesByIDs is the entry point the enforcer drives — it
+// flips exactly the set of leases the snapshot returned, so the
+// session-termination + notification work the enforcer ran above
+// stays tied to the rows actually moved to revoked.
 type PAMLeaseExpirer interface {
 	ExpiredLeases(ctx context.Context, batchSize int) ([]models.PAMLease, error)
-	ExpireLeases(ctx context.Context) (int, error)
+	ExpireLeasesByIDs(ctx context.Context, leaseIDs []string) (int, error)
 	NotifyExpired(ctx context.Context, leases []models.PAMLease)
 }
 
@@ -82,9 +87,17 @@ func (e *PAMLeaseExpiryEnforcer) SetClock(now func() time.Time) {
 }
 
 // Run executes a single sweep. Returns (leasesExpired,
-// sessionsTerminated, error). The bulk expire is atomic — either
-// every snapshot row flips or none — but the per-session terminate
-// is best-effort.
+// sessionsTerminated, error). The expire is atomic for the
+// snapshot it pulled — either every snapshot row flips or none —
+// but the per-session terminate is best-effort.
+//
+// The flow snapshots up to batchSize leases via ExpiredLeases,
+// terminates sessions + collects them for notification, then flips
+// exactly that snapshot via ExpireLeasesByIDs. Excess overdue
+// leases beyond batchSize are intentionally left for the next
+// tick rather than swept by a bulk UPDATE — otherwise the cron
+// would silently revoke leases without terminating their sessions
+// or notifying their holders.
 func (e *PAMLeaseExpiryEnforcer) Run(ctx context.Context) (int, int, error) {
 	if e == nil || e.expirer == nil {
 		return 0, 0, errors.New("cron: pam_lease_expiry_enforcer missing expirer")
@@ -106,9 +119,13 @@ func (e *PAMLeaseExpiryEnforcer) Run(ctx context.Context) (int, int, error) {
 			terminatedTotal += n
 		}
 	}
-	expiredCount, err := e.expirer.ExpireLeases(ctx)
+	leaseIDs := make([]string, len(expired))
+	for i := range expired {
+		leaseIDs[i] = expired[i].ID
+	}
+	expiredCount, err := e.expirer.ExpireLeasesByIDs(ctx, leaseIDs)
 	if err != nil {
-		return 0, terminatedTotal, fmt.Errorf("cron: expire pam_leases: %w", err)
+		return 0, terminatedTotal, fmt.Errorf("cron: expire pam_leases by ids: %w", err)
 	}
 	e.expirer.NotifyExpired(ctx, expired)
 	durationMs := time.Since(start).Milliseconds()

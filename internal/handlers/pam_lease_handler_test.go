@@ -122,6 +122,7 @@ func TestPAMLeaseHandler_ApproveLease_HappyPath(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	body := map[string]interface{}{
+		"workspace_id":     "ws-1",
 		"approver_id":      "manager-1",
 		"duration_minutes": 60,
 	}
@@ -141,10 +142,47 @@ func TestPAMLeaseHandler_ApproveLease_HappyPath(t *testing.T) {
 
 func TestPAMLeaseHandler_ApproveLease_NotFoundReturns404(t *testing.T) {
 	r, _ := newPAMLeaseEngine(t)
-	body := map[string]interface{}{"approver_id": "manager-1"}
+	body := map[string]interface{}{
+		"workspace_id": "ws-1",
+		"approver_id":  "manager-1",
+	}
 	w := doJSON(t, r, http.MethodPost, "/pam/leases/nope/approve", body)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d body=%s; want 404", w.Code, w.Body.String())
+	}
+}
+
+// TestPAMLeaseHandler_ApproveLease_MissingWorkspaceReturns400 covers
+// the workspace_id requirement that closes the cross-tenant approval
+// gap (Devin Review finding on PR #95).
+func TestPAMLeaseHandler_ApproveLease_MissingWorkspaceReturns400(t *testing.T) {
+	r, _ := newPAMLeaseEngine(t)
+	body := map[string]interface{}{"approver_id": "manager-1"}
+	w := doJSON(t, r, http.MethodPost, "/pam/leases/some-id/approve", body)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d; want 400", w.Code)
+	}
+}
+
+// TestPAMLeaseHandler_ApproveLease_CrossWorkspaceReturns404 asserts
+// the service-layer workspace filter blocks a caller from one
+// workspace from approving a lease minted in another, even when
+// they know the lease ULID.
+func TestPAMLeaseHandler_ApproveLease_CrossWorkspaceReturns404(t *testing.T) {
+	r, svc := newPAMLeaseEngine(t)
+	lease, err := svc.RequestLease(context.Background(), "ws-1", pam.RequestLeaseInput{
+		UserID: "u-1", AssetID: "a-1", AccountID: "acc-1", DurationMinutes: 30,
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	body := map[string]interface{}{
+		"workspace_id": "ws-other",
+		"approver_id":  "manager-1",
+	}
+	w := doJSON(t, r, http.MethodPost, "/pam/leases/"+lease.ID+"/approve", body)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d; want 404", w.Code)
 	}
 }
 
@@ -156,7 +194,10 @@ func TestPAMLeaseHandler_RevokeLease_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	body := map[string]interface{}{"reason": "incident closed"}
+	body := map[string]interface{}{
+		"workspace_id": "ws-1",
+		"reason":       "incident closed",
+	}
 	w := doJSON(t, r, http.MethodPost, "/pam/leases/"+lease.ID+"/revoke", body)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s; want 200", w.Code, w.Body.String())
@@ -168,8 +209,11 @@ func TestPAMLeaseHandler_RevokeLease_HappyPath(t *testing.T) {
 	}
 }
 
-func TestPAMLeaseHandler_RevokeLease_NoBodyOK(t *testing.T) {
-	// The handler tolerates a missing body — reason is optional.
+// TestPAMLeaseHandler_RevokeLease_MissingBodyReturns400 covers the
+// new required-body shape: workspace_id is mandatory for revoke too,
+// so an empty body no longer maps to 200 the way it did before the
+// workspace-scoping fix.
+func TestPAMLeaseHandler_RevokeLease_MissingBodyReturns400(t *testing.T) {
 	r, svc := newPAMLeaseEngine(t)
 	lease, err := svc.RequestLease(context.Background(), "ws-1", pam.RequestLeaseInput{
 		UserID: "u-1", AssetID: "a-1", AccountID: "acc-1", DurationMinutes: 30,
@@ -178,14 +222,36 @@ func TestPAMLeaseHandler_RevokeLease_NoBodyOK(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	w := doJSON(t, r, http.MethodPost, "/pam/leases/"+lease.ID+"/revoke", nil)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s; want 200", w.Code, w.Body.String())
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s; want 400", w.Code, w.Body.String())
+	}
+}
+
+// TestPAMLeaseHandler_RevokeLease_CrossWorkspaceReturns404 asserts
+// the service-layer workspace filter blocks revocation across
+// tenants (Devin Review finding on PR #95).
+func TestPAMLeaseHandler_RevokeLease_CrossWorkspaceReturns404(t *testing.T) {
+	r, svc := newPAMLeaseEngine(t)
+	lease, err := svc.RequestLease(context.Background(), "ws-1", pam.RequestLeaseInput{
+		UserID: "u-1", AssetID: "a-1", AccountID: "acc-1", DurationMinutes: 30,
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	body := map[string]interface{}{
+		"workspace_id": "ws-other",
+		"reason":       "anything",
+	}
+	w := doJSON(t, r, http.MethodPost, "/pam/leases/"+lease.ID+"/revoke", body)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d; want 404", w.Code)
 	}
 }
 
 func TestPAMLeaseHandler_RevokeLease_NotFoundReturns404(t *testing.T) {
 	r, _ := newPAMLeaseEngine(t)
-	w := doJSON(t, r, http.MethodPost, "/pam/leases/nope/revoke", map[string]string{})
+	body := map[string]interface{}{"workspace_id": "ws-1"}
+	w := doJSON(t, r, http.MethodPost, "/pam/leases/nope/revoke", body)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d body=%s; want 404", w.Code, w.Body.String())
 	}

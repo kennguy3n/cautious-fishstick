@@ -246,6 +246,16 @@ func (l *SSHListener) handleChannel(ctx context.Context, sconn *ssh.ServerConn, 
 	go func() { defer wg.Done(); _, _ = io.Copy(ch, stdout) }()
 	go func() { defer wg.Done(); _, _ = io.Copy(ch.Stderr(), stderr) }()
 	_ = upstreamSession.Wait()
+	// upstreamSession.Wait returning closes the upstream stdout /
+	// stderr pipes (so the ch <- stdout / ch.Stderr <- stderr
+	// goroutines fall out of io.Copy on their own) but does NOT
+	// unblock the stdin <- ch goroutine, which is reading from the
+	// downstream client channel. A slow or misbehaving client could
+	// then keep that goroutine pinned until it eventually closes the
+	// channel. Closing ch here gives every io.Copy a definite
+	// terminal state so wg.Wait() can never deadlock on the stdin
+	// reader. Subsequent close on the deferred path is a no-op.
+	_ = ch.Close()
 	wg.Wait()
 }
 

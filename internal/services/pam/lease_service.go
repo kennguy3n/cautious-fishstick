@@ -163,8 +163,13 @@ func (s *PAMLeaseService) RequestLease(ctx context.Context, workspaceID string, 
 // callers that only have a leaseID pass durationMinutes=0 and the
 // service falls back to a 60m default.
 //
-// approverID is recorded for the audit trail.
-func (s *PAMLeaseService) ApproveLease(ctx context.Context, leaseID, approverID string, durationMinutes int) (*models.PAMLease, error) {
+// approverID is recorded for the audit trail. workspaceID scopes
+// the row lookup so an approver in one tenant cannot approve a
+// lease that belongs to another tenant by guessing its ULID.
+func (s *PAMLeaseService) ApproveLease(ctx context.Context, workspaceID, leaseID, approverID string, durationMinutes int) (*models.PAMLease, error) {
+	if workspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace_id is required", ErrValidation)
+	}
 	if leaseID == "" {
 		return nil, fmt.Errorf("%w: lease_id is required", ErrValidation)
 	}
@@ -175,7 +180,9 @@ func (s *PAMLeaseService) ApproveLease(ctx context.Context, leaseID, approverID 
 		durationMinutes = 60
 	}
 	var lease models.PAMLease
-	err := s.db.WithContext(ctx).Where("id = ?", leaseID).First(&lease).Error
+	err := s.db.WithContext(ctx).
+		Where("workspace_id = ? AND id = ?", workspaceID, leaseID).
+		First(&lease).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%w: %s", ErrLeaseNotFound, leaseID)
@@ -198,7 +205,7 @@ func (s *PAMLeaseService) ApproveLease(ctx context.Context, leaseID, approverID 
 	}
 	if err := s.db.WithContext(ctx).
 		Model(&models.PAMLease{}).
-		Where("id = ?", leaseID).
+		Where("workspace_id = ? AND id = ?", workspaceID, leaseID).
 		Updates(updates).Error; err != nil {
 		return nil, fmt.Errorf("pam: approve pam_lease: %w", err)
 	}
@@ -216,12 +223,20 @@ func (s *PAMLeaseService) ApproveLease(ctx context.Context, leaseID, approverID 
 
 // RevokeLease sets RevokedAt on the lease and (best-effort) notifies
 // the holder. Revoking an already-revoked lease is a no-op.
-func (s *PAMLeaseService) RevokeLease(ctx context.Context, leaseID, reason string) (*models.PAMLease, error) {
+// workspaceID scopes the row lookup so a revoker in one tenant
+// cannot revoke a lease that belongs to another tenant by guessing
+// its ULID.
+func (s *PAMLeaseService) RevokeLease(ctx context.Context, workspaceID, leaseID, reason string) (*models.PAMLease, error) {
+	if workspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace_id is required", ErrValidation)
+	}
 	if leaseID == "" {
 		return nil, fmt.Errorf("%w: lease_id is required", ErrValidation)
 	}
 	var lease models.PAMLease
-	err := s.db.WithContext(ctx).Where("id = ?", leaseID).First(&lease).Error
+	err := s.db.WithContext(ctx).
+		Where("workspace_id = ? AND id = ?", workspaceID, leaseID).
+		First(&lease).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%w: %s", ErrLeaseNotFound, leaseID)
@@ -234,7 +249,7 @@ func (s *PAMLeaseService) RevokeLease(ctx context.Context, leaseID, reason strin
 	now := s.now().UTC()
 	if err := s.db.WithContext(ctx).
 		Model(&models.PAMLease{}).
-		Where("id = ?", leaseID).
+		Where("workspace_id = ? AND id = ?", workspaceID, leaseID).
 		Updates(map[string]interface{}{
 			"revoked_at": now,
 			"updated_at": now,
@@ -329,6 +344,13 @@ func (s *PAMLeaseService) ListActiveLeases(ctx context.Context, workspaceID stri
 // but requires a column migration we defer to a follow-up — for
 // now the revoked_at column doubles as the terminal-state marker
 // for both the manual revoke + the expiry sweep.
+//
+// WARNING: ExpireLeases is unbounded — it sweeps every overdue
+// lease in a single UPDATE, regardless of the snapshot the cron
+// fetched via ExpiredLeases(batchSize). If the cron needs to keep
+// session-termination and notification work tied to the snapshot
+// it processed, it should call ExpireLeasesByIDs instead so the
+// excess overdue leases are deferred to the next tick.
 func (s *PAMLeaseService) ExpireLeases(ctx context.Context) (int, error) {
 	now := s.now().UTC()
 	res := s.db.WithContext(ctx).
@@ -340,6 +362,36 @@ func (s *PAMLeaseService) ExpireLeases(ctx context.Context) (int, error) {
 		})
 	if res.Error != nil {
 		return 0, fmt.Errorf("pam: expire pam_leases: %w", res.Error)
+	}
+	return int(res.RowsAffected), nil
+}
+
+// ExpireLeasesByIDs flips exactly the supplied set of leases into
+// the revoked / expired state, scoped to rows that are not already
+// revoked and whose expires_at is past. Returns the count of rows
+// updated. Used by the cron so the batch the enforcer terminated
+// sessions for + notified holders about is the same batch flipped
+// to revoked — preventing the "excess overdue leases get revoked
+// silently" race that ExpireLeases is vulnerable to.
+//
+// An empty leaseIDs slice is a no-op (0, nil); deduplication is
+// the caller's responsibility. The expires_at gate is preserved
+// so the cron cannot accidentally revoke an unexpired lease whose
+// ID it accumulated from a stale snapshot.
+func (s *PAMLeaseService) ExpireLeasesByIDs(ctx context.Context, leaseIDs []string) (int, error) {
+	if len(leaseIDs) == 0 {
+		return 0, nil
+	}
+	now := s.now().UTC()
+	res := s.db.WithContext(ctx).
+		Model(&models.PAMLease{}).
+		Where("id IN ? AND revoked_at IS NULL AND expires_at IS NOT NULL AND expires_at <= ?", leaseIDs, now).
+		Updates(map[string]interface{}{
+			"revoked_at": now,
+			"updated_at": now,
+		})
+	if res.Error != nil {
+		return 0, fmt.Errorf("pam: expire pam_leases by ids: %w", res.Error)
 	}
 	return int(res.RowsAffected), nil
 }

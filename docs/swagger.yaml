@@ -388,6 +388,176 @@ paths:
       responses:
         '204': { description: No Content }
         '404': { description: Not found }
+  /pam/assets:
+    post:
+      summary: Create a PAM asset
+      tags: [pam-assets]
+      responses:
+        '201': { description: Created }
+        '400': { description: Validation error }
+    get:
+      summary: List PAM assets for a workspace
+      tags: [pam-assets]
+      parameters:
+        - { name: workspace_id, in: query, required: true, schema: { type: string } }
+        - { name: protocol, in: query, required: false, schema: { type: string } }
+        - { name: status, in: query, required: false, schema: { type: string } }
+        - { name: criticality, in: query, required: false, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+        '400': { description: workspace_id required }
+  /pam/assets/{id}:
+    get:
+      summary: Get a PAM asset
+      tags: [pam-assets]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: workspace_id, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+        '404': { description: Not found }
+    put:
+      summary: Update a PAM asset
+      tags: [pam-assets]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+        '400': { description: Validation error }
+        '404': { description: Not found }
+    delete:
+      summary: Soft-delete a PAM asset (status=archived)
+      tags: [pam-assets]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: workspace_id, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+        '404': { description: Not found }
+  /pam/assets/{id}/accounts:
+    post:
+      summary: Create a PAM account on an asset
+      description: |
+        Body requires `workspace_id` so the service layer can enforce
+        tenant isolation on the asset lookup; passing a workspace that
+        does not own the asset yields 404 even when the asset ULID is
+        valid.
+      tags: [pam-assets]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '201': { description: Created }
+        '400': { description: Validation error / workspace_id required }
+        '404': { description: Asset not found in workspace }
+    get:
+      summary: List PAM accounts on an asset
+      tags: [pam-assets]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+  /pam/secrets:
+    post:
+      summary: Vault a PAM secret (encrypt-and-store)
+      tags: [pam-secrets]
+      responses:
+        '201': { description: Created }
+        '400': { description: Validation error }
+  /pam/secrets/{id}:
+    get:
+      summary: Get PAM secret metadata (never returns plaintext)
+      tags: [pam-secrets]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: workspace_id, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+        '400': { description: workspace_id required }
+        '404': { description: Not found }
+  /pam/secrets/{id}/reveal:
+    post:
+      summary: Reveal a PAM secret (requires step-up MFA)
+      description: |
+        Returns the decrypted plaintext only after the MFA verifier
+        accepts the assertion. Rate-limited by the workspace-scoped
+        token bucket in `internal/handlers/rate_limit_middleware.go`
+        as a second line of defence against MFA brute force.
+      tags: [pam-secrets]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: OK — plaintext payload }
+        '400': { description: Missing MFA assertion / workspace_id }
+        '403': { description: MFA assertion rejected }
+        '404': { description: Not found }
+        '503': { description: MFA verifier not configured }
+  /pam/secrets/{id}/rotate:
+    post:
+      summary: Rotate a PAM secret (generate-encrypt-replace)
+      tags: [pam-secrets]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+        '400': { description: workspace_id required }
+        '404': { description: Not found }
+  /pam/secrets/{id}/history:
+    get:
+      summary: Get rotation history for a PAM secret
+      tags: [pam-secrets]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: workspace_id, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+        '400': { description: workspace_id required }
+        '404': { description: Not found in workspace }
+  /pam/leases:
+    post:
+      summary: Request a JIT lease (creates an access request + pending lease)
+      tags: [pam-leases]
+      responses:
+        '201': { description: Created }
+        '400': { description: Validation error }
+    get:
+      summary: List PAM leases for a workspace
+      tags: [pam-leases]
+      parameters:
+        - { name: workspace_id, in: query, required: true, schema: { type: string } }
+        - { name: user_id, in: query, required: false, schema: { type: string } }
+        - { name: asset_id, in: query, required: false, schema: { type: string } }
+        - { name: active, in: query, required: false, schema: { type: boolean } }
+      responses:
+        '200': { description: OK }
+        '400': { description: workspace_id required }
+  /pam/leases/{id}/approve:
+    post:
+      summary: Approve a pending PAM lease
+      description: |
+        Body requires `workspace_id`; the service layer enforces the
+        workspace filter on the lookup so a caller cannot approve a
+        lease from another tenant even when the lease ULID is known.
+      tags: [pam-leases]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+        '400': { description: workspace_id required / FSM rejection }
+        '404': { description: Lease not found in workspace }
+  /pam/leases/{id}/revoke:
+    post:
+      summary: Revoke an active or pending PAM lease
+      description: |
+        Body requires `workspace_id`; same scoping contract as
+        `/pam/leases/{id}/approve` — cross-tenant revocation is
+        blocked at the service layer.
+      tags: [pam-leases]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+        '400': { description: workspace_id required }
+        '404': { description: Lease not found in workspace }
   /swagger:
     get:
       summary: Serve this OpenAPI 3.0 spec

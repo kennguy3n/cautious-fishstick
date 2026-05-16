@@ -227,7 +227,7 @@ func TestSecretBroker_GetRotationHistory_EmptyBeforeRotate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	hist, err := svc.GetRotationHistory(context.Background(), secret.ID)
+	hist, err := svc.GetRotationHistory(context.Background(), "ws-1", secret.ID)
 	if err != nil {
 		t.Fatalf("GetRotationHistory: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestSecretBroker_GetRotationHistory_AfterRotate(t *testing.T) {
 	if _, err := svc.RotateSecret(context.Background(), "ws-1", secret.ID); err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
-	hist, err := svc.GetRotationHistory(context.Background(), secret.ID)
+	hist, err := svc.GetRotationHistory(context.Background(), "ws-1", secret.ID)
 	if err != nil {
 		t.Fatalf("GetRotationHistory: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestSecretBroker_InjectSecret_AccountWithSecret(t *testing.T) {
 		t.Fatalf("vault: %v", err)
 	}
 	sid := secret.ID
-	acct, err := assetSvc.CreateAccount(context.Background(), asset.ID, CreateAccountInput{
+	acct, err := assetSvc.CreateAccount(context.Background(), "ws-1", asset.ID, CreateAccountInput{
 		Username:    "root",
 		AccountType: "shared",
 		SecretID:    &sid,
@@ -314,7 +314,7 @@ func TestSecretBroker_InjectSecret_AccountWithoutSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("asset: %v", err)
 	}
-	acct, err := assetSvc.CreateAccount(context.Background(), asset.ID, CreateAccountInput{
+	acct, err := assetSvc.CreateAccount(context.Background(), "ws-1", asset.ID, CreateAccountInput{
 		Username:    "root",
 		AccountType: "shared",
 	})

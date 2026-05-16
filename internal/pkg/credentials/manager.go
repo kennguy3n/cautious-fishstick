@@ -151,6 +151,79 @@ func (cm *CredentialManager) Decrypt(ciphertextB64 string, dek []byte, aad strin
 	return out, nil
 }
 
+// EncryptBytes seals plaintext bytes under the supplied DEK using AES-GCM
+// with aad bound as Additional Authenticated Data. It is the raw-bytes twin
+// of Encrypt: callers that hold credential material which is NOT a
+// JSON-marshalled map (raw passwords, PEM-encoded SSH keys, base64 tokens,
+// x509 certificates) go through EncryptBytes instead of paying the
+// marshal / unmarshal round trip. The output is the same nonce-prefixed,
+// base64-encoded payload format DecryptBytes — and the JSON-map Encrypt —
+// produce, so the same backing store can hold both shapes.
+func (cm *CredentialManager) EncryptBytes(plaintext []byte, dek []byte, aad string) (string, error) {
+	if len(dek) != dekSize {
+		return "", ErrInvalidDEK
+	}
+	if aad == "" {
+		return "", ErrEmptyAAD
+	}
+
+	block, err := aes.NewCipher(dek)
+	if err != nil {
+		return "", fmt.Errorf("credentials: new cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", fmt.Errorf("credentials: new gcm: %w", err)
+	}
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", fmt.Errorf("credentials: read nonce: %w", err)
+	}
+
+	sealed := gcm.Seal(nonce, nonce, plaintext, []byte(aad))
+	return base64.StdEncoding.EncodeToString(sealed), nil
+}
+
+// DecryptBytes is the raw-bytes twin of Decrypt: it base64-decodes
+// ciphertext, opens it under the supplied DEK with aad as AAD, and returns
+// the inner plaintext verbatim — no JSON unmarshalling. Used by PAM secrets
+// (passwords, SSH keys, tokens, certificates) whose plaintext is not a JSON
+// map and would fail to unmarshal through Decrypt.
+func (cm *CredentialManager) DecryptBytes(ciphertextB64 string, dek []byte, aad string) ([]byte, error) {
+	if len(dek) != dekSize {
+		return nil, ErrInvalidDEK
+	}
+	if aad == "" {
+		return nil, ErrEmptyAAD
+	}
+
+	sealed, err := base64.StdEncoding.DecodeString(ciphertextB64)
+	if err != nil {
+		return nil, fmt.Errorf("credentials: base64 decode: %w", err)
+	}
+
+	block, err := aes.NewCipher(dek)
+	if err != nil {
+		return nil, fmt.Errorf("credentials: new cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("credentials: new gcm: %w", err)
+	}
+
+	if len(sealed) < gcm.NonceSize() {
+		return nil, errors.New("credentials: ciphertext too short")
+	}
+
+	nonce, payload := sealed[:gcm.NonceSize()], sealed[gcm.NonceSize():]
+	plaintext, err := gcm.Open(nil, nonce, payload, []byte(aad))
+	if err != nil {
+		return nil, fmt.Errorf("credentials: gcm open failed (aad mismatch or wrong key): %w", err)
+	}
+	return plaintext, nil
+}
+
 // GetCredentials is the convenience entry point used by worker handlers. It
 // fetches the right-versioned DEK from the configured KeyManager, decrypts
 // the supplied ciphertext with the connector ULID as AAD, and returns the

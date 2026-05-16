@@ -239,9 +239,45 @@ func TestPAMSecretHandler_GetRotationHistory_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	w := doJSON(t, r, http.MethodGet, "/pam/secrets/"+secret.ID+"/history", nil)
+	w := doJSON(t, r, http.MethodGet, "/pam/secrets/"+secret.ID+"/history?workspace_id=ws-1", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s; want 200", w.Code, w.Body.String())
+	}
+}
+
+// TestPAMSecretHandler_GetRotationHistory_MissingWorkspaceReturns400 covers
+// the workspace_id query-string requirement closing the cross-tenant
+// rotation-history gap (Devin Review finding on PR #95).
+func TestPAMSecretHandler_GetRotationHistory_MissingWorkspaceReturns400(t *testing.T) {
+	r, broker := newPAMSecretEngine(t, &stubMFAVerifier{})
+	secret, err := broker.VaultSecret(context.Background(), "ws-1", pam.VaultSecretInput{
+		SecretType: "password",
+		Plaintext:  []byte("hunter2"),
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	w := doJSON(t, r, http.MethodGet, "/pam/secrets/"+secret.ID+"/history", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d; want 400", w.Code)
+	}
+}
+
+// TestPAMSecretHandler_GetRotationHistory_CrossWorkspaceReturns404 asserts
+// the service-layer workspace filter blocks history reads for secrets
+// owned by another workspace.
+func TestPAMSecretHandler_GetRotationHistory_CrossWorkspaceReturns404(t *testing.T) {
+	r, broker := newPAMSecretEngine(t, &stubMFAVerifier{})
+	secret, err := broker.VaultSecret(context.Background(), "ws-1", pam.VaultSecretInput{
+		SecretType: "password",
+		Plaintext:  []byte("hunter2"),
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	w := doJSON(t, r, http.MethodGet, "/pam/secrets/"+secret.ID+"/history?workspace_id=ws-other", nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d; want 404", w.Code)
 	}
 }
 

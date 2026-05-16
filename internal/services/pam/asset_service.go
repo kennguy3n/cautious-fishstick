@@ -339,23 +339,28 @@ func validateCreateAccount(in CreateAccountInput) error {
 	return nil
 }
 
-// CreateAccount validates input, confirms the asset exists, and
-// persists a new pam_accounts row. The caller is responsible for
-// asserting the workspace owns the asset before calling — this
-// method only checks asset existence so the FK-free invariant is
-// preserved.
-func (s *PAMAssetService) CreateAccount(ctx context.Context, assetID string, in CreateAccountInput) (*models.PAMAccount, error) {
+// CreateAccount validates input, confirms the asset exists AND is
+// owned by workspaceID, and persists a new pam_accounts row. The
+// workspace check is enforced at the service layer (not just the
+// handler) so a future caller cannot accidentally bypass tenancy
+// isolation by passing only an asset ULID from another workspace.
+func (s *PAMAssetService) CreateAccount(ctx context.Context, workspaceID, assetID string, in CreateAccountInput) (*models.PAMAccount, error) {
+	if workspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace_id is required", ErrValidation)
+	}
 	if assetID == "" {
 		return nil, fmt.Errorf("%w: asset_id is required", ErrValidation)
 	}
 	if err := validateCreateAccount(in); err != nil {
 		return nil, err
 	}
-	// Confirm the asset row exists (in any workspace). The handler
-	// layer is responsible for verifying the calling workspace owns
-	// the asset before reaching this method.
+	// Probe the asset row scoped to the calling workspace — a
+	// match in another workspace must surface as NotFound so the
+	// caller cannot infer which workspace owns the asset.
 	var asset models.PAMAsset
-	if err := s.db.WithContext(ctx).Where("id = ?", assetID).First(&asset).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Where("workspace_id = ? AND id = ?", workspaceID, assetID).
+		First(&asset).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%w: %s", ErrAssetNotFound, assetID)
 		}

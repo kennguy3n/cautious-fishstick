@@ -136,7 +136,7 @@ func TestPAMLeaseService_ApproveLease_SetsGrantedAndExpires(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	approved, err := svc.ApproveLease(context.Background(), lease.ID, "approver-1", 30)
+	approved, err := svc.ApproveLease(context.Background(), "ws-1", lease.ID, "approver-1", 30)
 	if err != nil {
 		t.Fatalf("ApproveLease: %v", err)
 	}
@@ -162,11 +162,11 @@ func TestPAMLeaseService_ApproveLease_IdempotentOnSecondCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	first, err := svc.ApproveLease(context.Background(), lease.ID, "approver-1", 30)
+	first, err := svc.ApproveLease(context.Background(), "ws-1", lease.ID, "approver-1", 30)
 	if err != nil {
 		t.Fatalf("first approve: %v", err)
 	}
-	second, err := svc.ApproveLease(context.Background(), lease.ID, "approver-2", 30)
+	second, err := svc.ApproveLease(context.Background(), "ws-1", lease.ID, "approver-2", 30)
 	if err != nil {
 		t.Fatalf("second approve: %v", err)
 	}
@@ -183,10 +183,10 @@ func TestPAMLeaseService_ApproveLease_RejectsRevoked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	if _, err := svc.RevokeLease(context.Background(), lease.ID, "test"); err != nil {
+	if _, err := svc.RevokeLease(context.Background(), "ws-1", lease.ID, "test"); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
-	_, err = svc.ApproveLease(context.Background(), lease.ID, "approver", 30)
+	_, err = svc.ApproveLease(context.Background(), "ws-1", lease.ID, "approver", 30)
 	if !errors.Is(err, ErrLeaseAlreadyTerminal) {
 		t.Fatalf("err = %v; want ErrLeaseAlreadyTerminal", err)
 	}
@@ -194,9 +194,36 @@ func TestPAMLeaseService_ApproveLease_RejectsRevoked(t *testing.T) {
 
 func TestPAMLeaseService_ApproveLease_NotFound(t *testing.T) {
 	svc := NewPAMLeaseService(newPAMDB(t), nil, nil)
-	_, err := svc.ApproveLease(context.Background(), "nope", "approver", 30)
+	_, err := svc.ApproveLease(context.Background(), "ws-1", "nope", "approver", 30)
 	if !errors.Is(err, ErrLeaseNotFound) {
 		t.Fatalf("err = %v; want ErrLeaseNotFound", err)
+	}
+}
+
+// TestPAMLeaseService_ApproveLease_RejectsCrossWorkspace asserts the
+// new workspace_id scoping guard: a caller from workspace B cannot
+// approve a lease minted in workspace A, even when they know its ID.
+func TestPAMLeaseService_ApproveLease_RejectsCrossWorkspace(t *testing.T) {
+	svc := NewPAMLeaseService(newPAMDB(t), &fakeAccessRequestCreator{}, nil)
+	lease, err := svc.RequestLease(context.Background(), "ws-1", RequestLeaseInput{
+		UserID: "u", AssetID: "a", AccountID: "c", DurationMinutes: 30,
+	})
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	_, err = svc.ApproveLease(context.Background(), "ws-other", lease.ID, "approver", 30)
+	if !errors.Is(err, ErrLeaseNotFound) {
+		t.Fatalf("cross-workspace approve = %v; want ErrLeaseNotFound", err)
+	}
+}
+
+// TestPAMLeaseService_ApproveLease_RejectsMissingWorkspace covers the
+// explicit workspace_id validation guard.
+func TestPAMLeaseService_ApproveLease_RejectsMissingWorkspace(t *testing.T) {
+	svc := NewPAMLeaseService(newPAMDB(t), nil, nil)
+	_, err := svc.ApproveLease(context.Background(), "", "lease-1", "approver", 30)
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("missing workspace = %v; want ErrValidation", err)
 	}
 }
 
@@ -209,7 +236,7 @@ func TestPAMLeaseService_RevokeLease_SetsRevoked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	revoked, err := svc.RevokeLease(context.Background(), lease.ID, "policy violation")
+	revoked, err := svc.RevokeLease(context.Background(), "ws-1", lease.ID, "policy violation")
 	if err != nil {
 		t.Fatalf("RevokeLease: %v", err)
 	}
@@ -229,11 +256,11 @@ func TestPAMLeaseService_RevokeLease_Idempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	first, err := svc.RevokeLease(context.Background(), lease.ID, "r1")
+	first, err := svc.RevokeLease(context.Background(), "ws-1", lease.ID, "r1")
 	if err != nil {
 		t.Fatalf("first revoke: %v", err)
 	}
-	second, err := svc.RevokeLease(context.Background(), lease.ID, "r2")
+	second, err := svc.RevokeLease(context.Background(), "ws-1", lease.ID, "r2")
 	if err != nil {
 		t.Fatalf("second revoke: %v", err)
 	}

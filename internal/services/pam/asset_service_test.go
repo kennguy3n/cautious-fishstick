@@ -248,7 +248,7 @@ func TestPAMAssetService_CreateAccount_OnExistingAsset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	acct, err := svc.CreateAccount(context.Background(), asset.ID, CreateAccountInput{
+	acct, err := svc.CreateAccount(context.Background(), "ws-1", asset.ID, CreateAccountInput{
 		Username:    "root",
 		AccountType: "shared",
 		IsDefault:   true,
@@ -266,12 +266,44 @@ func TestPAMAssetService_CreateAccount_OnExistingAsset(t *testing.T) {
 
 func TestPAMAssetService_CreateAccount_NonExistentAsset(t *testing.T) {
 	svc := NewPAMAssetService(newPAMDB(t))
-	_, err := svc.CreateAccount(context.Background(), "no-such", CreateAccountInput{
+	_, err := svc.CreateAccount(context.Background(), "ws-1", "no-such", CreateAccountInput{
 		Username:    "root",
 		AccountType: "shared",
 	})
 	if !errors.Is(err, ErrAssetNotFound) {
 		t.Fatalf("err = %v; want ErrAssetNotFound", err)
+	}
+}
+
+// TestPAMAssetService_CreateAccount_RejectsCrossWorkspace asserts that
+// passing a workspaceID different from the asset's owning workspace
+// surfaces ErrAssetNotFound — the service-layer scoping check is the
+// last line of defence behind the handler's body validation.
+func TestPAMAssetService_CreateAccount_RejectsCrossWorkspace(t *testing.T) {
+	svc := NewPAMAssetService(newPAMDB(t))
+	asset, err := svc.CreateAsset(context.Background(), "ws-1", CreateAssetInput{
+		Name: "a", Protocol: "ssh", Host: "h", Port: 22,
+	})
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	_, err = svc.CreateAccount(context.Background(), "ws-other", asset.ID, CreateAccountInput{
+		Username: "root", AccountType: "shared",
+	})
+	if !errors.Is(err, ErrAssetNotFound) {
+		t.Fatalf("cross-workspace = %v; want ErrAssetNotFound", err)
+	}
+}
+
+// TestPAMAssetService_CreateAccount_RejectsMissingWorkspace covers the
+// explicit workspace_id validation guard.
+func TestPAMAssetService_CreateAccount_RejectsMissingWorkspace(t *testing.T) {
+	svc := NewPAMAssetService(newPAMDB(t))
+	_, err := svc.CreateAccount(context.Background(), "", "asset-1", CreateAccountInput{
+		Username: "root", AccountType: "shared",
+	})
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("missing workspace = %v; want ErrValidation", err)
 	}
 }
 
@@ -293,7 +325,7 @@ func TestPAMAssetService_CreateAccount_ValidationFailures(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := svc.CreateAccount(context.Background(), asset.ID, tc.in)
+			_, err := svc.CreateAccount(context.Background(), "ws-1", asset.ID, tc.in)
 			if !errors.Is(err, ErrValidation) {
 				t.Fatalf("err = %v; want ErrValidation", err)
 			}
@@ -310,7 +342,7 @@ func TestPAMAssetService_ListAccounts(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 	for i, u := range []string{"alice", "bob", "carol"} {
-		if _, err := svc.CreateAccount(context.Background(), asset.ID, CreateAccountInput{
+		if _, err := svc.CreateAccount(context.Background(), "ws-1", asset.ID, CreateAccountInput{
 			Username:    u,
 			AccountType: "personal",
 			IsDefault:   i == 0,

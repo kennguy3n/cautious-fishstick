@@ -177,6 +177,7 @@ func TestPAMAssetHandler_CreateAccount_HappyPath(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	body := map[string]interface{}{
+		"workspace_id": "ws-1",
 		"username":     "root",
 		"account_type": "shared",
 		"is_default":   true,
@@ -192,9 +193,54 @@ func TestPAMAssetHandler_CreateAccount_HappyPath(t *testing.T) {
 	}
 }
 
+// TestPAMAssetHandler_CreateAccount_MissingWorkspaceReturns400 covers
+// the workspace_id requirement that closes the cross-tenant account
+// creation gap (Devin Review finding on PR #95).
+func TestPAMAssetHandler_CreateAccount_MissingWorkspaceReturns400(t *testing.T) {
+	r, svc := newPAMAssetEngine(t)
+	asset, err := svc.CreateAsset(context.Background(), "ws-1", pam.CreateAssetInput{
+		Name: "a", Protocol: "ssh", Host: "h", Port: 22,
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	body := map[string]interface{}{
+		"username":     "root",
+		"account_type": "shared",
+	}
+	w := doJSON(t, r, http.MethodPost, "/pam/assets/"+asset.ID+"/accounts", body)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s; want 400", w.Code, w.Body.String())
+	}
+}
+
+// TestPAMAssetHandler_CreateAccount_CrossWorkspaceReturns404 asserts
+// the workspace-scoped lookup at the service layer prevents a
+// caller from one workspace from creating an account on an asset
+// owned by another workspace even when the asset ULID is known.
+func TestPAMAssetHandler_CreateAccount_CrossWorkspaceReturns404(t *testing.T) {
+	r, svc := newPAMAssetEngine(t)
+	asset, err := svc.CreateAsset(context.Background(), "ws-1", pam.CreateAssetInput{
+		Name: "a", Protocol: "ssh", Host: "h", Port: 22,
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	body := map[string]interface{}{
+		"workspace_id": "ws-other",
+		"username":     "root",
+		"account_type": "shared",
+	}
+	w := doJSON(t, r, http.MethodPost, "/pam/assets/"+asset.ID+"/accounts", body)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d body=%s; want 404", w.Code, w.Body.String())
+	}
+}
+
 func TestPAMAssetHandler_CreateAccount_OnMissingAssetReturns404(t *testing.T) {
 	r, _ := newPAMAssetEngine(t)
 	body := map[string]interface{}{
+		"workspace_id": "ws-1",
 		"username":     "root",
 		"account_type": "shared",
 	}
@@ -212,7 +258,7 @@ func TestPAMAssetHandler_ListAccounts_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if _, err := svc.CreateAccount(context.Background(), asset.ID, pam.CreateAccountInput{
+	if _, err := svc.CreateAccount(context.Background(), "ws-1", asset.ID, pam.CreateAccountInput{
 		Username: "alice", AccountType: "personal",
 	}); err != nil {
 		t.Fatalf("seed account: %v", err)

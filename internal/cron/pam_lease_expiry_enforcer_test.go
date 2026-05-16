@@ -9,7 +9,11 @@ import (
 )
 
 // fakePAMLeaseExpirer is a test stub for PAMLeaseExpirer that
-// captures every call without touching a DB.
+// captures every call without touching a DB. lastExpiredIDs records
+// the exact ID slice the enforcer passed to ExpireLeasesByIDs so
+// the batch/bulk regression test (the cron must flip exactly the
+// snapshot it terminated sessions for) has a concrete assertion
+// target rather than a row-count.
 type fakePAMLeaseExpirer struct {
 	expired         []models.PAMLease
 	expiredErr      error
@@ -17,13 +21,15 @@ type fakePAMLeaseExpirer struct {
 	expireErr       error
 	notifyCallCount int
 	lastNotify      []models.PAMLease
+	lastExpiredIDs  []string
 }
 
 func (f *fakePAMLeaseExpirer) ExpiredLeases(_ context.Context, _ int) ([]models.PAMLease, error) {
 	return f.expired, f.expiredErr
 }
 
-func (f *fakePAMLeaseExpirer) ExpireLeases(_ context.Context) (int, error) {
+func (f *fakePAMLeaseExpirer) ExpireLeasesByIDs(_ context.Context, ids []string) (int, error) {
+	f.lastExpiredIDs = append([]string(nil), ids...)
 	return f.expireRows, f.expireErr
 }
 
@@ -94,6 +100,20 @@ func TestPAMLeaseExpiryEnforcer_ExpiresOverdueLeases(t *testing.T) {
 	if len(terminator.calls) != 3 {
 		t.Fatalf("terminator calls = %d; want 3", len(terminator.calls))
 	}
+	// The cron MUST flip exactly the snapshot it terminated
+	// sessions for. The previous implementation used ExpireLeases()
+	// which bulk-flipped everything past expires_at, allowing rows
+	// beyond the batch to be marked revoked silently. With the
+	// ExpireLeasesByIDs contract we can verify the enforcer passes
+	// the same 3 IDs it just terminated sessions for.
+	if len(expirer.lastExpiredIDs) != 3 {
+		t.Fatalf("expireByIDs ids = %v; want 3 ids", expirer.lastExpiredIDs)
+	}
+	for i, want := range []string{"lease-1", "lease-2", "lease-3"} {
+		if expirer.lastExpiredIDs[i] != want {
+			t.Fatalf("expireByIDs[%d] = %q; want %q", i, expirer.lastExpiredIDs[i], want)
+		}
+	}
 }
 
 func TestPAMLeaseExpiryEnforcer_TerminatorFailureIsLogged(t *testing.T) {
@@ -132,7 +152,7 @@ func TestPAMLeaseExpiryEnforcer_ExpireLeasesError(t *testing.T) {
 	enf := NewPAMLeaseExpiryEnforcer(expirer, nil, 100)
 	_, _, err := enf.Run(context.Background())
 	if err == nil {
-		t.Fatalf("expected error when ExpireLeases fails")
+		t.Fatalf("expected error when ExpireLeasesByIDs fails")
 	}
 }
 

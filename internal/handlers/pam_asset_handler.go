@@ -206,7 +206,10 @@ func (h *PAMAssetHandler) DeleteAsset(c *gin.Context) {
 }
 
 // createAccountBody mirrors pam.CreateAccountInput on the wire.
+// WorkspaceID is required so the asset lookup is tenant-scoped at
+// the service layer (matches pam.PAMAssetService.CreateAccount).
 type createAccountBody struct {
+	WorkspaceID string  `json:"workspace_id"`
 	Username    string  `json:"username"`
 	AccountType string  `json:"account_type"`
 	SecretID    *string `json:"secret_id,omitempty"`
@@ -214,7 +217,9 @@ type createAccountBody struct {
 }
 
 // CreateAccount handles POST /pam/assets/:id/accounts. The :id
-// path segment is the asset ID.
+// path segment is the asset ID; workspace_id is required in the
+// body so the service can verify the calling workspace owns the
+// asset before the row is created.
 func (h *PAMAssetHandler) CreateAccount(c *gin.Context) {
 	assetID := GetStringParam(c, "id")
 	if assetID == "" {
@@ -226,7 +231,11 @@ func (h *PAMAssetHandler) CreateAccount(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, err)
 		return
 	}
-	account, err := h.assetService.CreateAccount(c.Request.Context(), assetID, pam.CreateAccountInput{
+	if body.WorkspaceID == "" {
+		abortWithError(c, http.StatusBadRequest, "workspace_id is required", "validation_failed", "workspace_id is required")
+		return
+	}
+	account, err := h.assetService.CreateAccount(c.Request.Context(), body.WorkspaceID, assetID, pam.CreateAccountInput{
 		Username:    body.Username,
 		AccountType: body.AccountType,
 		SecretID:    body.SecretID,

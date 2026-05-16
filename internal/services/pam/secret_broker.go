@@ -2,8 +2,6 @@ package pam
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -61,9 +59,15 @@ type SecretBrokerService struct {
 }
 
 // NewSecretBrokerService returns a service backed by db with the
-// supplied encryptor. encryptor must not be nil; pass
-// access.PassthroughEncryptor{} in dev / test where the DEK env var
-// is intentionally unset.
+// supplied encryptor. encryptor must not be nil and must operate
+// on raw bytes (the PAM secret plaintext is a password / PEM key /
+// raw token, NOT a JSON-encoded map). Production binaries wire
+// pam.RawBytesAESGCMEncryptor (see raw_bytes_encryptor.go); dev /
+// test code passes access.PassthroughEncryptor{}.
+//
+// IMPORTANT: do NOT pass access.AESGCMEncryptor here — that
+// encryptor JSON-unmarshals its plaintext input and will reject
+// every PAM Vault / Rotate call with an unmarshal error.
 func NewSecretBrokerService(db *gorm.DB, encryptor access.CredentialEncryptor) (*SecretBrokerService, error) {
 	if encryptor == nil {
 		return nil, ErrEncryptorRequired
@@ -279,12 +283,22 @@ type RotationEvent struct {
 // trail will land in a follow-up milestone backed by the audit
 // producer; until then callers see only the last successful
 // rotation.
-func (s *SecretBrokerService) GetRotationHistory(ctx context.Context, secretID string) ([]RotationEvent, error) {
+//
+// Workspace-scoped on purpose: rotation timestamps can leak
+// activity patterns about another tenant's secret schedule, so the
+// row lookup must match BOTH the supplied workspaceID and
+// secretID (mirrors GetSecretMetadata).
+func (s *SecretBrokerService) GetRotationHistory(ctx context.Context, workspaceID, secretID string) ([]RotationEvent, error) {
+	if workspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace_id is required", ErrValidation)
+	}
 	if secretID == "" {
 		return nil, fmt.Errorf("%w: secret_id is required", ErrValidation)
 	}
 	var secret models.PAMSecret
-	err := s.db.WithContext(ctx).Where("id = ?", secretID).First(&secret).Error
+	err := s.db.WithContext(ctx).
+		Where("workspace_id = ? AND id = ?", workspaceID, secretID).
+		First(&secret).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%w: %s", ErrSecretNotFound, secretID)
@@ -384,10 +398,18 @@ func parseKeyVersion(kv string) int {
 }
 
 // formatKeyVersion is the inverse of parseKeyVersion — turns the
-// int column back into the string the encryptor expects.
+// int column back into the string the encryptor expects. n=0 is a
+// valid key version stamp (PassthroughEncryptor returns "0", and a
+// future KMS-backed encryptor may use 0 as the bootstrap version)
+// so it round-trips as "0". Negative values are not produced by
+// parseKeyVersion but we clamp them to "0" as a defence against
+// callers that pass corrupted column values.
 func formatKeyVersion(n int) string {
-	if n <= 0 {
-		return "1"
+	if n < 0 {
+		return "0"
+	}
+	if n == 0 {
+		return "0"
 	}
 	// Avoid pulling strconv into the hot path; tiny inline.
 	var buf [20]byte
@@ -439,11 +461,3 @@ func generateSecretPlaintext(secretType string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: unsupported secret_type %q", ErrValidation, secretType)
 	}
 }
-
-// EnsureECDSAGenerator is a compile-time pin so the `crypto/ecdsa`
-// + `crypto/elliptic` imports stay used even though the current
-// rotator only emits RSA keys — a follow-up milestone will switch
-// SSH key rotation to P-256 ECDSA, and pinning the imports here
-// keeps the diff minimal.
-var _ = ecdsa.PublicKey{} //nolint:unused
-var _ = elliptic.P256()   //nolint:unused
