@@ -136,6 +136,58 @@ func TestSyncIdentitiesDelta_400WithExpiredCursor(t *testing.T) {
 	}
 }
 
+// TestSyncIdentitiesDelta_IgnoresDeleteUserFailure locks in that the
+// audit event DELETE_USER_FAILURE — emitted by the Admin SDK when an
+// admin attempts to delete a user but the operation fails — does NOT
+// feed the removed list. Otherwise the orchestrator would treat the
+// still-extant user as deleted.
+func TestSyncIdentitiesDelta_IgnoresDeleteUserFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"items": []map[string]interface{}{
+				{
+					"id": map[string]interface{}{
+						"time":            "2024-04-01T12:00:00Z",
+						"uniqueQualifier": "ev-3",
+						"applicationName": "admin",
+					},
+					"actor": map[string]interface{}{"email": "admin@example.com", "profileId": "admin-1"},
+					"events": []map[string]interface{}{
+						{
+							"name": "DELETE_USER_FAILURE",
+							"parameters": []map[string]interface{}{
+								{"name": "USER_ID", "value": "u-failed"},
+								{"name": "USER_EMAIL", "value": "carol@example.com"},
+							},
+						},
+					},
+				},
+			},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.httpClientFor = func(_ context.Context, _ Config, _ Secrets) (httpDoer, error) {
+		return &fakeDirectoryClient{base: server.URL, c: server.Client()}, nil
+	}
+	var batchSize, removedCount int
+	if _, err := c.SyncIdentitiesDelta(context.Background(), validConfig(), validSecrets(t), "",
+		func(batch []*access.Identity, removed []string, _ string) error {
+			batchSize += len(batch)
+			removedCount += len(removed)
+			return nil
+		}); err != nil {
+		t.Fatalf("SyncIdentitiesDelta: %v", err)
+	}
+	if removedCount != 0 {
+		t.Errorf("removed = %d; want 0 (DELETE_USER_FAILURE is not a successful deletion)", removedCount)
+	}
+	if batchSize != 0 {
+		t.Errorf("batch = %d; want 0 (failure event should not emit a created/updated identity)", batchSize)
+	}
+}
+
 func TestSyncIdentitiesDelta_HTTPFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

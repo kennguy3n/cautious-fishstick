@@ -112,7 +112,12 @@ func mapReportsAdminUserEvents(items []reportsActivity) ([]*access.Identity, []s
 		}
 		for _, ev := range a.Events {
 			switch ev.Name {
-			case "DELETE_USER", "DELETE_USER_FAILURE":
+			case "DELETE_USER":
+				// Only the successful DELETE_USER event indicates the
+				// user was actually removed from the directory.
+				// DELETE_USER_FAILURE (and the matching FAILURE siblings
+				// for the other admin events) means the change did not
+				// take effect, so we ignore them.
 				if id := paramValue(ev.Parameters, "USER_ID"); id != "" {
 					removed = append(removed, id)
 				} else if email := paramValue(ev.Parameters, "USER_EMAIL"); email != "" {
