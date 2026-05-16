@@ -52,24 +52,6 @@ func newSalesforceGroupsTestServer(t *testing.T, permSetPages []sfPermissionSetQ
 					return
 				}
 				_ = json.NewEncoder(w).Encode(permSetPages[idx])
-			case strings.Contains(soql, "FROM PermissionSetAssignment"):
-				lo := strings.Index(soql, "PermissionSetId = '")
-				if lo < 0 {
-					w.WriteHeader(http.StatusBadRequest)
-					return
-				}
-				groupID := soql[lo+len("PermissionSetId = '"):]
-				groupID = strings.TrimSuffix(groupID, "'")
-				mu.Lock()
-				idx := assnCursor[groupID]
-				assnCursor[groupID] = idx + 1
-				mu.Unlock()
-				pages := assignmentPages[groupID]
-				if idx >= len(pages) {
-					_ = json.NewEncoder(w).Encode(sfAssignmentQueryResponse{Done: true})
-					return
-				}
-				_ = json.NewEncoder(w).Encode(pages[idx])
 			default:
 				w.WriteHeader(http.StatusNotFound)
 			}

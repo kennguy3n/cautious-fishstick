@@ -66,8 +66,8 @@ func TestZendeskConnector_PushSCIMUser_HappyPath(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("PushSCIMUser: %v", err)
 	}
-	if !strings.HasSuffix(captured[0].Path, "/scim/v2/Users") {
-		t.Errorf("path = %q; want suffix /scim/v2/Users", captured[0].Path)
+	if captured[0].Path != "/api/v2/scim/v2/Users" {
+		t.Errorf("path = %q; want /api/v2/scim/v2/Users", captured[0].Path)
 	}
 	if !strings.HasPrefix(captured[0].Auth, "Basic ") {
 		t.Errorf("auth = %q; want Basic prefix", captured[0].Auth)

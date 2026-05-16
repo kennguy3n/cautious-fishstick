@@ -1,9 +1,10 @@
 // Package zendesk — SCIM v2.0 outbound provisioning composition.
 //
-// Zendesk exposes a SCIM 2.0 endpoint at
-// `{subdomain}.zendesk.com/scim/v2/Users` (and /Groups). The shared
-// SCIMClient drives it with Basic auth derived from the connector's
-// email + api_token secret pair (Zendesk's standard auth scheme).
+// Zendesk exposes a SCIM 2.0 endpoint under the standard REST API
+// prefix: `{subdomain}.zendesk.com/api/v2/scim/v2/Users` (and
+// /Groups). The shared SCIMClient drives it with Basic auth derived
+// from the connector's email + api_token secret pair (Zendesk's
+// standard auth scheme).
 package zendesk
 
 import (
@@ -40,7 +41,10 @@ func (c *ZendeskAccessConnector) scimConfig(configRaw, secretsRaw map[string]int
 	if err != nil {
 		return nil, nil, err
 	}
-	scimBaseURL := c.baseURL(cfg) + "/scim/v2"
+	// Zendesk's SCIM endpoint sits under the same `/api/v2` REST API
+	// prefix as the rest of the connector's calls — see
+	// https://developer.zendesk.com/api-reference/ticketing/users/scim/.
+	scimBaseURL := c.baseURL(cfg) + "/api/v2/scim/v2"
 	scimCfg := map[string]interface{}{
 		"scim_base_url": scimBaseURL,
 	}

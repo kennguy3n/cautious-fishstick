@@ -12,9 +12,12 @@ import (
 // CheckSSOEnforcement implements access.SSOEnforcementChecker for
 // Slack Enterprise Grid. The `team.info` Web API endpoint returns
 // the grid's SSO state via `team.sso_provider.type` and
-// `enterprise.is_sso_enabled`; when SAML/OIDC is wired AND
-// password sign-in is disabled, the grid enforces SSO across every
-// workspace.
+// `enterprise.is_sso_enabled`; both must be set for the grid to
+// actually enforce SSO across every workspace. A SAML provider can
+// be configured (`sso_provider.type == "saml"`) while password
+// sign-in is still allowed, so the IdP signal alone is not
+// sufficient — we require `is_sso_enabled` as the authoritative
+// enforcement flag.
 //
 // Best-effort: transport / authorisation failures surface as a
 // non-nil err so callers map them to "unknown" — never to "not
@@ -58,8 +61,9 @@ func (c *SlackEnterpriseAccessConnector) CheckSSOEnforcement(ctx context.Context
 	if !payload.OK {
 		return false, "", fmt.Errorf("slack_enterprise: sso-enforcement api error: %s", payload.Error)
 	}
-	if payload.Team.SSOProvider.Type == "saml" || payload.Enterprise.IsSSOEnabled {
-		return true, "Slack Enterprise Grid is wired to a SAML identity provider", nil
+	providerWired := payload.Team.SSOProvider.Type == "saml" || payload.Team.SSOProvider.Type == "oidc"
+	if providerWired && payload.Enterprise.IsSSOEnabled {
+		return true, "Slack Enterprise Grid is wired to a SAML/OIDC identity provider and password sign-in is disabled", nil
 	}
 	return false, "Slack Enterprise Grid still permits password sign-in alongside SSO", nil
 }

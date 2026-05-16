@@ -9,6 +9,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -45,7 +46,10 @@ func (c *GitHubAccessConnector) scimConfig(configRaw, secretsRaw map[string]inte
 	if cfg.Organization == "" {
 		return nil, nil, fmt.Errorf("github: scim: organization is required")
 	}
-	scimBaseURL := c.baseURL() + "/scim/v2/organizations/" + cfg.Organization
+	// url.PathEscape mirrors github/delta_sync.go:40 — GitHub org slugs
+	// are restricted to `[a-zA-Z0-9-]`, but escaping keeps the two
+	// endpoints in sync if the validation constraint ever loosens.
+	scimBaseURL := c.baseURL() + "/scim/v2/organizations/" + url.PathEscape(cfg.Organization)
 	scimCfg := map[string]interface{}{
 		"scim_base_url": scimBaseURL,
 	}

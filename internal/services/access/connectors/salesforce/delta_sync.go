@@ -5,7 +5,6 @@ package salesforce
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -204,26 +203,14 @@ type sfUserRow2 struct {
 	SystemModstamp string `json:"SystemModstamp"`
 }
 
+// readBodyClose reads up to 1 MiB from resp.Body and closes it,
+// matching the pattern in google_workspace/delta_sync.go. Truncated
+// payloads return the bytes that were read without error; this is
+// safe because callers only feed the result into JSON decoding,
+// which surfaces its own error on bad bytes.
 func readBodyClose(resp *http.Response) ([]byte, error) {
 	defer resp.Body.Close()
-	const lim = 1 << 20
-	buf := make([]byte, 0, 512)
-	tmp := make([]byte, 4096)
-	for {
-		n, err := resp.Body.Read(tmp)
-		if n > 0 {
-			buf = append(buf, tmp[:n]...)
-			if len(buf) > lim {
-				return buf[:lim], nil
-			}
-		}
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return buf, nil
-			}
-			return buf, err
-		}
-	}
+	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 }
 
 var _ access.IdentityDeltaSyncer = (*SalesforceAccessConnector)(nil)

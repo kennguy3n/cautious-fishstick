@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
@@ -123,7 +124,7 @@ func (c *ZendeskAccessConnector) SyncGroupMembers(
 	nextURL := checkpoint
 	if nextURL == "" {
 		nextURL = fmt.Sprintf("%s/api/v2/group_memberships.json?group_id=%s&per_page=100",
-			c.baseURL(cfg), groupExternalID)
+			c.baseURL(cfg), url.QueryEscape(groupExternalID))
 	}
 	for {
 		req, err := c.newRequest(ctx, secrets, http.MethodGet, nextURL)

@@ -149,7 +149,11 @@ func (c *DropboxAccessConnector) SyncGroupMembers(
 		}
 		ids := make([]string, 0, len(resp.Members))
 		for _, m := range resp.Members {
-			ids = append(ids, m.Profile.TeamMemberID)
+			id := strings.TrimSpace(m.Profile.TeamMemberID)
+			if id == "" {
+				continue
+			}
+			ids = append(ids, id)
 		}
 		next := ""
 		if resp.HasMore {
