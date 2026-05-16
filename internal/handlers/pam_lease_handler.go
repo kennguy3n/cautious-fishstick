@@ -68,7 +68,11 @@ func (h *PAMLeaseHandler) RequestLease(c *gin.Context) {
 }
 
 // ListLeases handles GET /pam/leases. workspace_id is required;
-// optional filters are user_id, asset_id, active_only, limit, offset.
+// optional filters are user_id, asset_id, active, limit, offset.
+// The active filter name matches docs/swagger.{json,yaml} —
+// previously the handler read `active_only` which silently
+// returned all leases for clients following the documented API
+// (Devin Review finding on PR #95).
 func (h *PAMLeaseHandler) ListLeases(c *gin.Context) {
 	wsID := GetPtrStringQuery(c, "workspace_id")
 	if wsID == nil || *wsID == "" {
@@ -82,7 +86,7 @@ func (h *PAMLeaseHandler) ListLeases(c *gin.Context) {
 	if v := GetPtrStringQuery(c, "asset_id"); v != nil {
 		filters.AssetID = *v
 	}
-	if v := GetPtrStringQuery(c, "active_only"); v != nil && *v == "true" {
+	if v := GetPtrStringQuery(c, "active"); v != nil && *v == "true" {
 		filters.ActiveOnly = true
 	}
 	if v := GetPtrStringQuery(c, "limit"); v != nil && *v != "" {

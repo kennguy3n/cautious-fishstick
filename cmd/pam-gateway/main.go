@@ -134,6 +134,11 @@ func healthHandler() http.Handler {
 // the boot log does not leak basic-auth credentials. Best-effort —
 // production configurations should use header-based auth (which
 // this binary already prefers).
+//
+// The fallthrough case (URL contains "@" but no "://") still
+// redacts the user-info segment by replacing the prefix with
+// "***" — falling through to "return u" would leak credentials
+// on a malformed URL (Devin Review finding on PR #95).
 func redactURL(u string) string {
 	if u == "" {
 		return ""
@@ -153,7 +158,10 @@ func redactURL(u string) string {
 			return u[:i+3] + "***" + u[at:]
 		}
 	}
-	return u
+	// No "://" scheme prefix found but the URL still has an "@",
+	// so the segment before it is almost certainly user-info.
+	// Strip it unconditionally rather than leaking it.
+	return "***" + u[at:]
 }
 
 // config carries the resolved PAM_GATEWAY_* environment values.
