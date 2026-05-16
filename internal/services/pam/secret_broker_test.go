@@ -176,7 +176,17 @@ func TestSecretBroker_RotateSecret_ReplacesCiphertext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	oldCiphertext := old.Ciphertext
+	// VaultSecret blanks Ciphertext on the returned struct as
+	// defence-in-depth, so capture the pre-rotation value by
+	// reading the row back from the DB directly.
+	var oldRow models.PAMSecret
+	if err := svc.db.Where("id = ?", old.ID).First(&oldRow).Error; err != nil {
+		t.Fatalf("read pre-rotate row: %v", err)
+	}
+	oldCiphertext := oldRow.Ciphertext
+	if oldCiphertext == "" {
+		t.Fatalf("pre-rotate ciphertext empty")
+	}
 
 	rotated, err := svc.RotateSecret(context.Background(), "ws-1", old.ID)
 	if err != nil {
