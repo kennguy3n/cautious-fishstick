@@ -12,7 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Task 8 (PHASES.md cross-cutting test coverage hardening) — exercises
+// Router integration test (cross-cutting test coverage hardening) — exercises
 // the *gin.Engine returned by Router(Dependencies{}) end-to-end: the
 // middleware chain (gin.Recovery → JSONLoggerMiddleware →
 // MetricsMiddleware → RateLimiter → JSONValidationMiddleware), the

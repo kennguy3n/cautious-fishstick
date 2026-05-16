@@ -18,7 +18,7 @@ import (
 // rows in push_subscriptions and the WebPushNotifier dispatches
 // notifications by POST'ing the rendered payload to Endpoint.
 //
-// Per docs/PHASES.md Phase 5/6 the push channel is best-effort: an
+// Per docs/architecture.md Phase 5/6 the push channel is best-effort: an
 // HTTP failure logs but does NOT abort the parent fan-out — see the
 // Send method below.
 //
@@ -77,7 +77,7 @@ type PushHTTPClient interface {
 //
 // Failure semantics mirror the email channel: a per-subscription
 // HTTP error logs and bumps the failed counter but never aborts the
-// fan-out. Per docs/PHASES.md cross-cutting criteria notifications
+// fan-out. Per docs/architecture.md cross-cutting criteria notifications
 // MUST NOT roll back the parent lifecycle transaction.
 type WebPushNotifier struct {
 	resolver PushSubscriptionResolver

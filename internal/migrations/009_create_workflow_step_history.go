@@ -9,12 +9,12 @@ import (
 )
 
 // Migration009CreateWorkflowStepHistory creates the
-// access_workflow_step_history table per docs/PHASES.md Phase 8
+// access_workflow_step_history table per docs/architecture.md Phase 8
 // Task 4. The composite (request_id, step_index) index on the model
 // is materialised here so operators can query the per-step audit
 // trail for a single request in O(steps) without a full scan.
 //
-// No FOREIGN KEY constraints (per docs/PHASES.md cross-cutting
+// No FOREIGN KEY constraints (per docs/architecture.md cross-cutting
 // criteria); referential integrity to access_requests / access_workflows
 // is enforced at the service layer.
 func Migration009CreateWorkflowStepHistory(db *gorm.DB) error {

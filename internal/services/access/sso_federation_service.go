@@ -16,7 +16,7 @@ import (
 // SSOFederationService configures a Keycloak Identity Provider broker
 // from connector-supplied SSOMetadata, closing the Phase 1 exit
 // criterion "First-class SSO federation via Keycloak for SAML / OIDC /
-// Microsoft Entra ID / Google Workspace" (docs/PHASES.md §Phase 1).
+// Microsoft Entra ID / Google Workspace" (docs/architecture.md §Phase 1).
 //
 // The service is a thin orchestration layer over the Keycloak Admin
 // REST API:

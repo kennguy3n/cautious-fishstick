@@ -24,7 +24,7 @@ import (
 // AutoMigrate on AccessGrant is idempotent — on a fresh DB it
 // creates the table with the column; on an existing DB at
 // migration 014 it issues a single ALTER TABLE ... ADD COLUMN.
-// No FOREIGN KEY constraints (per docs/PHASES.md cross-cutting
+// No FOREIGN KEY constraints (per docs/architecture.md cross-cutting
 // criteria) and no raw SQL.
 func Migration015AddLastWarnedAtToAccessGrants(db *gorm.DB) error {
 	if db == nil {

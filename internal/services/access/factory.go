@@ -63,7 +63,7 @@ func GetAccessConnector(provider string) (AccessConnector, error) {
 // ListRegisteredProviders returns the sorted list of provider keys currently
 // in the registry. Intended for diagnostics endpoints and debug logging only —
 // not the source of truth for the provider catalogue (that lives in
-// docs/PROGRESS.md §1).
+// docs/connectors.md §1).
 func ListRegisteredProviders() []string {
 	registryMu.RLock()
 	defer registryMu.RUnlock()

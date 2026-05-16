@@ -16,7 +16,7 @@ import "sync/atomic"
 //  1. Bump the counter inside the new code path.
 //  2. Update TestPromote_DoesNotInvokeOpenZiti to either delete the
 //     assertion or rewrite it to count the expected number of calls.
-//  3. Update docs/PHASES.md so the exit criterion checkbox state
+//  3. Update docs/architecture.md so the exit criterion checkbox state
 //     matches reality.
 //
 // Defining the counter as a package-level atomic keeps the test free

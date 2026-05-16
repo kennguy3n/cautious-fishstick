@@ -33,7 +33,7 @@ type EscalationNotifier interface {
 //     escalation (so the audit trail records the from/to handover);
 //   - an optional EscalationNotifier for the requester-side ping.
 //
-// Per docs/PHASES.md Phase 5/8 cross-cutting criteria, side effects
+// Per docs/architecture.md Phase 5/8 cross-cutting criteria, side effects
 // in this struct are best-effort — a notification failure MUST NOT
 // prevent the state-history row from being written, and a state-
 // history write failure MUST NOT prevent the in-memory escalation

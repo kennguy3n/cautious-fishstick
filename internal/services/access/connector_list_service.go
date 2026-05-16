@@ -43,7 +43,7 @@ type ConnectorSummary struct {
 //
 // SSOFederation is not surfaced here because determining federation
 // capability requires calling GetSSOMetadata with a live tenant
-// config; the per-workspace capability matrix in docs/PROGRESS.md §1
+// config; the per-workspace capability matrix in docs/connectors.md §1
 // is the source of truth for that dimension.
 type ConnectorCapabilities struct {
 	Registered   bool `json:"registered"`

@@ -14,7 +14,7 @@ import (
 // on (workspace_id, is_active) and the standalone next_run_at index
 // are declared on the model struct tags and materialised here.
 //
-// No FOREIGN KEY constraints (per docs/PHASES.md cross-cutting
+// No FOREIGN KEY constraints (per docs/architecture.md cross-cutting
 // criteria); referential integrity to the workspaces table is
 // enforced at the service layer.
 func Migration005CreateAccessCampaignSchedules(db *gorm.DB) error {

@@ -1,7 +1,7 @@
 // Package notification is the Phase 5 fan-out for reviewer +
 // requester notifications.
 //
-// Per docs/PHASES.md Phase 5 exit criteria the access platform must
+// Per docs/architecture.md Phase 5 exit criteria the access platform must
 // notify reviewers when a campaign produces pending decisions and
 // notify requesters when their access_request changes state. Phase 5
 // implements the interface and an in-memory channel suitable for

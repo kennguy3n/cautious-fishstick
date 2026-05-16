@@ -23,7 +23,7 @@ import (
 // AutoMigrate is idempotent — for a fresh DB it creates the columns;
 // for an existing DB at migration 010 it issues an ALTER TABLE that
 // adds the two new columns without rewriting existing rows. No
-// FOREIGN KEY constraints (per docs/PHASES.md cross-cutting
+// FOREIGN KEY constraints (per docs/architecture.md cross-cutting
 // criteria).
 func Migration011AddRequestEscalationTracking(db *gorm.DB) error {
 	if db == nil {

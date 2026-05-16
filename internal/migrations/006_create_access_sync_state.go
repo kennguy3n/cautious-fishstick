@@ -15,7 +15,7 @@ import (
 // — a single connector never holds two open cursors of the same
 // kind (identity / group / audit).
 //
-// No FOREIGN KEY constraints (per docs/PHASES.md cross-cutting
+// No FOREIGN KEY constraints (per docs/architecture.md cross-cutting
 // criteria); referential integrity to access_connectors is enforced
 // at the service layer.
 func Migration006CreateAccessSyncState(db *gorm.DB) error {

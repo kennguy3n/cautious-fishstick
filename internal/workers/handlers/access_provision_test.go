@@ -103,7 +103,7 @@ func TestAccessProvision_4xxPermanent_JobFailed(t *testing.T) {
 // error, and the worker handler must mark the job failed (so a
 // future requeue retries it). The handler itself does NOT decide
 // retry policy — that lives in the queue layer per
-// docs/PHASES.md Phase 6 — but it MUST preserve the upstream
+// docs/architecture.md Phase 6 — but it MUST preserve the upstream
 // error verbatim.
 func TestAccessProvision_5xxTransient_JobFailed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

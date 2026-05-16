@@ -26,7 +26,7 @@ import (
 //   - RiskScore is populated downstream by the AI agent — Phase 6
 //     leaves it nil.
 //
-// No FOREIGN KEY constraints (per docs/PHASES.md cross-cutting
+// No FOREIGN KEY constraints (per docs/architecture.md cross-cutting
 // criteria); referential integrity to access_connectors is
 // enforced at the service layer.
 type AccessGrantEntitlement struct {

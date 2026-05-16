@@ -14,7 +14,7 @@ import (
 //
 // All indexes are declared on the AccessOrphanAccount struct tags
 // and materialised here. No FOREIGN KEY constraints (per SN360
-// database-index rule and docs/PHASES.md cross-cutting criteria);
+// database-index rule and docs/architecture.md cross-cutting criteria);
 // referential integrity to access_connectors and workspaces is
 // enforced at the service layer.
 //

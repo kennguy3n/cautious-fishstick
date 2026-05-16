@@ -1,19 +1,17 @@
 #!/usr/bin/env bash
 # check_stale_references.sh — CI guard against retired doc filenames.
 #
-# Several files were retired during the public-docs rewrite (PR #87)
-# and replaced by lowercase successors:
+# Several files were retired during the public-docs rewrite and
+# replaced by lowercase successors:
 #
 #   docs/PROPOSAL.md        → docs/architecture.md
 #   docs/ARCHITECTURE.md    → docs/architecture.md
 #   docs/LISTCONNECTORS.md  → docs/connectors.md
 #   docs/SDK_CONTRACTS.md   → docs/sdk.md
 #
-# This guard fails if any tracked file outside docs/internal/ still
-# references the retired names. docs/internal/ is allowed because the
-# internal trackers (PROGRESS.md, PHASES.md) intentionally preserve
-# historical phase labels. CHANGELOG.md is also allowed because the
-# retirement note explicitly lists the old filenames.
+# This guard fails if any tracked file still references the retired
+# names. CONTRIBUTING.md is allowed because it documents the names
+# this script flags.
 #
 # Usage:
 #   ./scripts/check_stale_references.sh
@@ -43,18 +41,16 @@ cd "$repo_root"
 # alternation: both branches begin with a non-word character.
 #
 # The allowlist below drops paths that are allowed to mention the
-# retired filenames in prose (the script itself, the CHANGELOG
-# retirement note, and the internal trackers under docs/internal/).
+# retired filenames in prose (the script itself and CONTRIBUTING.md,
+# which documents the names this script flags).
 patterns='(^|[^A-Za-z0-9_])(PROPOSAL|ARCHITECTURE|LISTCONNECTORS|SDK_CONTRACTS)(\.md|[[:space:]]+§)'
 
 # Search everything tracked by git so vendored or generated trees we
 # do not own are ignored automatically. Per-file allowlist suppresses:
-#   - docs/internal/**         (internal trackers; historical refs OK)
-#   - CHANGELOG.md             (intentional retirement note)
 #   - CONTRIBUTING.md          (documents the names this script flags)
 #   - scripts/check_stale_references.sh (this script lists the names
 #                                        it is checking for)
-allowlist_regex='^(docs/internal/|CHANGELOG\.md$|CONTRIBUTING\.md$|scripts/check_stale_references\.sh$)'
+allowlist_regex='^(CONTRIBUTING\.md$|scripts/check_stale_references\.sh$)'
 
 # git grep -E supports extended regex; -n prints line numbers. We
 # capture failures into a temp file so we can render a friendly

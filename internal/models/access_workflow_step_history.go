@@ -26,7 +26,7 @@ const (
 )
 
 // AccessWorkflowStepHistory mirrors the access_workflow_step_history
-// table per docs/PHASES.md Phase 8 Task 4. One row per workflow step
+// table per docs/architecture.md Phase 8 Task 4. One row per workflow step
 // the executor walks; rows are append-only and the executor never
 // rewrites a previously-emitted row.
 //
@@ -56,7 +56,7 @@ const (
 //     gorm.Updates. The audit trail is append-only at the
 //     (request_id, step_index) granularity.
 //
-// No FOREIGN KEY constraints (per docs/PHASES.md cross-cutting
+// No FOREIGN KEY constraints (per docs/architecture.md cross-cutting
 // criteria).
 type AccessWorkflowStepHistory struct {
 	ID          string     `gorm:"primaryKey;type:varchar(26)" json:"id"`
@@ -68,7 +68,7 @@ type AccessWorkflowStepHistory struct {
 	// the 0-based position of the root they descend from. Linear
 	// (non-DAG, Phase 8) executions leave it nil. Operators query for
 	// failed steps within a single branch via (request_id,
-	// branch_index, status) per docs/PHASES.md Phase 8 DAG criteria.
+	// branch_index, status) per docs/architecture.md Phase 8 DAG criteria.
 	BranchIndex *int       `gorm:"index" json:"branch_index,omitempty"`
 	StepType    string     `gorm:"type:varchar(50);not null" json:"step_type"`
 	Status      string     `gorm:"type:varchar(20);not null;index" json:"status"`

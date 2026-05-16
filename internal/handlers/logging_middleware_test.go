@@ -158,7 +158,7 @@ func TestJSONLoggerMiddleware_DoesNotLogRequestBody(t *testing.T) {
 // TestJSONLoggerMiddleware_DoesNotLogSensitiveHeaders asserts the
 // middleware never echoes Authorization / Cookie / X-Api-Key
 // headers. These would be the most damaging accidental log leaks
-// per docs/PHASES.md cross-cutting criterion "No secret/token/PII
+// per docs/architecture.md cross-cutting criterion "No secret/token/PII
 // logged".
 func TestJSONLoggerMiddleware_DoesNotLogSensitiveHeaders(t *testing.T) {
 	buf, restore := captureLogger(t)

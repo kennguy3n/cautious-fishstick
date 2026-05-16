@@ -3,7 +3,7 @@
 // (PolicyService, AccessRequestService, AccessReviewService, …) onto a
 // single *gin.Engine returned by Router.
 //
-// Per docs/PHASES.md cross-cutting criteria, handlers MUST NOT touch
+// Per docs/architecture.md cross-cutting criteria, handlers MUST NOT touch
 // gin.Context.Param / gin.Context.Query directly — every path
 // parameter and every query parameter is read through the helpers
 // defined here. Centralising the access pattern lets us add
@@ -21,7 +21,7 @@ import (
 // surrounding whitespace stripped. Returns "" when the parameter is
 // absent. Handlers MUST use this helper instead of c.Param so the
 // access pattern is consistent across the codebase (per
-// docs/PHASES.md cross-cutting criteria).
+// docs/architecture.md cross-cutting criteria).
 func GetStringParam(c *gin.Context, key string) string {
 	if c == nil || key == "" {
 		return ""
@@ -39,7 +39,7 @@ func GetStringParam(c *gin.Context, key string) string {
 // difference between "not sent" and "sent blank".
 //
 // Handlers MUST use this helper instead of c.Query so the access
-// pattern is consistent across the codebase (per docs/PHASES.md
+// pattern is consistent across the codebase (per docs/architecture.md
 // cross-cutting criteria).
 func GetPtrStringQuery(c *gin.Context, key string) *string {
 	if c == nil || key == "" {
