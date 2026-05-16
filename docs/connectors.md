@@ -243,6 +243,10 @@ Best-effort upstream session termination wired into `JMLService.HandleLeaver`. E
 | 12 | Jira/Atlassian | `jira/` | `POST /users/{accountId}/manage/lifecycle/disable` (Atlassian Admin lifecycle) |
 | 13 | Notion | `notion/` | `PATCH /v1/users/{user_id}` (deactivate) |
 | 14 | BambooHR | `bamboohr/` | `PUT /v1/employees/{id}/terminateEmployee` |
+| 15 | GitLab | `gitlab/` | `DELETE /api/v4/users/{id}/impersonation_tokens` + admin session control |
+| 16 | Box | `box/` | `DELETE /2.0/users/{id}/sessions` |
+| 17 | Slack Enterprise | `slack_enterprise/` | `admin.users.session.reset` |
+| 18 | Ping Identity | `ping_identity/` | `DELETE /environments/{envId}/users/{userId}/sessions` |
 
 ### `SSOEnforcementChecker` — detect password fallback on SSO-federated providers
 
@@ -264,6 +268,76 @@ Returns `(enforced bool, details string, err error)`. Transport / auth failures 
 | 12 | HubSpot | `hubspot/` | `GET /settings/v3/users/provisioning` |
 | 13 | Dropbox | `dropbox/` | `POST /2/team/get_info` + `policies.sso.tag` (`required` → enforced) |
 | 14 | Zoom | `zoom/` | `GET /accounts/{accountId}/settings?option=security` + `sign_in.login_types` / `sign_in.methods` (`sso`/`saml` → enforced) |
+| 15 | GitLab | `gitlab/` | `GET /api/v4/application/settings` — `password_authentication_enabled_for_web` / `password_authentication_enabled_for_git` |
+| 16 | Box | `box/` | Enterprise settings API — SSO configuration |
+| 17 | Jira/Atlassian | `jira/` | Atlassian org security settings — SSO enforcement |
+| 18 | Figma | `figma/` | Organization settings (Enterprise) — SSO required |
+| 19 | Slack Enterprise | `slack_enterprise/` | `team.info` + `sso.is_enforced` |
+
+### `SCIMProvisioner` — push/delete user and group records over SCIM v2.0
+
+Composes `*access.SCIMClient` for providers that expose a SCIM v2.0 endpoint. The connector's `scimConfig()` adapter normalises tenant-specific config + secrets into `scim_base_url` + `scim_auth_header` so the shared client can issue typed `POST/PATCH/DELETE` calls.
+
+| # | Provider | Path | Upstream SCIM endpoint |
+|---|----------|------|------------------------|
+| 1 | Okta | `okta/` | `{base}/scim/v2/Users` |
+| 2 | Microsoft | `microsoft/` | Microsoft Entra SCIM v2 |
+| 3 | Google Workspace | `google_workspace/` | Google SCIM v2 |
+| 4 | Auth0 | `auth0/` | Auth0 SCIM v2 |
+| 5 | LastPass | `lastpass/` | LastPass SCIM v2 |
+| 6 | 1Password | `onepassword/` | 1Password SCIM v2 bridge |
+| 7 | Duo | `duo/` | Duo Admin SCIM v2 |
+| 8 | Ping Identity | `ping_identity/` | PingOne SCIM v2 |
+| 9 | Salesforce | `salesforce/` | `{instance_url}/services/scim/v2/Users` |
+| 10 | Slack Enterprise | `slack_enterprise/` | `api.slack.com/scim/v2/Users` |
+| 11 | Zoom | `zoom/` | `{base}/scim2/Users` |
+| 12 | GitHub | `github/` | `{base}/scim/v2/organizations/{org}/Users` |
+| 13 | Jira/Atlassian | `jira/` | `{gateway}/scim/directory/{directoryId}/Users` |
+| 14 | Dropbox | `dropbox/` | `{base}/2/team/scim/v2/Users` |
+| 15 | Box | `box/` | `{base}/2.0/scim/Users` |
+| 16 | Figma | `figma/` | `{base}/scim/v2/Users` |
+| 17 | Asana | `asana/` | `{base}/scim/Users` |
+| 18 | Notion | `notion/` | Notion Enterprise SCIM v2 |
+| 19 | Zendesk | `zendesk/` | `{base}/scim/v2/Users` |
+| 20 | AWS | `aws/` | AWS Identity Center SCIM v2 |
+| 21 | Workday | `workday/` | Workday SCIM v2 provisioning |
+
+### `GroupSyncer` — enumerate groups and group membership
+
+Implements `CountGroups`, `SyncGroups`, and `SyncGroupMembers`. Each method paginates the provider's native group / membership API and surfaces members as upstream external IDs the registry can stitch into `Identity` records.
+
+| # | Provider | Path | Group list API | Membership API |
+|---|----------|------|----------------|----------------|
+| 1 | Okta | `okta/` | `GET /api/v1/groups` | `GET /api/v1/groups/{id}/users` |
+| 2 | Microsoft | `microsoft/` | `GET /groups` | `GET /groups/{id}/members` |
+| 3 | Google Workspace | `google_workspace/` | `GET /admin/directory/v1/groups` | `GET /admin/directory/v1/groups/{key}/members` |
+| 4 | GitHub | `github/` | `GET /orgs/{org}/teams` | `GET /orgs/{org}/teams/{slug}/members` |
+| 5 | Slack | `slack/` | `usergroups.list` | `usergroups.users.list` |
+| 6 | Auth0 | `auth0/` | `GET /api/v2/organizations` | `GET /api/v2/organizations/{id}/members` |
+| 7 | Salesforce | `salesforce/` | SOQL `Group` / `PermissionSet` | `PermissionSetAssignment` |
+| 8 | Zendesk | `zendesk/` | `GET /api/v2/groups` | `GET /api/v2/group_memberships?group_id=...` |
+| 9 | Jira/Atlassian | `jira/` | `GET /rest/api/3/group/bulk` | `GET /rest/api/3/group/member?groupname=...` |
+| 10 | GitLab | `gitlab/` | `GET /api/v4/groups/{id}/subgroups` | `GET /api/v4/groups/{id}/members` |
+| 11 | Zoom | `zoom/` | `GET /v2/groups` | `GET /v2/groups/{groupId}/members` |
+| 12 | Dropbox | `dropbox/` | `POST /2/team/groups/list` | `POST /2/team/groups/members/list` |
+| 13 | Box | `box/` | `GET /2.0/groups` | `GET /2.0/groups/{id}/memberships` |
+| 14 | PagerDuty | `pagerduty/` | `GET /teams` | `GET /teams/{id}/members` |
+| 15 | Datadog | `datadog/` | `GET /api/v2/teams` | `GET /api/v2/teams/{id}/memberships` |
+| 16 | HubSpot | `hubspot/` | `GET /settings/v3/users/teams` | `GET /settings/v3/users/teams/{teamId}` |
+| 17 | Asana | `asana/` | `GET /organizations/{workspace_gid}/teams` | `GET /teams/{gid}/users` |
+
+### `IdentityDeltaSyncer` — incremental sync via provider change feeds
+
+Returns `(nextCheckpoint, error)` and surfaces the `ErrDeltaTokenExpired` sentinel when the upstream rejects a stale cursor so the registry falls back to a full re-sync.
+
+| # | Provider | Path | Mechanism |
+|---|----------|------|-----------|
+| 1 | Okta | `okta/` | `/api/v1/logs?since=...` filtered to user lifecycle events |
+| 2 | Microsoft | `microsoft/` | `/users/delta` with `$deltatoken` cursor |
+| 3 | Auth0 | `auth0/` | Management API logs filtered by user lifecycle events |
+| 4 | Google Workspace | `google_workspace/` | Admin Reports API `activities.list` with `userKey=all` + `startTime` cursor |
+| 5 | Salesforce | `salesforce/` | `/data/ChangeDataCapture` / `User` object polling with `since` token |
+| 6 | GitHub | `github/` | `GET /orgs/{org}/audit-log?after={cursor}` filtered to user events |
 
 ## Coverage summary at a glance
 
@@ -276,6 +350,18 @@ Returns `(enforced bool, details string, err error)`. Transport / auth failures 
 | `sso_federation`   |       104 |  96 |          200 / 200 |
 
 `—` entries reflect providers where the capability does not exist by design — generic SAML / OIDC have no identity API; HIBP, BitSight, VirusTotal, and Wazuh are audit-only; many niche providers have no native SSO metadata endpoint. The effective-coverage column counts connectors where the capability is either supported or does not apply.
+
+### Optional capability counts
+
+| Optional interface       | Implementations |
+|--------------------------|----------------:|
+| `SCIMProvisioner`        |              21 |
+| `GroupSyncer`            |              17 |
+| `SessionRevoker`         |              18 |
+| `SSOEnforcementChecker`  |              19 |
+| `IdentityDeltaSyncer`    |               6 |
+
+These optional interfaces are surfaced through the connector-health endpoint and consumed by the leaver kill switch, SSO-only enforcement flows, and the incremental sync scheduler. Each count is enforced by `internal/services/access/registry_count_test.go`.
 
 ## Where to read next
 
