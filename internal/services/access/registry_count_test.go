@@ -360,7 +360,7 @@ const expectedSCIMProvisionerCount = 21
 // Bumping this requires landing the matching groups.go +
 // groups_test.go inside the connector package AND refreshing
 // docs/connectors.md §4 + README.md in the same PR.
-const expectedGroupSyncerCount = 14
+const expectedGroupSyncerCount = 17
 
 // expectedIdentityDeltaSyncerCount is the canonical number of
 // AccessConnector implementations that also satisfy
