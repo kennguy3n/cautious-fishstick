@@ -387,9 +387,32 @@ func (s *PAMAssetService) CreateAccount(ctx context.Context, workspaceID, assetI
 // ListAccounts returns the pam_accounts rows attached to assetID
 // ordered by created_at ascending so the "default" account renders
 // near the top in admin UIs.
-func (s *PAMAssetService) ListAccounts(ctx context.Context, assetID string) ([]models.PAMAccount, error) {
+//
+// workspaceID is required and the asset's ownership is verified
+// before the accounts are returned — this closes the cross-tenant
+// account enumeration gap (Devin Review finding on PR #95) and
+// keeps the scoping contract consistent with the other PAM
+// service methods (CreateAccount, GetAsset, ListAssets, etc.).
+func (s *PAMAssetService) ListAccounts(ctx context.Context, workspaceID, assetID string) ([]models.PAMAccount, error) {
+	if workspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace_id is required", ErrValidation)
+	}
 	if assetID == "" {
 		return nil, fmt.Errorf("%w: asset_id is required", ErrValidation)
+	}
+	// Verify the calling workspace owns the asset before we list
+	// any accounts; otherwise a caller in workspace A who guesses
+	// an asset ULID in workspace B could enumerate every account
+	// on it.
+	var owner int64
+	if err := s.db.WithContext(ctx).
+		Model(&models.PAMAsset{}).
+		Where("workspace_id = ? AND id = ?", workspaceID, assetID).
+		Count(&owner).Error; err != nil {
+		return nil, fmt.Errorf("pam: verify asset workspace: %w", err)
+	}
+	if owner == 0 {
+		return nil, ErrAssetNotFound
 	}
 	var out []models.PAMAccount
 	if err := s.db.WithContext(ctx).

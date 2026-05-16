@@ -263,7 +263,7 @@ func TestPAMAssetHandler_ListAccounts_HappyPath(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
-	w := doJSON(t, r, http.MethodGet, "/pam/assets/"+asset.ID+"/accounts", nil)
+	w := doJSON(t, r, http.MethodGet, "/pam/assets/"+asset.ID+"/accounts?workspace_id=ws-1", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s; want 200", w.Code, w.Body.String())
 	}
@@ -271,5 +271,38 @@ func TestPAMAssetHandler_ListAccounts_HappyPath(t *testing.T) {
 	decodeJSON(t, w, &got)
 	if len(got) != 1 {
 		t.Fatalf("accounts = %d; want 1", len(got))
+	}
+}
+
+func TestPAMAssetHandler_ListAccounts_MissingWorkspaceReturns400(t *testing.T) {
+	r, svc := newPAMAssetEngine(t)
+	asset, err := svc.CreateAsset(context.Background(), "ws-1", pam.CreateAssetInput{
+		Name: "a", Protocol: "ssh", Host: "h", Port: 22,
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	w := doJSON(t, r, http.MethodGet, "/pam/assets/"+asset.ID+"/accounts", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s; want 400", w.Code, w.Body.String())
+	}
+}
+
+func TestPAMAssetHandler_ListAccounts_CrossWorkspaceReturns404(t *testing.T) {
+	r, svc := newPAMAssetEngine(t)
+	asset, err := svc.CreateAsset(context.Background(), "ws-1", pam.CreateAssetInput{
+		Name: "a", Protocol: "ssh", Host: "h", Port: 22,
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := svc.CreateAccount(context.Background(), "ws-1", asset.ID, pam.CreateAccountInput{
+		Username: "alice", AccountType: "personal",
+	}); err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	w := doJSON(t, r, http.MethodGet, "/pam/assets/"+asset.ID+"/accounts?workspace_id=ws-other", nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d body=%s; want 404", w.Code, w.Body.String())
 	}
 }

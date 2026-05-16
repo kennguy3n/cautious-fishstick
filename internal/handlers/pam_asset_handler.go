@@ -248,14 +248,24 @@ func (h *PAMAssetHandler) CreateAccount(c *gin.Context) {
 	c.JSON(http.StatusCreated, account)
 }
 
-// ListAccounts handles GET /pam/assets/:id/accounts.
+// ListAccounts handles GET /pam/assets/:id/accounts. workspace_id
+// is required on the query string so the service can verify the
+// calling workspace owns the asset before returning its accounts
+// — without this gate a caller in workspace A who guesses an
+// asset ULID in workspace B could enumerate every account on it
+// (Devin Review finding on PR #95).
 func (h *PAMAssetHandler) ListAccounts(c *gin.Context) {
 	assetID := GetStringParam(c, "id")
 	if assetID == "" {
 		abortWithError(c, http.StatusBadRequest, "id path parameter is required", "validation_failed", "id path parameter is required")
 		return
 	}
-	out, err := h.assetService.ListAccounts(c.Request.Context(), assetID)
+	wsID := GetPtrStringQuery(c, "workspace_id")
+	if wsID == nil || *wsID == "" {
+		abortWithError(c, http.StatusBadRequest, "workspace_id query parameter is required", "validation_failed", "workspace_id query parameter is required")
+		return
+	}
+	out, err := h.assetService.ListAccounts(c.Request.Context(), *wsID, assetID)
 	if err != nil {
 		writePAMError(c, err)
 		return

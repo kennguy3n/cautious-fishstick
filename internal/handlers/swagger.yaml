@@ -454,8 +454,10 @@ paths:
       tags: [pam-assets]
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: workspace_id, in: query, required: true, schema: { type: string } }
       responses:
         '200': { description: OK }
+        '400': { description: workspace_id required }
   /pam/secrets:
     post:
       summary: Vault a PAM secret (encrypt-and-store)

@@ -350,11 +350,46 @@ func TestPAMAssetService_ListAccounts(t *testing.T) {
 			t.Fatalf("seed %s: %v", u, err)
 		}
 	}
-	out, err := svc.ListAccounts(context.Background(), asset.ID)
+	out, err := svc.ListAccounts(context.Background(), "ws-1", asset.ID)
 	if err != nil {
 		t.Fatalf("ListAccounts: %v", err)
 	}
 	if len(out) != 3 {
 		t.Fatalf("listed %d; want 3", len(out))
+	}
+}
+
+// TestPAMAssetService_ListAccounts_RejectsCrossWorkspace asserts
+// that listing accounts on an asset owned by another workspace
+// returns ErrAssetNotFound — the service-layer scoping check is
+// the last line of defence behind the handler's body validation
+// (Devin Review follow-up finding on PR #95).
+func TestPAMAssetService_ListAccounts_RejectsCrossWorkspace(t *testing.T) {
+	svc := NewPAMAssetService(newPAMDB(t))
+	asset, err := svc.CreateAsset(context.Background(), "ws-1", CreateAssetInput{
+		Name: "a", Protocol: "ssh", Host: "h", Port: 22,
+	})
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if _, err := svc.CreateAccount(context.Background(), "ws-1", asset.ID, CreateAccountInput{
+		Username: "root", AccountType: "shared",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	_, err = svc.ListAccounts(context.Background(), "ws-other", asset.ID)
+	if !errors.Is(err, ErrAssetNotFound) {
+		t.Fatalf("cross-workspace = %v; want ErrAssetNotFound", err)
+	}
+}
+
+// TestPAMAssetService_ListAccounts_RejectsMissingWorkspace asserts
+// the workspace_id guard at the service layer fires when callers
+// pass an empty workspace.
+func TestPAMAssetService_ListAccounts_RejectsMissingWorkspace(t *testing.T) {
+	svc := NewPAMAssetService(newPAMDB(t))
+	_, err := svc.ListAccounts(context.Background(), "", "asset-x")
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("missing workspace = %v; want ErrValidation", err)
 	}
 }
