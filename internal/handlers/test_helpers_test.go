@@ -39,6 +39,14 @@ func newTestDB(t *testing.T) *gorm.DB {
 		&models.AccessJob{},
 		&models.AccessSyncState{},
 		&models.AccessGrantEntitlement{},
+		&models.PAMAsset{},
+		&models.PAMAccount{},
+		&models.PAMSecret{},
+		&models.PAMSession{},
+		&models.PAMSessionCommand{},
+		&models.PAMLease{},
+		&models.PAMCommandPolicy{},
+		&models.PAMRotationSchedule{},
 	); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}

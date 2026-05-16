@@ -2,49 +2,51 @@
 
 Status legend: ⬜ Not started | 🟡 In progress | ✅ Complete
 
+Status: 🟡 In progress | ~40% (30 / 75 Phase 1 tasks)
+
 ## Phase 1 — ShieldNet Access Privileged
 
 ### Milestone 1: Foundation (Data model + Asset inventory)
 
-- ⬜ Create `internal/models/pam_asset.go` — PAMAsset GORM model
-- ⬜ Create `internal/models/pam_account.go` — PAMAccount GORM model
-- ⬜ Create `internal/models/pam_secret.go` — PAMSecret GORM model
-- ⬜ Create `internal/models/pam_session.go` — PAMSession GORM model
-- ⬜ Create `internal/models/pam_session_command.go` — PAMSessionCommand GORM model
-- ⬜ Create `internal/models/pam_lease.go` — PAMLease GORM model
-- ⬜ Create `internal/models/pam_command_policy.go` — PAMCommandPolicy GORM model
-- ⬜ Create `internal/models/pam_rotation_schedule.go` — PAMRotationSchedule GORM model
-- ⬜ Create `internal/migrations/0XX_create_pam_tables.go` — GORM auto-migrate for all PAM tables
-- ⬜ Create `internal/services/pam/asset_service.go` — CRUD for assets + accounts
-- ⬜ Create `internal/handlers/pam_asset_handler.go` — HTTP handlers for `/pam/assets/*`
-- ⬜ Wire PAMAssetService into `router.go` Dependencies
-- ⬜ Tests: asset CRUD happy path + validation + not-found
+- ✅ Create `internal/models/pam_asset.go` — PAMAsset GORM model
+- ✅ Create `internal/models/pam_account.go` — PAMAccount GORM model
+- ✅ Create `internal/models/pam_secret.go` — PAMSecret GORM model
+- ✅ Create `internal/models/pam_session.go` — PAMSession GORM model
+- ✅ Create `internal/models/pam_session_command.go` — PAMSessionCommand GORM model
+- ✅ Create `internal/models/pam_lease.go` — PAMLease GORM model
+- ✅ Create `internal/models/pam_command_policy.go` — PAMCommandPolicy GORM model
+- ✅ Create `internal/models/pam_rotation_schedule.go` — PAMRotationSchedule GORM model
+- ✅ Create `internal/migrations/016_create_pam_tables.go` — GORM auto-migrate for all PAM tables
+- ✅ Create `internal/services/pam/asset_service.go` — CRUD for assets + accounts
+- ✅ Create `internal/handlers/pam_asset_handler.go` — HTTP handlers for `/pam/assets/*`
+- ✅ Wire PAMAssetService into `router.go` Dependencies
+- ✅ Tests: asset CRUD happy path + validation + not-found
 
 ### Milestone 2: Secret Broker
 
-- ⬜ Create `internal/services/pam/secret_broker.go` — vault, encrypt, rotate, check-out, inject, reveal
-- ⬜ Extend AESGCMEncryptor for `pam_secrets` (reuse existing DEK pattern)
-- ⬜ Create `internal/handlers/pam_secret_handler.go` — HTTP handlers for `/pam/secrets/*`
-- ⬜ Step-up MFA gate on reveal endpoint (passkey assertion or TOTP)
-- ⬜ Wire SecretBrokerService into `router.go` Dependencies
-- ⬜ Tests: vault + reveal + rotation + encryption round-trip
+- ✅ Create `internal/services/pam/secret_broker.go` — vault, encrypt, rotate, check-out, inject, reveal
+- ✅ Extend AESGCMEncryptor for `pam_secrets` (reuse existing DEK pattern)
+- ✅ Create `internal/handlers/pam_secret_handler.go` — HTTP handlers for `/pam/secrets/*`
+- ✅ Step-up MFA gate on reveal endpoint (passkey assertion or TOTP)
+- ✅ Wire SecretBrokerService into `router.go` Dependencies
+- ✅ Tests: vault + reveal + rotation + encryption round-trip
 
 ### Milestone 3: JIT Lease Service
 
-- ⬜ Create `internal/services/pam/lease_service.go` — request, approve, auto-expire
-- ⬜ Integrate with existing `AccessRequestService` state machine (new `request_type: "pam_session"`)
-- ⬜ Seed PAM workflow templates in migrations (extends `008_seed_workflow_templates` pattern)
-- ⬜ Create `internal/cron/pam_lease_expiry_enforcer.go` — auto-revoke expired leases
-- ⬜ Create `internal/handlers/pam_lease_handler.go` — HTTP handlers for `/pam/leases/*`
-- ⬜ Wire into notification service for approval prompts
-- ⬜ Tests: lease lifecycle + auto-expiry + approval flow
+- ✅ Create `internal/services/pam/lease_service.go` — request, approve, auto-expire
+- ✅ Integrate with existing `AccessRequestService` state machine (new `request_type: "pam_session"`)
+- ✅ Seed PAM workflow templates in migrations (extends `008_seed_workflow_templates` pattern)
+- ✅ Create `internal/cron/pam_lease_expiry_enforcer.go` — auto-revoke expired leases
+- ✅ Create `internal/handlers/pam_lease_handler.go` — HTTP handlers for `/pam/leases/*`
+- ✅ Wire into notification service for approval prompts
+- ✅ Tests: lease lifecycle + auto-expiry + approval flow
 
 ### Milestone 4: PAM Gateway — SSH
 
-- ⬜ Create `cmd/pam-gateway/main.go` — new Go binary entry point
-- ⬜ Implement SSH listener with token-based auth against `ztna-api`
-- ⬜ SSH CA short-lived certificate issuance (preferred path)
-- ⬜ Injected password/key fallback for legacy targets
+- ✅ Create `cmd/pam-gateway/main.go` — new Go binary entry point
+- ✅ Implement SSH listener with token-based auth against `ztna-api`
+- ✅ SSH CA short-lived certificate issuance (preferred path)
+- ✅ Injected password/key fallback for legacy targets
 - ⬜ I/O stream capture → S3 replay storage
 - ⬜ Command parsing and per-command audit logging to `pam_session_commands`
 - ⬜ Create `docker/Dockerfile.pam-gateway`
@@ -129,3 +131,35 @@ Status legend: ⬜ Not started | 🟡 In progress | ✅ Complete
 - ⬜ Machine secret / workload identity management
 - ⬜ Endpoint privilege elevation (PEDM)
 - ⬜ Behavioural analytics + Defense narrative
+
+## Changelog
+
+### 2026-05-16 — Milestones 1-4 implementation
+
+- PAM data model: 8 GORM models (`PAMAsset`, `PAMAccount`, `PAMSecret`,
+  `PAMSession`, `PAMSessionCommand`, `PAMLease`, `PAMCommandPolicy`,
+  `PAMRotationSchedule`) + migration `016_create_pam_tables.go`.
+- `PAMAssetService` with asset + account CRUD and full unit + HTTP
+  handler test coverage.
+- `SecretBrokerService` with vault, reveal-with-step-up-MFA, rotate,
+  rotation history, check-out, and inject — backed by the existing
+  `CredentialEncryptor` (AES-GCM) interface.
+- `MFAVerifier` interface + `NoOpMFAVerifier` for dev / test wiring.
+- `PAMLeaseService` with JIT lease lifecycle (request → approve →
+  revoke / expire) wired through the `AccessRequestCreator`
+  interface to the existing `AccessRequestService`.
+- `LeaseNotifier` interface for best-effort approval / revocation /
+  expiry notifications.
+- `PAMLeaseExpiryEnforcer` cron job with configurable tick interval
+  (`PAM_LEASE_EXPIRY_CHECK_INTERVAL`, default 1m) and per-lease
+  session-termination hook.
+- PAM workflow template seed (`017_seed_pam_workflow_templates.go`):
+  `pam_session_low_risk`, `pam_session_standard`,
+  `pam_session_critical`.
+- HTTP handlers for `/pam/assets/*`, `/pam/secrets/*`,
+  `/pam/leases/*` plus nil-safe wiring into the existing
+  `handlers.Dependencies` struct.
+- `pam-gateway` binary (`cmd/pam-gateway/`) with SSH listener,
+  short-lived SSH-CA cert issuance, and injected-credential
+  fallback. Library code split into `internal/gateway/` so the SSH
+  paths are unit-testable without booting the binary.

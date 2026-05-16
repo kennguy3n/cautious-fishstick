@@ -31,6 +31,7 @@ Default ports once the stack is up:
 | `ztna-api`                | 8080 |
 | `access-workflow-engine`  | 8082 |
 | `access-ai-agent`         | 8090 |
+| `pam-gateway` (SSH)       | 2222 |
 | Postgres                  | 5432 |
 | Redis                     | 6379 |
 
@@ -54,6 +55,9 @@ Server-side AI agents over the A2A protocol provide risk assessment, auto-certif
 
 ### Hybrid access
 Connectors are auto-classified as `tunnel` (private resource via OpenZiti), `sso_only` (federated through Keycloak), or `api_only` (direct SaaS REST), so SaaS-heavy estates don't pay tunnel overhead they don't need. A six-layer leaver kill switch revokes grants, team memberships, the Keycloak user, upstream sessions, SCIM provisioning, and the OpenZiti identity in a single off-boarding call — every layer best-effort, idempotent, and audited.
+
+### Privileged Access Management (PAM)
+Identity-first privileged-access broker for SMEs. The PAM module ships an asset and account inventory, a secret broker with AES-GCM envelope encryption and step-up MFA on reveal, JIT leases wired through the existing access-request state machine, and a standalone `pam-gateway` binary that proxies SSH sessions using short-lived CA-signed certificates (with credential injection as a fallback). Full design and roadmap live in [`docs/pam/`](docs/pam/).
 
 ---
 
@@ -88,7 +92,8 @@ cautious-fishstick/
 │   ├── ztna-api/                  # HTTP API (Gin)
 │   ├── access-connector-worker/   # Queue worker (sync / provision / revoke / audit)
 │   ├── access-workflow-engine/    # LangGraph-style orchestration host
-│   └── access-ai-agent/           # Python A2A skill server
+│   ├── access-ai-agent/           # Python A2A skill server
+│   └── pam-gateway/               # PAM SSH gateway (cert / credential injection)
 ├── internal/
 │   ├── config/                    # Env-driven configuration
 │   ├── cron/                      # Schedulers (sync, campaigns, expiry)
@@ -97,6 +102,8 @@ cautious-fishstick/
 │   ├── models/                    # Database models
 │   ├── services/access/           # Access service + connector framework
 │   │   └── connectors/            # 200 provider packages
+│   ├── services/pam/              # PAM asset / secret / lease services
+│   ├── gateway/                   # PAM gateway library (SSH listener, CA, client)
 │   ├── services/notification/     # Email / Slack / WebPush notifiers
 │   ├── workers/                   # Worker job handlers
 │   └── pkg/                       # Shared libraries (aiclient, credentials, …)
@@ -163,6 +170,7 @@ These counts are enforced by `internal/services/access/registry_count_test.go` a
 | [`docs/architecture.md`](docs/architecture.md)           | Service topology, data model, and request lifecycles.     |
 | [`docs/getting-started.md`](docs/getting-started.md)     | Five-minute local stack walkthrough.                      |
 | [`docs/connectors.md`](docs/connectors.md)               | Per-provider capability matrix (all 200 connectors).      |
+| [`docs/pam/`](docs/pam/)                                 | PAM module: proposal, architecture, and roadmap.          |
 | [`docs/sdk.md`](docs/sdk.md)                             | Mobile + Desktop SDK contract and integration guide.      |
 | [`docs/guides/`](docs/guides/)                           | Platform integration walkthroughs (iOS, Android, Desktop).|
 | [`docs/swagger.yaml`](docs/swagger.yaml)                 | OpenAPI 3.0 spec for the HTTP API.                        |

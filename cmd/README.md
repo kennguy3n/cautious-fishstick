@@ -15,6 +15,7 @@ processes.
 | `access-connector-worker/`     | `access-connector-worker` | —     | Redis-queue consumer (sync / provision / revoke / audit). No HTTP surface. |
 | `access-workflow-engine/`      | `access-workflow-engine`  | 8082  | LangGraph-style approval orchestrator + Phase-11 background crons.   |
 | `access-ai-agent/`             | `access-ai-agent`         | 8090  | Python A2A skill server (risk assessment, explain, suggest).         |
+| `pam-gateway/`                 | `pam-gateway`             | 2222  | PAM SSH gateway. Validates one-shot connect tokens via `ztna-api` and proxies the channel to the target asset using a short-lived CA-signed cert (or injected credential fallback). |
 
 Run any of them locally with `go run ./cmd/<binary>` (Go services)
 or `python cmd/access-ai-agent/main.py` (Python). The compose stack
