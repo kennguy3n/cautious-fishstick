@@ -365,8 +365,8 @@ const expectedGroupSyncerCount = 14
 // expectedIdentityDeltaSyncerCount is the canonical number of
 // AccessConnector implementations that also satisfy
 // IdentityDeltaSyncer (delta-sync hardening per docs/connectors.md
-// §4). The actual count at HEAD is 3.
-const expectedIdentityDeltaSyncerCount = 3
+// §4). The actual count at HEAD is 6.
+const expectedIdentityDeltaSyncerCount = 6
 
 // expectedAccessAuditorCount is the canonical number of
 // AccessConnector implementations that also satisfy AccessAuditor.
