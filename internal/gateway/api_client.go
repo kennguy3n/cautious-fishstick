@@ -24,15 +24,20 @@ import (
 // POST /pam/sessions/authorize. The session-id is recorded in
 // every audit event the gateway emits so an operator can pivot
 // from a Kafka audit row to the full session timeline.
+//
+// WorkspaceID accompanies SessionID so the command-policy engine
+// (Milestone 9) can scope per-workspace rules without a second
+// round trip — it is required by EvaluateCommand.
 type AuthorizedSession struct {
-	SessionID  string `json:"session_id"`
-	LeaseID    string `json:"lease_id"`
-	AssetID    string `json:"asset_id"`
-	AccountID  string `json:"account_id"`
-	Protocol   string `json:"protocol"`
-	TargetHost string `json:"target_host"`
-	TargetPort int    `json:"target_port"`
-	Username   string `json:"username"`
+	SessionID   string `json:"session_id"`
+	WorkspaceID string `json:"workspace_id"`
+	LeaseID     string `json:"lease_id"`
+	AssetID     string `json:"asset_id"`
+	AccountID   string `json:"account_id"`
+	Protocol    string `json:"protocol"`
+	TargetHost  string `json:"target_host"`
+	TargetPort  int    `json:"target_port"`
+	Username    string `json:"username"`
 }
 
 // SessionAuthorizer is the narrow contract the SSH listener uses

@@ -7,10 +7,12 @@
 #   - access-connector-worker (queue consumer; no port)
 #   - access-workflow-engine (HTTP webhooks on :8082)
 #   - access-ai-agent (A2A skill server on :8090)
+#   - pam-gateway (SSH proxy on :2222, health on :8081)
 #
-# Env vars and ports follow docs/architecture.md §12. Every service has
-# a real healthcheck so `docker compose up --wait` only returns once
-# the dependency graph is healthy.
+# Env vars and ports follow docs/architecture.md §12 and
+# docs/pam/architecture.md §9. Every service has a real healthcheck so
+# `docker compose up --wait` only returns once the dependency graph is
+# healthy.
 
 services:
   postgres:
@@ -112,6 +114,36 @@ services:
       retries: 12
     ports:
       - "8082:8082"
+    networks: [access]
+
+  pam-gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.pam-gateway
+    depends_on:
+      ztna-api:
+        condition: service_healthy
+    environment:
+      # ztna-api is reachable on the compose network at :8080. The
+      # API key is intentionally blank for the dev stack — rotate
+      # before any non-local use per docs/pam/architecture.md §12.
+      PAM_GATEWAY_API_URL: http://ztna-api:8080
+      PAM_GATEWAY_API_KEY: ""
+      PAM_GATEWAY_SSH_PORT: "2222"
+      PAM_GATEWAY_HEALTH_PORT: "8081"
+    healthcheck:
+      # /health is an unauthenticated liveness probe served by the
+      # gateway's HTTP listener on PAM_GATEWAY_HEALTH_PORT.
+      test:
+        - CMD
+        - /pam-gateway
+        - --healthcheck
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    ports:
+      - "2222:2222"
+      - "8081:8081"
     networks: [access]
 
   access-ai-agent:

@@ -2,7 +2,7 @@
 
 Status legend: ⬜ Not started | 🟡 In progress | ✅ Complete
 
-Status: 🟡 In progress | ~40% (30 / 75 Phase 1 tasks)
+Status: 🟡 In progress | ~47% (35 / 75 Phase 1 tasks)
 
 ## Phase 1 — ShieldNet Access Privileged
 
@@ -47,11 +47,11 @@ Status: 🟡 In progress | ~40% (30 / 75 Phase 1 tasks)
 - ✅ Implement SSH listener with token-based auth against `ztna-api`
 - ✅ SSH CA short-lived certificate issuance (preferred path)
 - ✅ Injected password/key fallback for legacy targets
-- ⬜ I/O stream capture → S3 replay storage
-- ⬜ Command parsing and per-command audit logging to `pam_session_commands`
-- ⬜ Create `docker/Dockerfile.pam-gateway`
-- ⬜ Add `pam-gateway` to `docker-compose.yml`
-- ⬜ Tests: SSH session lifecycle + recording + command capture
+- ✅ I/O stream capture → S3 replay storage
+- ✅ Command parsing and per-command audit logging to `pam_session_commands`
+- ✅ Create `docker/Dockerfile.pam-gateway`
+- ✅ Add `pam-gateway` to `docker-compose.yml`
+- ✅ Tests: SSH session lifecycle + recording + command capture
 
 ### Milestone 5: PAM Gateway — Kubernetes
 
@@ -134,7 +134,47 @@ Status: 🟡 In progress | ~40% (30 / 75 Phase 1 tasks)
 
 ## Changelog
 
-### 2026-05-16 — Milestones 1-4 implementation
+### 2026-05-16 — Milestone 4 complete (SSH gateway with recording + audit)
+
+- `IORecorder` (`internal/gateway/recorder.go`) — wraps the SSH proxy
+  io.Copy goroutines and writes a framed binary blob of session
+  I/O to a `ReplayStore`. Default sink is the S3-compatible store
+  (`replay_store_fs.go` is the local-disk dev sink). Frames carry
+  direction (input / output / stderr), monotonic sequence, and a
+  millisecond-resolution timestamp so the future replay UI can
+  scrub frame-accurate.
+- `CommandParser` (`internal/gateway/command_parser.go`) — feeds
+  per-command audit rows into a pluggable `CommandSink`. The
+  parser tracks newline-delimited input, accumulates a per-command
+  SHA-256 over the response stream, and serialises append calls
+  through a single worker goroutine so the ztna-api sees rows in
+  the order the operator typed them.
+- `APICommandSink` — HTTP POST sink that round-trips command rows
+  to the ztna-api `/pam/sessions/:id/commands` endpoint.
+- `SSHListener.handleChannel` rewired to: forward channel requests
+  (shell, pty-req, env, window-change), pre-start the upstream
+  shell, tee both directions through the recorder + parser, close
+  the upstream stdin pipe on operator EOF so the remote shell
+  receives a definite end-of-input, and forward the upstream's
+  exit-status to the operator so `ssh host` returns a real
+  `*ssh.ExitError` instead of "exited without exit status".
+- `docker/Dockerfile.pam-gateway` — multi-stage build mirroring
+  `Dockerfile.ztna-api` (golang:1.25-alpine → distroless nonroot).
+- `pam-gateway` service in `docker-compose.yml` — depends on a
+  healthy `ztna-api`, exposes 2222/8081, gets the replay-dir +
+  health-port envs the binary expects.
+- Comprehensive tests:
+  - `recorder_test.go` — frame contract, sequence monotonicity,
+    sink hand-off, close-flush, max-bytes cap.
+  - `command_parser_test.go` — newline boundary handling, ordering
+    across the worker channel, output-hash determinism, risk-flag
+    propagation, close-flush semantics.
+  - `ssh_listener_test.go` — end-to-end SSH handshake against a
+    fake upstream, real recorder + parser wiring, replay-store
+    frame assertions, command-sink ordering + hash assertions, and
+    a token-rejection negative test.
+
+### 2026-05-16 — Milestones 1-4 (Milestone 4 partial)
 
 - PAM data model: 8 GORM models (`PAMAsset`, `PAMAccount`, `PAMSecret`,
   `PAMSession`, `PAMSessionCommand`, `PAMLease`, `PAMCommandPolicy`,
