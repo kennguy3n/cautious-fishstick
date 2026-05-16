@@ -50,8 +50,13 @@ func main() {
 	}
 	log.Printf("pam-gateway: starting ssh_port=%d health_port=%d api_url=%s", cfg.SSHPort, cfg.HealthPort, redactURL(cfg.APIURL))
 
-	authz := gateway.NewAPIAuthorizer(cfg.APIURL, cfg.APIKey, http.DefaultClient)
-	injector := gateway.NewAPISecretInjector(cfg.APIURL, cfg.APIKey, http.DefaultClient)
+	// Pass nil (not http.DefaultClient) so the constructors install
+	// a client with a 5-second per-request timeout. http.DefaultClient
+	// is non-nil but has Timeout=0, which bypasses the safety-net
+	// fallback and lets an unresponsive ztna-api hang InjectSecret
+	// indefinitely (Devin Review finding on PR #95).
+	authz := gateway.NewAPIAuthorizer(cfg.APIURL, cfg.APIKey, nil)
+	injector := gateway.NewAPISecretInjector(cfg.APIURL, cfg.APIKey, nil)
 
 	var ca *gateway.SSHCertificateAuthority
 	if cfg.SSHCAKeyPath != "" {
