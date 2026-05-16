@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Heap user id or email
 //   - grant.ResourceExternalID -> role slug ("admin", "member", "viewer")
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func heapValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

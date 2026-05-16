@@ -27,23 +27,34 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
 
-# Retired doc-file basenames. Matched via `git grep -nE` (extended
-# regex, no `-w`), so the literal `\.md` suffix in each pattern is what
-# enforces specificity — bare shorthand like `PROPOSAL §5` is not
-# caught by design (the guard targets filename references, not informal
-# shorthand). The allowlist below drops paths that are allowed to
-# mention the retired filenames in prose (the script itself, the
-# CHANGELOG retirement note, and the internal trackers under
-# docs/internal/).
-patterns='PROPOSAL\.md|ARCHITECTURE\.md|LISTCONNECTORS\.md|SDK_CONTRACTS\.md'
+# Retired doc-file basenames AND bare shorthand. Matched via `git
+# grep -nE` (extended regex, no `-w`), so the literal `\.md` suffix
+# enforces filename specificity. The second alternation catches bare
+# shorthand like `PROPOSAL §5.3` or `ARCHITECTURE §10` — those still
+# cite the retired document even without the `.md` extension and need
+# to be rewritten to the lowercase successors.
+#
+# Word boundaries: POSIX ERE has no portable `\b` / `\<` / `\>`
+# (those are GNU extensions and may silently fail to match if `git`
+# is built against a non-GNU regex backend). Instead we enforce the
+# left boundary explicitly with `(^|[^A-Za-z0-9_])` (start-of-line
+# or a non-word character) so we don't false-match on substrings.
+# The right boundary is enforced implicitly by the `(\.md|[[:space:]]+§)`
+# alternation: both branches begin with a non-word character.
+#
+# The allowlist below drops paths that are allowed to mention the
+# retired filenames in prose (the script itself, the CHANGELOG
+# retirement note, and the internal trackers under docs/internal/).
+patterns='(^|[^A-Za-z0-9_])(PROPOSAL|ARCHITECTURE|LISTCONNECTORS|SDK_CONTRACTS)(\.md|[[:space:]]+§)'
 
 # Search everything tracked by git so vendored or generated trees we
 # do not own are ignored automatically. Per-file allowlist suppresses:
 #   - docs/internal/**         (internal trackers; historical refs OK)
 #   - CHANGELOG.md             (intentional retirement note)
+#   - CONTRIBUTING.md          (documents the names this script flags)
 #   - scripts/check_stale_references.sh (this script lists the names
 #                                        it is checking for)
-allowlist_regex='^(docs/internal/|CHANGELOG\.md$|scripts/check_stale_references\.sh$)'
+allowlist_regex='^(docs/internal/|CHANGELOG\.md$|CONTRIBUTING\.md$|scripts/check_stale_references\.sh$)'
 
 # git grep -E supports extended regex; -n prints line numbers. We
 # capture failures into a temp file so we can render a friendly

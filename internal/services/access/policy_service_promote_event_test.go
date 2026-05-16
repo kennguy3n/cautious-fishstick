@@ -13,9 +13,9 @@ import (
 
 // stubOpenZitiEventWriter is the Phase 11 richer-event writer test
 // double. It implements BOTH OpenZitiPolicyWriter (legacy narrow
-// contract) and OpenZitiPolicyEventWriter (the new docs/PROPOSAL
-// §13 contract) so PolicyService.Promote should prefer the richer
-// interface and never call the narrow one.
+// contract) and OpenZitiPolicyEventWriter (the new
+// docs/architecture.md §13 contract) so PolicyService.Promote should
+// prefer the richer interface and never call the narrow one.
 type stubOpenZitiEventWriter struct {
 	NarrowCalls atomic.Int64
 	EventCalls  atomic.Int64

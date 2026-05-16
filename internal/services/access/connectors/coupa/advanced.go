@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Coupa login (or numeric user id)
 //   - grant.ResourceExternalID -> role name (e.g. "Buyer", "Approver")
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func coupaValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

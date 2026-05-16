@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> BeyondTrust user id or username
 //   - grant.ResourceExternalID -> role / group slug
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func beyondtrustValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

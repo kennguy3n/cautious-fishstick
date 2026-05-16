@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Meraki dashboard admin id (email)
 //   - grant.ResourceExternalID -> orgAccess slug (full|read-only|none|...)
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func merakiValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

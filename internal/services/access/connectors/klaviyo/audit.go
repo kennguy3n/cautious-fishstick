@@ -28,7 +28,7 @@ const (
 // The account-activity-logs API requires an admin-tier private key on the
 // Klaviyo plan that exposes it; lower-tier keys return 401 / 403 / 404
 // which the connector soft-skips via access.ErrAuditNotAvailable per
-// PROPOSAL §2.1.
+// docs/architecture.md §2.
 func (c *KlaviyoAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

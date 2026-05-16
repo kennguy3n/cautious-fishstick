@@ -45,7 +45,7 @@ type AccessWorkflow struct {
 }
 
 // TableName overrides the default plural so the table name is exactly
-// access_workflows (matching the migration and ARCHITECTURE §10).
+// access_workflows (matching the migration and docs/architecture.md §11).
 func (AccessWorkflow) TableName() string {
 	return "access_workflows"
 }

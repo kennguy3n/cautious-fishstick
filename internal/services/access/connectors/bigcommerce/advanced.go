@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> BigCommerce user numeric id or email
 //   - grant.ResourceExternalID -> role / permission set name
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func bigcommerceValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

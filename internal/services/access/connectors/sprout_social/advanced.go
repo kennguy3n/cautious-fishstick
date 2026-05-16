@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Sprout Social user id or email
 //   - grant.ResourceExternalID -> role slug ("admin", "publisher", "needs_approval")
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func sproutValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

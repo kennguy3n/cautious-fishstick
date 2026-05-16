@@ -145,7 +145,7 @@ func TestAccessRevoke_Upstream500_JobFailed(t *testing.T) {
 // even when the payload's UserExternalID/ResourceExternalID/Role
 // are blank, the handler still dispatches to the connector — the
 // connector's RevokeAccess contract treats a missing grant as
-// idempotent success per docs/PROPOSAL §5.4. The handler must NOT
+// idempotent success per docs/architecture.md §8. The handler must NOT
 // short-circuit on missing fields; that policy lives at the
 // connector layer.
 func TestAccessRevoke_MissingGrant_HandlerDispatchesAnyway(t *testing.T) {

@@ -27,7 +27,7 @@ type NotificationAdapter struct {
 //
 // Errors are surfaced to the caller (AccessReviewService) which logs
 // them but does not roll back. The adapter therefore preserves the
-// PROPOSAL §5.4 invariant that lifecycle writes proceed even when a
+// docs/architecture.md §8 invariant that lifecycle writes proceed even when a
 // channel is offline.
 func (a *NotificationAdapter) NotifyReviewersPending(ctx context.Context, reviewID string, refs []ReviewerPendingDecisionRef) error {
 	if a == nil || a.Inner == nil {

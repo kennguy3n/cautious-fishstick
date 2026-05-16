@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> HackerOne member email/id
 //   - grant.ResourceExternalID -> role slug (admin|program-manager|standard|...)
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func hackeroneValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

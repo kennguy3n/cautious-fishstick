@@ -31,7 +31,7 @@ import (
 //   - grant.UserExternalID     -> Chargebee customer id (email)
 //   - grant.ResourceExternalID -> role slug (admin|read_only|...)
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func chargebeeValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

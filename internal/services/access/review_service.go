@@ -16,8 +16,8 @@ import (
 )
 
 // AccessReviewService is the service layer for the access_reviews and
-// access_review_decisions tables per docs/architecture.md §6 (Access
-// Review Campaigns) and docs/architecture.md §7.
+// access_review_decisions tables per docs/architecture.md §11 (Data
+// model) and docs/architecture.md §7 (Access review campaigns).
 //
 // The service owns the campaign lifecycle:
 //

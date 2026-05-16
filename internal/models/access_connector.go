@@ -10,7 +10,7 @@ import (
 )
 
 // AccessConnector mirrors the access_connectors table per docs/architecture.md
-// §9.1. One row per (workspace, provider, connector_type) tuple — the
+// §11 (Data model). One row per (workspace, provider, connector_type) tuple — the
 // duplicate-check index lives on that triple.
 //
 // Notable invariants:

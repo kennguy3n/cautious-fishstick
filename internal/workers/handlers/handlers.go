@@ -1,5 +1,5 @@
 // Package handlers contains the access-connector-worker job handlers
-// per docs/architecture.md §3 and §10. Each handler is a pure
+// per docs/architecture.md §2 and §3. Each handler is a pure
 // function over (ctx, db, registry, jobID) — it loads the
 // access_jobs row, resolves the AccessConnector via the registry,
 // dispatches the appropriate connector method, and rewrites the job

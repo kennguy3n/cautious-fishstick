@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Netskope user id or email
 //   - grant.ResourceExternalID -> role slug ("tenant_admin", "support", "viewer")
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func netskopeValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

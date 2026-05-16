@@ -48,7 +48,7 @@ type AnomalyObservation struct {
 // AccessReviewService and is wired up by ScanWorkspace's caller.
 //
 // Per docs/architecture.md §9 the service is one of the AI
-// integration points. Failure modes follow PROPOSAL §5.3 — an
+// integration points. Failure modes follow docs/architecture.md §9 — an
 // unreachable AI agent must NOT block the scan; the service logs
 // and returns an empty anomaly list for that grant.
 type AnomalyDetectionService struct {
@@ -170,7 +170,7 @@ func snapshotGrantUsage(g models.AccessGrant, now time.Time) map[string]interfac
 // AnomalyDetectionService can depend on the narrow AnomalyDetector
 // contract without importing aiclient directly. The adapter
 // composes DetectAnomaliesWithFallback so the scan loop gets the
-// PROPOSAL §5.3 fallback for free.
+// docs/architecture.md §9 fallback for free.
 type AnomalyDetectorAdapter struct {
 	Inner *aiclient.AIClient
 }

@@ -101,7 +101,7 @@ func (c *PipedriveAccessConnector) ProvisionAccess(ctx context.Context, configRa
 }
 
 // RevokeAccess removes the permission-set assignment. 404 is treated
-// as idempotent success per PROPOSAL §2.1.
+// as idempotent success per docs/architecture.md §2.
 func (c *PipedriveAccessConnector) RevokeAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
 	if err := pipedriveValidateGrant(grant); err != nil {
 		return err

@@ -28,7 +28,7 @@ const (
 // Crisp returns events newest-first with a 1-indexed `page` cursor.
 // Tenants without operator-log access (no admin scope or self-serve
 // plan) receive 401 / 403 / 404, which the connector soft-skips via
-// access.ErrAuditNotAvailable per PROPOSAL §2.1.
+// access.ErrAuditNotAvailable per docs/architecture.md §2.
 func (c *CrispAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

@@ -49,7 +49,7 @@ type Team struct {
 }
 
 // TableName overrides the default plural so the table name is exactly
-// teams (matching the migration and PROPOSAL §9).
+// teams (matching the migration and docs/architecture.md §11).
 func (Team) TableName() string {
 	return "teams"
 }
@@ -92,7 +92,7 @@ type TeamMember struct {
 }
 
 // TableName overrides the default plural so the table name is exactly
-// team_members (matching the migration and PROPOSAL §9).
+// team_members (matching the migration and docs/architecture.md §11).
 func (TeamMember) TableName() string {
 	return "team_members"
 }

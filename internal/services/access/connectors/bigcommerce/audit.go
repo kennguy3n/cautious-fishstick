@@ -28,7 +28,7 @@ const (
 // The Store Logs API requires the X-Auth-Token already supplied to
 // the connector; lower-scope tokens surface 401/403/404 which the
 // connector soft-skips via access.ErrAuditNotAvailable per
-// PROPOSAL §2.1.
+// docs/architecture.md §2.
 func (c *BigCommerceAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

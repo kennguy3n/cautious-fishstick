@@ -100,7 +100,7 @@ func (c *ZohoCRMAccessConnector) putRole(ctx context.Context, secrets Secrets, u
 
 // ProvisionAccess assigns the role identified by
 // grant.ResourceExternalID to grant.UserExternalID. Idempotent on the
-// (user, role) pair per PROPOSAL §2.1.
+// (user, role) pair per docs/architecture.md §2.
 func (c *ZohoCRMAccessConnector) ProvisionAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
 	if err := zohoValidateGrant(grant); err != nil {
 		return err

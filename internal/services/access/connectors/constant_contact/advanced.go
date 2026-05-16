@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Constant Contact user UUID or email
 //   - grant.ResourceExternalID -> role name (e.g. "account_manager", "campaign_creator")
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func constantcontactValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

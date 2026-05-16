@@ -27,7 +27,7 @@ import (
 // NerdGraph mutations return the resulting group set rather than
 // failing on duplicate membership, so ProvisionAccess is naturally
 // idempotent. RevokeAccess treats GraphQL errors mentioning "not a
-// member" / "not found" as idempotent success per PROPOSAL §2.1.
+// member" / "not found" as idempotent success per docs/architecture.md §2.
 
 func newRelicValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

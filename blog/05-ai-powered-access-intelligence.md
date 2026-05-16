@@ -323,7 +323,7 @@ The reasons are:
 3. **Update velocity.** The skill set evolves weekly. On-device models would be months stale by the time they reached every device.
 4. **Cost.** On-device inference shifts compute to customers' devices; server-side inference lets us pool the compute and price predictably.
 
-PROPOSAL §12.1 tracks the future "on-device fallback" optionality as a deferred decision. The SDK surface is designed so that adding a local fallback later is a non-breaking change — but adding it is not on any current roadmap.
+docs/architecture.md §10 tracks the future "on-device fallback" optionality as a deferred decision. The SDK surface is designed so that adding a local fallback later is a non-breaking change — but adding it is not on any current roadmap.
 
 ## A real failure mode, walked through
 

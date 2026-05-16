@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Typeform member email or ID
 //   - grant.ResourceExternalID -> workspace ID + ":" + role (workspaceID:role)
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func typeformValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

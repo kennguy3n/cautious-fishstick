@@ -27,7 +27,7 @@ import (
 //   - grant.UserExternalID     -> employee email
 //   - grant.ResourceExternalID -> policy role (admin|auditor|user|...)
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1:
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2:
 // Expensify returns 200 with an embedded responseCode for "already a
 // member"/"not a member"; we map those bodies plus the standard
 // 4xx/409 status codes via access.IsIdempotent* helpers.

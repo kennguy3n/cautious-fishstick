@@ -20,7 +20,7 @@ import (
 //   - ListEntitlements -> GET    /api/v1/accounts/{account_slug}/members
 //
 // Bearer auth via connector.newRequest. Idempotent on
-// (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func netlifyValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

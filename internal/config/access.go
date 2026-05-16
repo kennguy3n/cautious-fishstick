@@ -188,7 +188,7 @@ type Access struct {
 	HealthWebhookURL string
 
 	// KafkaBrokers is the comma-separated list of Kafka bootstrap
-	// brokers used by the access-audit producer (PROPOSAL §10.1).
+	// brokers used by the access-audit producer (docs/architecture.md).
 	// Empty means "Kafka is intentionally unconfigured" — the
 	// AuditProducer factory falls back to NoOpAuditProducer so dev
 	// binaries can run without a broker.
@@ -196,7 +196,7 @@ type Access struct {
 
 	// AuditLogTopic is the Kafka topic the access-audit producer
 	// writes ShieldnetLogEvent v1 envelopes to. Defaults to
-	// "access_audit_logs" per PROPOSAL §10.1.
+	// "access_audit_logs" per docs/architecture.md.
 	AuditLogTopic string
 }
 

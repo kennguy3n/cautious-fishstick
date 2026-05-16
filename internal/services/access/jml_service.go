@@ -24,7 +24,7 @@ import (
 //     to every connector that owns a piece of the entitlement.
 //   - Mover: an existing user's Team membership changes; the diff
 //     drives a single atomic batch of revokes (for lost Teams) and
-//     provisions (for gained Teams). PROPOSAL §5.4 calls this out as
+//     provisions (for gained Teams). docs/architecture.md §8 calls this out as
 //     "no partial-access window".
 //   - Leaver: a user is deactivated; every active grant is revoked
 //     synchronously and the user is removed from every Team.
@@ -219,7 +219,7 @@ type SCIMEvent struct {
 // service layer cannot accidentally route a mover into the joiner
 // lane (or vice-versa).
 //
-// The rules (per PROPOSAL §5.4):
+// The rules (per docs/architecture.md §8):
 //
 //   - POST with Active!=false   → joiner
 //   - DELETE                    → leaver
@@ -303,7 +303,7 @@ func (r *JMLResult) AllOK() bool {
 }
 
 // HandleJoiner runs the joiner lane: assign Teams, create approved
-// access_requests, fan-out provisioning. Per PROPOSAL §5.4 the
+// access_requests, fan-out provisioning. Per docs/architecture.md §8 the
 // joiner flow auto-approves every default grant — the policy engine
 // has implicitly approved them by including them in the default set.
 //
@@ -376,7 +376,7 @@ type MoverInput struct {
 
 // HandleMover runs the mover lane: diff Team membership, atomically
 // adjust team_members, then fan-out a single batch of revokes (for
-// lost Teams) + provisions (for gained Teams). Per PROPOSAL §5.4
+// lost Teams) + provisions (for gained Teams). Per docs/architecture.md §8
 // "no partial-access window" — Team-membership writes happen in a
 // single transaction so a connector-side failure cannot leave a
 // half-moved user.
@@ -413,7 +413,7 @@ func (s *JMLService) HandleMover(ctx context.Context, in MoverInput) (*JMLResult
 	}
 
 	// Provision the gained-team grants BEFORE revoking the
-	// lost-team grants. PROPOSAL §5.4 requires "no partial-access
+	// lost-team grants. docs/architecture.md §8 requires "no partial-access
 	// window": when a Mover trades Team A access for Team B
 	// access, the user must always retain access during the swap.
 	// Doing the revokes first opens a window where the user has
@@ -444,7 +444,7 @@ func (s *JMLService) HandleMover(ctx context.Context, in MoverInput) (*JMLResult
 
 // HandleLeaver runs the leaver lane: revoke every active grant for
 // the user, drop them from every Team, and (Phase 6+) disable the
-// OpenZiti identity. Per PROPOSAL §5.4 leaver is synchronous — the
+// OpenZiti identity. Per docs/architecture.md §8 leaver is synchronous — the
 // caller MUST observe every revocation completing before the
 // upstream SCIM provider records the deactivation as final.
 //
@@ -947,7 +947,7 @@ func (s *JMLService) assignTeams(ctx context.Context, userID string, teamIDs []s
 // applyTeamDiff atomically inserts membership rows for the added
 // teams and soft-deletes membership rows for the removed teams.
 // The two halves run in a single transaction so the user's logical
-// team membership is updated atomically (per PROPOSAL §5.4 "no
+// team membership is updated atomically (per docs/architecture.md §8 "no
 // partial-access window").
 func (s *JMLService) applyTeamDiff(ctx context.Context, userID string, addedTeamIDs, removedTeamIDs []string) error {
 	if len(addedTeamIDs) == 0 && len(removedTeamIDs) == 0 {

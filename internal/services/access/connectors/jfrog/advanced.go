@@ -28,7 +28,7 @@ import (
 // JFrog group membership is idempotent on the server side: PUT-ing an
 // existing membership returns 200/204, and DELETE on a non-member
 // returns 404 / 400 "does not exist", both of which are recognised by
-// the idempotency helpers as success per PROPOSAL §2.1.
+// the idempotency helpers as success per docs/architecture.md §2.
 
 func jfrogValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {
@@ -68,7 +68,7 @@ func (c *JFrogAccessConnector) doRaw(req *http.Request) (int, []byte, error) {
 }
 
 // ProvisionAccess adds the user to the group. Idempotent on the
-// (user, group) pair per PROPOSAL §2.1.
+// (user, group) pair per docs/architecture.md §2.
 func (c *JFrogAccessConnector) ProvisionAccess(ctx context.Context, configRaw, secretsRaw map[string]interface{}, grant access.AccessGrant) error {
 	if err := jfrogValidateGrant(grant); err != nil {
 		return err

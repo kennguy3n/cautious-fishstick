@@ -22,7 +22,7 @@ import (
 //
 // Qualys VMDR speaks form-encoded request bodies and XML responses for the
 // /fo/user/ endpoint. Idempotent on (UserExternalID, ResourceExternalID) per
-// PROPOSAL §2.1.
+// docs/architecture.md §2.
 
 func qualysValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

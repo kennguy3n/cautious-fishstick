@@ -28,7 +28,7 @@ const (
 // Audit access requires a tenant-admin scope on the supplied bearer
 // token; lower scopes (or tenants on plans that do not surface the
 // audit-log feed) return 401 / 403 / 404, which the connector
-// soft-skips via access.ErrAuditNotAvailable per PROPOSAL §2.1.
+// soft-skips via access.ErrAuditNotAvailable per docs/architecture.md §2.
 func (c *AppFolioAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

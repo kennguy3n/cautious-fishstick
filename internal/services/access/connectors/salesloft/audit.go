@@ -27,7 +27,7 @@ const (
 //
 // Activity access requires team-admin scope on the OAuth token; lower
 // scopes surface 401 / 403 / 404 which the connector soft-skips via
-// access.ErrAuditNotAvailable per PROPOSAL §2.1.
+// access.ErrAuditNotAvailable per docs/architecture.md §2.
 func (c *SalesloftAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

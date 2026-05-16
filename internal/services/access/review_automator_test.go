@@ -67,7 +67,7 @@ func TestReviewAutomatorAdapter_AutomateReview_EscalateHighRisk(t *testing.T) {
 // TestReviewAutomatorAdapter_AutomateReview_UnknownDecisionFallback
 // asserts that an unexpected decision string (e.g. AI hallucinates
 // "delete") trips the fallback. AccessReviewService must NOT trust
-// arbitrary decisions per docs/PROPOSAL §5.3.
+// arbitrary decisions per docs/architecture.md §9.
 func TestReviewAutomatorAdapter_AutomateReview_UnknownDecisionFallback(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(aiclient.SkillResponse{
@@ -89,7 +89,7 @@ func TestReviewAutomatorAdapter_AutomateReview_UnknownDecisionFallback(t *testin
 // TestReviewAutomatorAdapter_AutomateReview_AIUnavailable drives the
 // adapter against an httptest server that returns HTTP 500 and
 // verifies the (decision, reason, ok) tuple degrades to the
-// PROPOSAL §5.3 "leave pending" fallback rather than surfacing
+// docs/architecture.md §9 "leave pending" fallback rather than surfacing
 // the error to the caller.
 func TestReviewAutomatorAdapter_AutomateReview_AIUnavailable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

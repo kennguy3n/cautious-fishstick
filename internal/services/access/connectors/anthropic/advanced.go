@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Anthropic organization member id (email)
 //   - grant.ResourceExternalID -> role slug (admin|developer|billing|...)
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func anthropicValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

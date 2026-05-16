@@ -4,7 +4,7 @@
 // publishes batched AuditLogEntry records into. The production
 // implementation wraps a Kafka writer and emits ShieldnetLogEvent v1
 // envelopes onto the topic configured by ACCESS_AUDIT_LOG_TOPIC (see
-// internal/config/access.go and PROPOSAL §10.1).
+// internal/config/access.go and docs/architecture.md).
 //
 // A NoOpAuditProducer is provided for dev/test environments that run
 // without a Kafka broker — it counts published entries so callers can
@@ -34,7 +34,7 @@ type AuditProducer interface {
 }
 
 // ShieldnetLogEvent is the v1 envelope the audit producer wraps
-// around each AuditLogEntry. Fields mirror PROPOSAL §10.1 — keep
+// around each AuditLogEntry. Fields mirror docs/architecture.md — keep
 // them in lockstep with the schema or downstream consumers will
 // break.
 type ShieldnetLogEvent struct {

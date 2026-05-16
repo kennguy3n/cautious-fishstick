@@ -81,7 +81,7 @@ func IsIdempotentRevokeStatus(statusCode int, responseBody []byte) bool {
 }
 
 // IsTransientStatus returns true for HTTP status codes the worker
-// should retry with exponential backoff (per PROPOSAL §2.1: 5xx and a
+// should retry with exponential backoff (per docs/architecture.md §2: 5xx and a
 // small set of 429-style throttling responses).
 func IsTransientStatus(statusCode int) bool {
 	if statusCode >= 500 && statusCode <= 599 {

@@ -86,7 +86,7 @@ var (
 	// ErrSCIMRemoteConflict signals the SCIM endpoint returned 409
 	// Conflict — the resource already exists upstream. JML callers
 	// MAY treat this as a successful no-op idempotent push (per
-	// PROPOSAL §5.4 connectors must be idempotent on
+	// docs/architecture.md §8 connectors must be idempotent on
 	// (UserExternalID, ResourceExternalID)).
 	ErrSCIMRemoteConflict = errors.New("scim: remote returned 409 Conflict")
 

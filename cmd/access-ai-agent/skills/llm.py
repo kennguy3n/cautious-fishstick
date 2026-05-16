@@ -12,7 +12,7 @@ reasons:
    env var (default: ``stub``). When the provider is unset,
    misconfigured, or the network call fails, ``call_llm()`` raises
    :class:`LLMUnavailable`, which the skill catches to fall back to
-   its Phase 4 deterministic logic per PROPOSAL §5.3 best-effort
+   its Phase 4 deterministic logic per docs/architecture.md §9 best-effort
    pattern.
 
 The client speaks the OpenAI-compatible ``/v1/chat/completions``
@@ -47,7 +47,7 @@ class LLMUnavailable(RuntimeError):
     Skill code MUST treat this as a signal to fall back to its
     Phase 4 deterministic implementation. The Go side will see a
     successful skill response containing the deterministic output
-    rather than a 5xx — that is the behaviour PROPOSAL §5.3
+    rather than a 5xx — that is the behaviour docs/architecture.md §9
     "graceful degradation" promises.
     """
 

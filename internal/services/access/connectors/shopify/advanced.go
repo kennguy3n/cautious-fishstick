@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Shopify staff numeric id or email
 //   - grant.ResourceExternalID -> role slug (e.g. "admin", "limited", "collaborator")
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func shopifyValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

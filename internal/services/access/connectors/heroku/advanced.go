@@ -26,7 +26,7 @@ import (
 //
 // The team is read from connector Config.TeamName so the same connector
 // instance always operates against the same team. Idempotent on
-// (UserExternalID, ResourceExternalID) per PROPOSAL §2.1: Heroku
+// (UserExternalID, ResourceExternalID) per docs/architecture.md §2: Heroku
 // returns 422 "already" for double-PUTs and 404 for double-DELETEs.
 
 func herokuValidateGrant(g access.AccessGrant) error {

@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Twilio user SID (or friendly identity)
 //   - grant.ResourceExternalID -> role slug ("admin", "developer", "support", ...)
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func twilioValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

@@ -24,7 +24,7 @@ import (
 //   - grant.UserExternalID     -> Anvyl user ID or email
 //   - grant.ResourceExternalID -> role slug (admin|member|...)
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func anvylValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

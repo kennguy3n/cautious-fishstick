@@ -39,7 +39,7 @@ import (
 
 // defaultRateLimitRPS is the per-workspace fill rate when
 // ZTNA_API_RATE_LIMIT_RPS is unset or unparseable. 100 req/s is the
-// PROPOSAL §10.2 default and matches the SN360 ingestion-service
+// docs/architecture.md default and matches the SN360 ingestion-service
 // budget for an admin UI burst.
 const defaultRateLimitRPS = 100
 

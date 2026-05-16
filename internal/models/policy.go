@@ -34,7 +34,7 @@ import (
 //     IsDraft=false. Promote flips it inside a transaction.
 //   - DraftImpact is the persisted ImpactReport from the most recent
 //     Simulate call. Promote refuses to flip IsDraft if DraftImpact is
-//     nil (per PROPOSAL §6.5: simulate-before-promote).
+//     nil (per docs/architecture.md §6: simulate-before-promote).
 //   - PromotedAt / PromotedBy are nil until Promote runs. After
 //     promotion the row is the live policy of record.
 //   - IsActive lets admins disable a live policy without deleting it.
@@ -64,7 +64,7 @@ type Policy struct {
 }
 
 // TableName overrides the default plural so the table name is exactly
-// policies (matching the migration and PROPOSAL §9.2).
+// policies (matching the migration and docs/architecture.md §11).
 func (Policy) TableName() string {
 	return "policies"
 }

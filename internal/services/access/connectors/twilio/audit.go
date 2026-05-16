@@ -28,7 +28,7 @@ const (
 // Audit access requires an account-admin Auth Token; sub-accounts /
 // API keys without the audit scope surface 401 / 403 / 404 which the
 // connector soft-skips via access.ErrAuditNotAvailable per
-// PROPOSAL §2.1. The Twilio Monitor Events endpoint lives on
+// docs/architecture.md §2. The Twilio Monitor Events endpoint lives on
 // monitor.twilio.com — the connector overrides the host portion to
 // the Monitor subdomain while preserving HTTP Basic auth from the
 // AccountSID / AuthToken secrets.

@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Wazuh user numeric ID
 //   - grant.ResourceExternalID -> Wazuh role numeric ID
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func wazuhValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

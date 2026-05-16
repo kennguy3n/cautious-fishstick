@@ -154,7 +154,7 @@ func isSkipDate(raw []byte, now time.Time) (bool, error) {
 // configured skip date — operators want the holiday respected, but
 // the next cycle should still fire on cadence.
 //
-// FrequencyDays<=0 falls back to the PROPOSAL §9 default of 90 days.
+// FrequencyDays<=0 falls back to the docs/architecture.md default of 90 days.
 func (s *CampaignScheduler) bumpSkippedSchedule(ctx context.Context, sched *models.AccessCampaignSchedule, now time.Time) error {
 	freq := sched.FrequencyDays
 	if freq <= 0 {
@@ -191,7 +191,7 @@ func (s *CampaignScheduler) runOne(ctx context.Context, sched *models.AccessCamp
 
 	freq := sched.FrequencyDays
 	if freq <= 0 {
-		freq = 90 // PROPOSAL §9 default
+		freq = 90 // docs/architecture.md default
 	}
 	next := now.Add(time.Duration(freq) * 24 * time.Hour)
 

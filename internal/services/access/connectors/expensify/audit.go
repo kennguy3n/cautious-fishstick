@@ -27,7 +27,7 @@ import (
 //
 // Audit access is gated on Control-tier policies; lower tiers and
 // non-admins return errors with auth/permission markers, which the
-// connector soft-skips via access.ErrAuditNotAvailable per PROPOSAL §2.1.
+// connector soft-skips via access.ErrAuditNotAvailable per docs/architecture.md §2.
 func (c *ExpensifyAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

@@ -400,7 +400,7 @@ func (c *M365AccessConnector) SyncGroupMembers(
 // The connector posts to /v1.0/users/{userExternalID}/appRoleAssignments with
 // `principalId`, `resourceId` (the service principal), and `appRoleId` derived
 // from the grant. A 409 Conflict response is treated as idempotent success per
-// PROPOSAL §2.1: the assignment already exists. Non-2xx 4xx surfaces a
+// docs/architecture.md §2: the assignment already exists. Non-2xx 4xx surfaces a
 // permanent error; 5xx is returned verbatim so the worker retries with backoff.
 func (c *M365AccessConnector) ProvisionAccess(
 	ctx context.Context,

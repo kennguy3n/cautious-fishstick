@@ -36,7 +36,7 @@ import (
 //                         skip if role not present, else DELETE /v1beta/{name}
 //   - ListEntitlements -> same resolve, then expose directRoles from the match
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1:
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2:
 // repeated Provision returns nil on ALREADY_EXISTS, repeated Revoke returns
 // nil when the userLink is absent OR when its directRoles already exclude
 // the requested grant.ResourceExternalID.
@@ -254,7 +254,7 @@ func (c *GA4AccessConnector) RevokeAccess(ctx context.Context, configRaw, secret
 	name, roles, err := c.findUserLinkByExternalID(ctx, secrets, cfg, grant.UserExternalID)
 	if err != nil {
 		if errors.Is(err, errGA4UserLinkNotFound) {
-			// Already absent — idempotent revoke per PROPOSAL §2.1.
+			// Already absent — idempotent revoke per docs/architecture.md §2.
 			return nil
 		}
 		return err

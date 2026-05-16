@@ -29,7 +29,7 @@ import (
 //   - grant.UserExternalID     -> Square team-member id
 //   - grant.ResourceExternalID -> role/permission slug (manager|cashier|...)
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func squareValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

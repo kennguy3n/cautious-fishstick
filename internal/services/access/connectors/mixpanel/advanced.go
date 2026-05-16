@@ -31,7 +31,7 @@ import (
 //
 // Auth uses Basic auth with the service-account user + secret, reusing
 // the existing newRequest helper. Idempotent on
-// (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func mixpanelValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

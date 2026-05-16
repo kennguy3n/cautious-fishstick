@@ -28,7 +28,7 @@ import (
 // SonarCloud accepts the same add_member call repeatedly without
 // changing state (returns 200 / 204 each time), so ProvisionAccess is
 // naturally idempotent. RevokeAccess treats 404 + "not a member" /
-// "user not found" body matches as idempotent success per PROPOSAL §2.1.
+// "user not found" body matches as idempotent success per docs/architecture.md §2.
 
 func sonarCloudValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

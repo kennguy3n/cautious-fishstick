@@ -29,7 +29,7 @@ const (
 // Requires the `https://uri.paypal.com/services/reporting/search/read`
 // scope obtained via the existing OAuth2 client-credentials flow. Lower
 // scopes return 401 / 403 / 404 which the connector soft-skips via
-// access.ErrAuditNotAvailable per PROPOSAL §2.1.
+// access.ErrAuditNotAvailable per docs/architecture.md §2.
 func (c *PayPalAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

@@ -27,7 +27,7 @@ const (
 //
 // Insightly's Event API is available on Plus / Professional / Enterprise
 // plans only. Lower-tier accounts surface 401 / 403 / 404 which the
-// connector soft-skips via access.ErrAuditNotAvailable per PROPOSAL §2.1.
+// connector soft-skips via access.ErrAuditNotAvailable per docs/architecture.md §2.
 func (c *InsightlyAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

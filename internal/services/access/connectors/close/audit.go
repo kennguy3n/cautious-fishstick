@@ -27,7 +27,7 @@ const (
 //
 // Activity access requires an admin or super-user API key; lower-tier
 // keys surface 401 / 403 / 404 which the connector soft-skips via
-// access.ErrAuditNotAvailable per PROPOSAL §2.1.
+// access.ErrAuditNotAvailable per docs/architecture.md §2.
 func (c *CloseAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

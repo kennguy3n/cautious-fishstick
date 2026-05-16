@@ -27,7 +27,7 @@ const (
 //
 // Activity API access requires team-admin scope; lower scopes return
 // 401 / 403 / 404 which the connector soft-skips via
-// access.ErrAuditNotAvailable per PROPOSAL §2.1.
+// access.ErrAuditNotAvailable per docs/architecture.md §2.
 func (c *ApolloAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

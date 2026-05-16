@@ -19,7 +19,7 @@ import (
 //   - RevokeAccess     -> DELETE /v1/teams/{teamId}/members/{userId}
 //   - ListEntitlements -> GET    /v1/teams/{teamId}/members
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 // The Vercel team ID is read from Config.TeamID; ResourceExternalID
 // carries the team role (MEMBER|DEVELOPER|VIEWER|BILLING|OWNER).
 

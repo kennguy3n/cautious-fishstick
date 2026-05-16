@@ -25,7 +25,7 @@ import (
 //   - grant.UserExternalID     -> Concur user ID or LoginID
 //   - grant.ResourceExternalID -> role / permission slug
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func sapConcurValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

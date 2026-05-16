@@ -33,7 +33,7 @@ const (
 // The logging module is part of the Magento Commerce (Adobe Commerce)
 // distribution; Magento Open Source instances return 401/403/404,
 // which the connector soft-skips via access.ErrAuditNotAvailable per
-// PROPOSAL §2.1.
+// docs/architecture.md §2.
 func (c *MagentoAccessConnector) FetchAccessAuditLogs(
 	ctx context.Context,
 	configRaw, secretsRaw map[string]interface{},

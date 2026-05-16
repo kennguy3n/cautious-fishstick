@@ -23,7 +23,7 @@ import (
 //   - grant.UserExternalID     -> Ghost user numeric id or email
 //   - grant.ResourceExternalID -> role slug ("Administrator", "Editor", "Author", "Contributor")
 //
-// Idempotent on (UserExternalID, ResourceExternalID) per PROPOSAL §2.1.
+// Idempotent on (UserExternalID, ResourceExternalID) per docs/architecture.md §2.
 
 func ghostValidateGrant(g access.AccessGrant) error {
 	if strings.TrimSpace(g.UserExternalID) == "" {

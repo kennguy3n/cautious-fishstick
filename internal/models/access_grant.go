@@ -56,7 +56,7 @@ type AccessGrant struct {
 }
 
 // TableName overrides the default plural so the table name is exactly
-// access_grants (matching the migration and ARCHITECTURE §10).
+// access_grants (matching the migration and docs/architecture.md §11).
 func (AccessGrant) TableName() string {
 	return "access_grants"
 }

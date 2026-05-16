@@ -27,7 +27,7 @@ import (
 //
 // Splunk returns 409 / 400 ("already exists") for duplicate users —
 // access.IsIdempotentProvisionStatus normalises that to idempotent
-// success. 404 on DELETE / GET is treated as success per PROPOSAL §2.1.
+// success. 404 on DELETE / GET is treated as success per docs/architecture.md §2.
 
 const splunkDefaultRole = "user"
 

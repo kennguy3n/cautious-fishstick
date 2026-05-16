@@ -56,7 +56,7 @@ type AccessRequest struct {
 }
 
 // TableName overrides the default plural so the table name is exactly
-// access_requests (matching the migration and ARCHITECTURE §10).
+// access_requests (matching the migration and docs/architecture.md §11).
 func (AccessRequest) TableName() string {
 	return "access_requests"
 }

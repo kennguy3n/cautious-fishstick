@@ -31,7 +31,7 @@ type Secrets struct {
 
 // DecodeConfig pulls a typed Config out of the operator-supplied
 // map[string]interface{} payload. Unknown fields are tolerated so that
-// PROPOSAL changes do not break older rows.
+// future schema additions do not break older rows.
 func DecodeConfig(raw map[string]interface{}) (Config, error) {
 	var cfg Config
 	if raw == nil {

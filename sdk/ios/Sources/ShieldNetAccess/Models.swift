@@ -2,7 +2,7 @@
 // Models.swift — Swift data model types for the ShieldNet 360 Access SDK.
 //
 // These types mirror the JSON payloads exchanged with `ztna-api` per
-// `docs/architecture.md` §11.4 (Shared REST API). They are intentionally simple
+// `docs/architecture.md` §10 (Client SDK architecture). They are intentionally simple
 // value types (`Codable` structs) so they can be encoded / decoded by
 // `URLSession`-based concrete clients in the host application.
 //
