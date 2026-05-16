@@ -43,11 +43,19 @@ func TestSecretBroker_VaultSecret_PasswordHappyPath(t *testing.T) {
 	if secret.ID == "" {
 		t.Fatalf("empty secret id")
 	}
-	if secret.Ciphertext == "" {
-		t.Fatalf("ciphertext not persisted")
-	}
 	if secret.WorkspaceID != "ws-1" {
 		t.Fatalf("workspace = %q", secret.WorkspaceID)
+	}
+	// The returned struct intentionally has Ciphertext blanked
+	// (defence-in-depth, mirrors GetSecretMetadata / RotateSecret).
+	// Verify the row was nonetheless persisted with the sealed
+	// payload by reading it back from the DB directly.
+	var persisted models.PAMSecret
+	if err := svc.db.Where("id = ?", secret.ID).First(&persisted).Error; err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if persisted.Ciphertext == "" {
+		t.Fatalf("ciphertext not persisted")
 	}
 }
 
@@ -296,7 +304,7 @@ func TestSecretBroker_InjectSecret_AccountWithSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("account: %v", err)
 	}
-	got, err := svc.InjectSecret(context.Background(), "session-1", acct.ID)
+	got, err := svc.InjectSecret(context.Background(), "ws-1", "session-1", acct.ID)
 	if err != nil {
 		t.Fatalf("InjectSecret: %v", err)
 	}
@@ -321,9 +329,74 @@ func TestSecretBroker_InjectSecret_AccountWithoutSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("account: %v", err)
 	}
-	_, err = svc.InjectSecret(context.Background(), "session-1", acct.ID)
+	_, err = svc.InjectSecret(context.Background(), "ws-1", "session-1", acct.ID)
 	if !errors.Is(err, ErrValidation) {
 		t.Fatalf("err = %v; want ErrValidation", err)
+	}
+}
+
+// TestSecretBroker_InjectSecret_RejectsCrossWorkspace verifies that
+// the workspace_id filter on the pam_accounts JOIN through pam_assets
+// blocks a caller in workspace A from resolving an account ULID
+// owned by workspace B (Devin Review finding on PR #95).
+func TestSecretBroker_InjectSecret_RejectsCrossWorkspace(t *testing.T) {
+	svc, _ := newSecretBroker(t)
+	assetSvc := NewPAMAssetService(svc.db)
+	asset, err := assetSvc.CreateAsset(context.Background(), "ws-1", CreateAssetInput{
+		Name: "a", Protocol: "ssh", Host: "h", Port: 22,
+	})
+	if err != nil {
+		t.Fatalf("asset: %v", err)
+	}
+	secret, err := svc.VaultSecret(context.Background(), "ws-1", VaultSecretInput{
+		SecretType: "password",
+		Plaintext:  []byte("hunter2"),
+	})
+	if err != nil {
+		t.Fatalf("vault: %v", err)
+	}
+	sid := secret.ID
+	acct, err := assetSvc.CreateAccount(context.Background(), "ws-1", asset.ID, CreateAccountInput{
+		Username:    "root",
+		AccountType: "shared",
+		SecretID:    &sid,
+		IsDefault:   true,
+	})
+	if err != nil {
+		t.Fatalf("account: %v", err)
+	}
+	_, err = svc.InjectSecret(context.Background(), "ws-other", "session-1", acct.ID)
+	if !errors.Is(err, ErrAccountNotFound) {
+		t.Fatalf("cross-workspace inject = %v; want ErrAccountNotFound", err)
+	}
+}
+
+// TestSecretBroker_InjectSecret_RejectsMissingWorkspace verifies the
+// validation guard. workspace_id is mandatory so a caller cannot
+// bypass the scoping by passing the empty string.
+func TestSecretBroker_InjectSecret_RejectsMissingWorkspace(t *testing.T) {
+	svc, _ := newSecretBroker(t)
+	_, err := svc.InjectSecret(context.Background(), "", "session-1", "acct-x")
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("missing workspace = %v; want ErrValidation", err)
+	}
+}
+
+// TestSecretBroker_VaultSecret_BlanksCiphertextInResponse asserts
+// the defence-in-depth that VaultSecret returns the struct with
+// Ciphertext blanked, mirroring GetSecretMetadata + RotateSecret
+// (Devin Review finding on PR #95).
+func TestSecretBroker_VaultSecret_BlanksCiphertextInResponse(t *testing.T) {
+	svc, _ := newSecretBroker(t)
+	got, err := svc.VaultSecret(context.Background(), "ws-1", VaultSecretInput{
+		SecretType: "password",
+		Plaintext:  []byte("hunter2"),
+	})
+	if err != nil {
+		t.Fatalf("VaultSecret: %v", err)
+	}
+	if got.Ciphertext != "" {
+		t.Fatalf("Ciphertext = %q; want blanked", got.Ciphertext)
 	}
 }
 

@@ -139,6 +139,15 @@ func (s *SecretBrokerService) VaultSecret(ctx context.Context, workspaceID strin
 	if err := s.db.WithContext(ctx).Create(secret).Error; err != nil {
 		return nil, fmt.Errorf("pam: insert pam_secret: %w", err)
 	}
+	// Belt-and-braces: blank the in-memory ciphertext before
+	// handing the struct back to the caller, mirroring the same
+	// defence-in-depth applied by GetSecretMetadata and
+	// RotateSecret. The `json:"-"` tag on PAMSecret.Ciphertext
+	// already protects the HTTP serialisation path, but any Go
+	// caller that uses the service layer programmatically (admin
+	// CLI, future internal code, tests that assert on the struct)
+	// would otherwise receive the sealed payload in memory.
+	secret.Ciphertext = ""
 	return secret, nil
 }
 
@@ -335,17 +344,36 @@ func (s *SecretBrokerService) CheckOutSecret(ctx context.Context, workspaceID, s
 // InjectSecret resolves a secret for the pam-gateway "inject the
 // credential into the SSH session" use case. sessionID + accountID
 // are accepted for audit correlation; the current implementation
-// looks up the account's default secret and routes through
-// RevealSecret.
-func (s *SecretBrokerService) InjectSecret(ctx context.Context, sessionID, accountID string) ([]byte, error) {
+// joins through pam_assets to scope the account lookup by
+// workspace and then routes through RevealSecret.
+//
+// workspaceID is required and the join through pam_assets enforces
+// that the supplied account belongs to it. Without this scoping a
+// caller in workspace A who guessed an account ULID from
+// workspace B would resolve it here even though the reveal itself
+// is workspace-bound — closing this divergence keeps the strict
+// workspace-scoping pattern consistent across the PAM service
+// layer (Devin Review finding on PR #95).
+func (s *SecretBrokerService) InjectSecret(ctx context.Context, workspaceID, sessionID, accountID string) ([]byte, error) {
+	if workspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace_id is required", ErrValidation)
+	}
 	if sessionID == "" {
 		return nil, fmt.Errorf("%w: session_id is required", ErrValidation)
 	}
 	if accountID == "" {
 		return nil, fmt.Errorf("%w: account_id is required", ErrValidation)
 	}
+	// Join pam_accounts -> pam_assets and filter by workspace so
+	// a cross-tenant account ULID cannot be resolved here. The
+	// model has no workspace_id column of its own (see
+	// internal/models/pam_account.go), so the join is required to
+	// enforce scoping at the service layer.
 	var account models.PAMAccount
-	if err := s.db.WithContext(ctx).Where("id = ?", accountID).First(&account).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Joins("JOIN pam_assets ON pam_assets.id = pam_accounts.asset_id").
+		Where("pam_accounts.id = ? AND pam_assets.workspace_id = ?", accountID, workspaceID).
+		First(&account).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%w: %s", ErrAccountNotFound, accountID)
 		}
@@ -354,20 +382,10 @@ func (s *SecretBrokerService) InjectSecret(ctx context.Context, sessionID, accou
 	if account.SecretID == nil || *account.SecretID == "" {
 		return nil, fmt.Errorf("%w: account %s has no vaulted secret", ErrValidation, accountID)
 	}
-	// Look up the asset so we can scope the reveal to the asset's
-	// workspace — preserves the "ciphertext bound to workspace_id"
-	// invariant established in VaultSecret.
-	var asset models.PAMAsset
-	if err := s.db.WithContext(ctx).Where("id = ?", account.AssetID).First(&asset).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("%w: %s", ErrAssetNotFound, account.AssetID)
-		}
-		return nil, fmt.Errorf("pam: get pam_asset for inject: %w", err)
-	}
 	// Session ID acts as the implicit step-up — the gateway has
 	// already validated the session's lease before reaching this
 	// point.
-	return s.RevealSecret(ctx, asset.WorkspaceID, *account.SecretID, []byte(sessionID))
+	return s.RevealSecret(ctx, workspaceID, *account.SecretID, []byte(sessionID))
 }
 
 // secretAAD builds the Additional Authenticated Data binding used
