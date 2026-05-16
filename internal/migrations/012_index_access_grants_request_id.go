@@ -20,7 +20,7 @@ import (
 // AutoMigrate on AccessGrant is idempotent — on a fresh DB it creates
 // the table with the index; on an existing DB at migration 011 it
 // issues CREATE INDEX (no row rewrite). No FOREIGN KEY constraints
-// (per docs/PHASES.md cross-cutting criteria).
+// (per docs/architecture.md cross-cutting criteria).
 func Migration012IndexAccessGrantsRequestID(db *gorm.DB) error {
 	if db == nil {
 		return fmt.Errorf("migrations: db is nil")

@@ -9,12 +9,12 @@ import (
 )
 
 // Migration010CreatePushSubscriptions creates the push_subscriptions
-// table per docs/PHASES.md Phase 5 Task 10. The composite
+// table per docs/architecture.md Phase 5 Task 10. The composite
 // (workspace_id, user_id) index defined on the model is materialised
 // here so the WebPushNotifier resolver can fetch a user's
 // subscriptions in O(1) lookups.
 //
-// No FOREIGN KEY constraints (per docs/PHASES.md cross-cutting
+// No FOREIGN KEY constraints (per docs/architecture.md cross-cutting
 // criteria); referential integrity to workspaces / users is enforced
 // at the service layer.
 func Migration010CreatePushSubscriptions(db *gorm.DB) error {

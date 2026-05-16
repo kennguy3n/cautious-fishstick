@@ -1,7 +1,7 @@
 // Package migrations contains GORM-based schema migrations for the ShieldNet
 // 360 Access Platform. Migrations are functions that take a *gorm.DB and
 // either AutoMigrate models or apply targeted ALTERs through the GORM
-// migrator. No raw SQL — see docs/PHASES.md cross-cutting criteria.
+// migrator. No raw SQL — see docs/architecture.md cross-cutting criteria.
 package migrations
 
 import (
@@ -18,7 +18,7 @@ import (
 // materialised here.
 //
 // No FOREIGN KEY constraints (per SN360 database-index-rules and
-// docs/PHASES.md cross-cutting criteria). Referential integrity to the
+// docs/architecture.md cross-cutting criteria). Referential integrity to the
 // workspaces table is enforced at the service layer.
 func Migration001CreateAccessConnectors(db *gorm.DB) error {
 	if db == nil {

@@ -22,7 +22,7 @@ import (
 //	                further alerts until detection re-runs.
 //
 // There are no FOREIGN KEY constraints (per SN360 database-index rule
-// and docs/PHASES.md cross-cutting criteria). Referential integrity to
+// and docs/architecture.md cross-cutting criteria). Referential integrity to
 // access_connectors and workspaces is enforced at the service layer.
 type AccessOrphanAccount struct {
 	ID             string         `gorm:"primaryKey;type:varchar(26)" json:"id"`

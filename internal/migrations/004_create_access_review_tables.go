@@ -14,7 +14,7 @@ import (
 //
 // All indexes are declared on the model struct tags and materialised
 // here. No FOREIGN KEY constraints (per SN360 database-index rule and
-// docs/PHASES.md cross-cutting criteria); referential integrity to the
+// docs/architecture.md cross-cutting criteria); referential integrity to the
 // workspaces, access_grants, and users tables is enforced at the
 // service layer.
 //

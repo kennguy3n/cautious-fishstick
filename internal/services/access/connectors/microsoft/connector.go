@@ -1,7 +1,7 @@
 // Package microsoft implements the access.AccessConnector contract for
 // Microsoft Entra ID (formerly Azure AD).
 //
-// Phase 0 scope (per docs/PHASES.md):
+// Phase 0 scope (per docs/architecture.md):
 //
 //   - Validate (pure-local), Connect, VerifyPermissions
 //   - CountIdentities, SyncIdentities (user enumeration)

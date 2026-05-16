@@ -37,7 +37,7 @@ import (
 //     without deleting it (and losing the historical NextRunAt).
 //   - DeletedAt is the GORM soft-delete column.
 //
-// No FOREIGN KEY constraints (per docs/PHASES.md cross-cutting
+// No FOREIGN KEY constraints (per docs/architecture.md cross-cutting
 // criteria); referential integrity to workspaces is enforced at the
 // service layer.
 type AccessCampaignSchedule struct {

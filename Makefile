@@ -60,7 +60,7 @@ model-check: ## fail if an on-device model file landed under sdk/ (CI gate)
 	bash scripts/check_no_model_files.sh
 
 .PHONY: stale-ref-check
-stale-ref-check: ## fail if a retired doc filename is referenced outside docs/internal/ (CI gate)
+stale-ref-check: ## fail if a retired doc filename is referenced anywhere in the tree (CI gate)
 	bash scripts/check_stale_references.sh
 
 # --- Docker ----------------------------------------------------------

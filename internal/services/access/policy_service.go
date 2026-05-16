@@ -68,7 +68,7 @@ type PolicyService struct {
 // transaction. CreateDraft and Simulate NEVER call this hook.
 //
 // WriteServicePolicy is best-effort: a failure logs a warning but
-// does NOT roll back the promotion, mirroring PHASES Phase 5
+// does NOT roll back the promotion, mirroring Phase 5
 // notification semantics (the source of truth is the DB; downstream
 // effects converge eventually).
 type OpenZitiPolicyWriter interface {

@@ -105,7 +105,7 @@ type Dependencies struct {
 
 // Router builds the *gin.Engine that serves the access platform's
 // HTTP API. It registers /health and the access-platform routes
-// described in docs/PHASES.md (Phase 2 + Phase 3 + Phase 4 + Phase 5).
+// described in docs/architecture.md (Phase 2 + Phase 3 + Phase 4 + Phase 5).
 //
 // Router never panics on a partial Dependencies — handlers that need
 // a missing service short-circuit to 503. This is intentional: a dev

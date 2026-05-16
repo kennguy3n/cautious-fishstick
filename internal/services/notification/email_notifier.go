@@ -73,7 +73,7 @@ type EmailNotifierConfig struct {
 // Failure semantics: errors from SMTP / the recipient resolver are
 // logged and surfaced as the Send return value, but the
 // NotificationService dispatch loop swallows them — notifications
-// are best-effort per PHASES Phase 5 and MUST NOT roll back the
+// are best-effort per Phase 5 and MUST NOT roll back the
 // caller's lifecycle write.
 type EmailNotifier struct {
 	cfg      EmailNotifierConfig

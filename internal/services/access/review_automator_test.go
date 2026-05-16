@@ -14,7 +14,7 @@ import (
 // adapter end-to-end against a real httptest AI agent that responds
 // with the canonical "certify" verdict. The adapter must surface
 // (decision, reason, ok=true) so AccessReviewService transitions
-// the pending decision to certified per docs/PHASES.md Phase 5
+// the pending decision to certified per docs/architecture.md Phase 5
 // auto-cert behaviour.
 func TestReviewAutomatorAdapter_AutomateReview_AutoCertify(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

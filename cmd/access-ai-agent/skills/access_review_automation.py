@@ -2,7 +2,7 @@
 
 Suggests a per-decision verdict (certify / revoke / escalate) for a
 pending access_review_decisions row. The Go side calls this from the
-auto-certification path (PHASES Phase 5) and treats the AI's
+auto-certification path (Phase 5) and treats the AI's
 ``decision`` as advisory — the row is still flipped to
 ``auto_certified=true`` only if the verdict is ``certify`` and a
 human reviewer has not already weighed in.

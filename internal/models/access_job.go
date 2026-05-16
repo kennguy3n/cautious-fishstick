@@ -35,7 +35,7 @@ import (
 //   - LastError captures the last error message surfaced by the
 //     worker — empty on success.
 //
-// No FOREIGN KEY constraints (per docs/PHASES.md cross-cutting
+// No FOREIGN KEY constraints (per docs/architecture.md cross-cutting
 // criteria); referential integrity to access_connectors is
 // enforced at the service layer.
 type AccessJob struct {

@@ -52,7 +52,7 @@ type AccessReviewService struct {
 // notification.NotificationService satisfies it via a small adapter
 // (see notification_adapter.go).
 //
-// Per docs/PHASES.md Phase 5 exit criteria notifications are
+// Per docs/architecture.md Phase 5 exit criteria notifications are
 // best-effort — implementations MUST NOT roll back the underlying
 // campaign transaction. The interface returns an error only for
 // observability; the service ignores it.
@@ -119,7 +119,7 @@ func (s *AccessReviewService) SetNotifier(notifier ReviewNotifier, resolver Revi
 // existing NewAccessReviewService signature stays stable while Phase
 // 5 adds the optional auto-certification path.
 //
-// Per docs/PHASES.md Phase 5 the wire-in is best-effort: an
+// Per docs/architecture.md Phase 5 the wire-in is best-effort: an
 // unreachable AI agent leaves every decision pending and the
 // campaign proceeds normally.
 func (s *AccessReviewService) SetReviewAutomator(automator ReviewAutomator) {
@@ -209,10 +209,10 @@ func (s *AccessReviewService) StartCampaign(ctx context.Context, in StartCampaig
 	// notifications. Auto-certified rows are flipped to
 	// decision=certify so the notification fan-out only pings
 	// reviewers about the rows that still need human attention.
-	// Per PHASES Phase 5 the wire-in is best-effort: an
+	// Per Phase 5 the wire-in is best-effort: an
 	// unreachable AI leaves every row pending.
 	decisions = s.applyAutoCertification(ctx, review, decisions)
-	// Fan-out notifications AFTER commit. Per PHASES Phase 5
+	// Fan-out notifications AFTER commit. Per Phase 5
 	// notifications are best-effort: any error here is logged
 	// inside dispatchPendingNotifications and never returned.
 	s.dispatchPendingNotifications(ctx, review, filterPendingDecisions(decisions))
@@ -222,7 +222,7 @@ func (s *AccessReviewService) StartCampaign(ctx context.Context, in StartCampaig
 // dispatchPendingNotifications resolves reviewers for the supplied
 // decisions and fans out a "pending decisions" notification to each.
 // All failures are logged and swallowed — notifications must NOT
-// roll back the underlying campaign per PHASES Phase 5.
+// roll back the underlying campaign per Phase 5.
 func (s *AccessReviewService) dispatchPendingNotifications(
 	ctx context.Context,
 	review *models.AccessReview,
@@ -261,7 +261,7 @@ func (s *AccessReviewService) dispatchPendingNotifications(
 // not abort the loop. The campaign proceeds with whatever subset of
 // rows were successfully auto-certified.
 //
-// Per docs/PHASES.md Phase 5: AI is decision-support, not critical
+// Per docs/architecture.md Phase 5: AI is decision-support, not critical
 // path. AI failures (transport / decode / unrecognised verdict) are
 // logged inside AutomateReviewWithFallback and surface here as
 // ok=false; we leave the row pending in that case.
@@ -667,7 +667,7 @@ func (s *AccessReviewService) AutoRevoke(ctx context.Context, reviewID string) e
 // UI. The struct is the canonical shape both the service and the
 // HTTP handler return.
 //
-// Per docs/PHASES.md Phase 5 exit criteria the platform tracks an
+// Per docs/architecture.md Phase 5 exit criteria the platform tracks an
 // auto-certification rate so operators can see the AI agent's
 // signal-to-noise on a real campaign. AutoCertificationRate is in
 // [0.0, 1.0] and is auto_certified / total_decisions. Total of zero

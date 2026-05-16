@@ -21,7 +21,7 @@ import (
 // creates the table with the column; on an existing DB at migration
 // 012 it issues a single ALTER TABLE ... ADD COLUMN with the
 // declared default of 'api_only'. No FOREIGN KEY constraints (per
-// docs/PHASES.md cross-cutting criteria) and no raw SQL.
+// docs/architecture.md cross-cutting criteria) and no raw SQL.
 func Migration013AddAccessModeColumn(db *gorm.DB) error {
 	if db == nil {
 		return fmt.Errorf("migrations: db is nil")

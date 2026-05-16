@@ -14,7 +14,7 @@ import (
 // model struct tags and materialised here — workers query for "my
 // pending jobs" via a (status, job_type) prefix scan.
 //
-// No FOREIGN KEY constraints (per docs/PHASES.md cross-cutting
+// No FOREIGN KEY constraints (per docs/architecture.md cross-cutting
 // criteria); referential integrity to access_connectors is
 // enforced at the service layer.
 func Migration007CreateAccessJobs(db *gorm.DB) error {

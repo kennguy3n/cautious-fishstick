@@ -30,7 +30,7 @@ import (
 //   - The (connector_id, kind) tuple is UNIQUE; a single connector
 //     never has two open cursors of the same kind.
 //
-// No FOREIGN KEY constraints (per docs/PHASES.md cross-cutting
+// No FOREIGN KEY constraints (per docs/architecture.md cross-cutting
 // criteria); referential integrity to access_connectors is enforced
 // at the service layer.
 type AccessSyncState struct {
@@ -42,7 +42,7 @@ type AccessSyncState struct {
 	// last successful sync. Used by the tombstone safety threshold —
 	// a fresh sync whose total identity count is below 70% of the
 	// previously observed count aborts to protect against a runaway
-	// directory-side deletion (per docs/PHASES.md Phase 6 sync rules).
+	// directory-side deletion (per docs/architecture.md Phase 6 sync rules).
 	IdentityCount int       `gorm:"not null;default:0" json:"identity_count"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
