@@ -5,7 +5,9 @@ package salesforce
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -45,9 +47,14 @@ func (c *SalesforceAccessConnector) SyncIdentitiesDelta(
 	case strings.HasPrefix(deltaLink, "/services/data/"):
 		requestURL = base + deltaLink
 	case deltaLink != "":
-		// Treat as RFC3339 timestamp cursor.
+		// Treat as RFC3339 timestamp cursor. Validate before interpolating
+		// into SOQL to prevent injection via a tampered cursor.
+		parsed, perr := time.Parse(time.RFC3339, strings.TrimSpace(deltaLink))
+		if perr != nil {
+			return "", fmt.Errorf("salesforce: invalid deltaLink cursor %q: %w", deltaLink, perr)
+		}
 		cursorIsTimestamp = true
-		q := url.Values{"q": {soqlDeltaQuery(deltaLink)}}
+		q := url.Values{"q": {soqlDeltaQuery(parsed.UTC().Format(time.RFC3339))}}
 		requestURL = base + "/services/data/" + defaultAPIVersion + "/query?" + q.Encode()
 	default:
 		// First run — pull everything since one hour ago to bound the
@@ -133,13 +140,19 @@ func soqlDeltaQuery(since string) string {
 
 // soqlDateTimeLiteral renders an RFC3339 timestamp as a SOQL datetime
 // literal (no quotes, ISO 8601). Salesforce requires this format for
-// SystemModstamp comparisons.
+// SystemModstamp comparisons. Input that does not parse as RFC3339 is
+// rejected (returns the current UTC timestamp) so a tampered cursor
+// cannot inject arbitrary SOQL.
 func soqlDateTimeLiteral(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return time.Now().UTC().Format(time.RFC3339)
 	}
-	return s
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Now().UTC().Format(time.RFC3339)
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 func isExpiredDeltaCursor(body []byte) bool {
@@ -205,13 +218,12 @@ func readBodyClose(resp *http.Response) ([]byte, error) {
 			}
 		}
 		if err != nil {
-			if err.Error() == "EOF" {
+			if errors.Is(err, io.EOF) {
 				return buf, nil
 			}
-			break
+			return buf, err
 		}
 	}
-	return buf, nil
 }
 
 var _ access.IdentityDeltaSyncer = (*SalesforceAccessConnector)(nil)

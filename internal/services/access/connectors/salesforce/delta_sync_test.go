@@ -87,6 +87,25 @@ func TestSalesforce_SyncIdentitiesDelta_ExpiredCursor(t *testing.T) {
 	}
 }
 
+func TestSalesforce_SyncIdentitiesDelta_RejectsMalformedCursor(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Fatal("upstream must not be called when cursor is malformed")
+	}))
+	t.Cleanup(server.Close)
+
+	c := New()
+	c.urlOverride = server.URL
+	_, err := c.SyncIdentitiesDelta(context.Background(), sfDeltaConfig(server.URL), sfDeltaSecrets(),
+		"2024-01-01T00:00:00Z OR IsActive = true",
+		func(_ []*access.Identity, _ []string, _ string) error { return nil })
+	if err == nil {
+		t.Fatal("err = nil; want non-nil on malformed cursor")
+	}
+	if !strings.Contains(err.Error(), "invalid deltaLink cursor") {
+		t.Fatalf("err=%v; want invalid-cursor message", err)
+	}
+}
+
 func TestSalesforce_SyncIdentitiesDelta_HTTPFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
