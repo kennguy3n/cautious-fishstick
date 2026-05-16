@@ -130,6 +130,17 @@ func (h *PAMSecretHandler) RevealSecret(c *gin.Context) {
 		abortWithError(c, http.StatusBadRequest, "workspace_id is required", "validation_failed", "workspace_id is required")
 		return
 	}
+	// user_id is required so the MFA verifier can scope the
+	// challenge to a specific identity. Without this guard a client
+	// could submit {"user_id":""} and the verifier would either
+	// reject it with an opaque error, accept it against no user
+	// (NoOpMFAVerifier in dev/test), or panic in a production
+	// verifier with stricter expectations (Devin Review finding on
+	// PR #95).
+	if body.UserID == "" {
+		abortWithError(c, http.StatusBadRequest, "user_id is required", "validation_failed", "user_id is required")
+		return
+	}
 	if body.MFAAssertion == "" {
 		abortWithError(c, http.StatusBadRequest, pam.ErrMFARequired.Error(), "mfa_required", pam.ErrMFARequired.Error())
 		return

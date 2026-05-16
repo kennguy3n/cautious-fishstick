@@ -27,15 +27,22 @@ var (
 
 // AccessRequestCreator is the narrow contract PAMLeaseService uses
 // to create the underlying access_requests row that backs a JIT
-// lease. The production implementation is *access.AccessRequestService;
-// tests substitute a stub that captures the input without touching
-// the DB.
+// lease, plus a compensating CancelRequest used to roll the request
+// back when the matching pam_leases INSERT fails. The production
+// implementation is *access.AccessRequestService; tests substitute
+// a stub that captures the input without touching the DB.
 //
 // The interface is intentionally tiny so the PAM module never
 // imports the full AccessRequestService surface — we only need
-// CreateRequest.
+// CreateRequest and CancelRequest.
 type AccessRequestCreator interface {
 	CreateRequest(ctx context.Context, input access.CreateAccessRequestInput) (*models.AccessRequest, error)
+	// CancelRequest moves an access_requests row to the
+	// "cancelled" terminal state. PAMLeaseService calls this as
+	// best-effort compensating cleanup when the lease INSERT
+	// following CreateRequest fails, so the access_requests table
+	// does not accumulate orphan rows.
+	CancelRequest(ctx context.Context, requestID, actorUserID, reason string) error
 }
 
 // LeaseNotifier is the optional hook PAMLeaseService calls to
@@ -152,6 +159,20 @@ func (s *PAMLeaseService) RequestLease(ctx context.Context, workspaceID string, 
 		UpdatedAt:   now,
 	}
 	if err := s.db.WithContext(ctx).Create(lease).Error; err != nil {
+		// Compensating cleanup: the access_requests row was already
+		// inserted on a different gorm.DB so it cannot be rolled back
+		// in a single transaction. Best-effort: cancel the orphaned
+		// access_requests row so the table does not accumulate
+		// requested-state rows with no lease pointing at them
+		// (Devin Review finding on PR #95). CancelRequest itself
+		// may fail (e.g. the request is already in a terminal state
+		// from a concurrent path) — log and prefer to surface the
+		// original INSERT error which is the actionable one.
+		if s.requestCreator != nil && requestID != "" {
+			if cancelErr := s.requestCreator.CancelRequest(ctx, requestID, in.UserID, "pam: lease insert failed"); cancelErr != nil {
+				log.Printf("pam: failed to compensate orphan access_request %s: %v", requestID, cancelErr)
+			}
+		}
 		return nil, fmt.Errorf("pam: insert pam_lease: %w", err)
 	}
 	return lease, nil

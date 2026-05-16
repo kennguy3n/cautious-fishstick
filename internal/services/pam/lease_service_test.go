@@ -15,10 +15,14 @@ import (
 // PAMLeaseService.RequestLease wiring can be asserted end-to-end
 // without standing up the full AccessRequestService.
 type fakeAccessRequestCreator struct {
-	calls    int
-	lastIn   access.CreateAccessRequestInput
-	returnID string
-	err      error
+	calls            int
+	lastIn           access.CreateAccessRequestInput
+	returnID         string
+	err              error
+	cancelCalls      int
+	lastCancelID     string
+	lastCancelReason string
+	cancelErr        error
 }
 
 func (f *fakeAccessRequestCreator) CreateRequest(_ context.Context, in access.CreateAccessRequestInput) (*models.AccessRequest, error) {
@@ -32,6 +36,13 @@ func (f *fakeAccessRequestCreator) CreateRequest(_ context.Context, in access.Cr
 		id = "req-stub"
 	}
 	return &models.AccessRequest{ID: id, WorkspaceID: in.WorkspaceID}, nil
+}
+
+func (f *fakeAccessRequestCreator) CancelRequest(_ context.Context, requestID, _, reason string) error {
+	f.cancelCalls++
+	f.lastCancelID = requestID
+	f.lastCancelReason = reason
+	return f.cancelErr
 }
 
 // fakeLeaseNotifier captures the per-event notify calls so the
@@ -124,6 +135,48 @@ func TestPAMLeaseService_RequestLease_NilCreator(t *testing.T) {
 	}
 	if lease.RequestID != "" {
 		t.Fatalf("request_id = %q; want empty when creator is nil", lease.RequestID)
+	}
+}
+
+// TestPAMLeaseService_RequestLease_CancelsRequestOnInsertFailure covers
+// the compensating-cancel path: when the lease INSERT fails after the
+// access_requests row was created on a separate gorm.DB, the service
+// must cancel the orphan access_requests row so it does not linger
+// in the requested state without a lease pointing at it (Devin Review
+// finding on PR #95).
+func TestPAMLeaseService_RequestLease_CancelsRequestOnInsertFailure(t *testing.T) {
+	creator := &fakeAccessRequestCreator{returnID: "req-orphan"}
+	db := newPAMDB(t)
+	svc := NewPAMLeaseService(db, creator, nil)
+	// Force the pam_leases INSERT to fail by overriding the ID
+	// generator to return a duplicate of a pre-existing row.
+	preLease := &models.PAMLease{
+		ID:          "duplicate-id",
+		WorkspaceID: "ws-1",
+		UserID:      "seed",
+		AssetID:     "a",
+		AccountID:   "c",
+		CreatedAt:   time.Now().UTC(),
+		UpdatedAt:   time.Now().UTC(),
+	}
+	if err := db.Create(preLease).Error; err != nil {
+		t.Fatalf("seed pre-lease: %v", err)
+	}
+	svc.newID = func() string { return "duplicate-id" }
+	_, err := svc.RequestLease(context.Background(), "ws-1", RequestLeaseInput{
+		UserID:          "user-1",
+		AssetID:         "a",
+		AccountID:       "c",
+		DurationMinutes: 30,
+	})
+	if err == nil {
+		t.Fatalf("RequestLease: expected INSERT failure but got nil")
+	}
+	if creator.cancelCalls != 1 {
+		t.Fatalf("cancel calls = %d; want 1 compensating CancelRequest", creator.cancelCalls)
+	}
+	if creator.lastCancelID != "req-orphan" {
+		t.Fatalf("cancel id = %q; want req-orphan", creator.lastCancelID)
 	}
 }
 

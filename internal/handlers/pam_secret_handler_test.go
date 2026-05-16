@@ -144,6 +144,35 @@ func TestPAMSecretHandler_RevealSecret_MissingAssertionReturns400(t *testing.T) 
 	}
 }
 
+// TestPAMSecretHandler_RevealSecret_MissingUserIDReturns400 covers
+// the user_id validation: without it the MFA verifier would receive
+// an empty subject which the NoOpMFAVerifier silently accepts and a
+// production verifier's behaviour is undefined (Devin Review finding
+// on PR #95). The handler must reject the request before the MFA
+// gate runs.
+func TestPAMSecretHandler_RevealSecret_MissingUserIDReturns400(t *testing.T) {
+	verifier := &stubMFAVerifier{}
+	r, broker := newPAMSecretEngine(t, verifier)
+	secret, err := broker.VaultSecret(context.Background(), "ws-1", pam.VaultSecretInput{
+		SecretType: "password",
+		Plaintext:  []byte("hunter2"),
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	body := map[string]interface{}{
+		"workspace_id":  "ws-1",
+		"mfa_assertion": "passkey-assertion",
+	}
+	w := doJSON(t, r, http.MethodPost, "/pam/secrets/"+secret.ID+"/reveal", body)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d; want 400", w.Code)
+	}
+	if verifier.calls != 0 {
+		t.Fatalf("MFA verifier should not be called when user_id is missing, got %d calls", verifier.calls)
+	}
+}
+
 func TestPAMSecretHandler_RevealSecret_FailedMFAReturns403(t *testing.T) {
 	verifier := &stubMFAVerifier{err: errors.New("token expired")}
 	r, broker := newPAMSecretEngine(t, verifier)
