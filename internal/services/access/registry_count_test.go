@@ -350,13 +350,10 @@ func TestRegistry_NoOrphanDirectories(t *testing.T) {
 
 // expectedSCIMProvisionerCount is the canonical number of
 // AccessConnector implementations that also satisfy
-// SCIMProvisioner. docs/connectors.md §3 currently says
-// "all 10 Tier-1 connectors" but the actual implementation count
-// at HEAD is 8 — the docs discrepancy is tracked in the Group C
-// (docs-consistency) batch of the same plan. This test asserts the
-// true count so a future SCIM implementation can't silently slip
-// past the regression guard.
-const expectedSCIMProvisionerCount = 8
+// SCIMProvisioner. Bumping this requires landing the matching
+// scim.go + scim_test.go inside the connector package AND
+// refreshing docs/connectors.md §3 + README.md in the same PR.
+const expectedSCIMProvisionerCount = 14
 
 // expectedGroupSyncerCount is the canonical number of
 // AccessConnector implementations that also satisfy GroupSyncer.
