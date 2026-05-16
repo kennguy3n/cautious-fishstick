@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
@@ -144,9 +145,9 @@ func (c *DatadogAccessConnector) SyncGroupMembers(
 	}
 	base := c.baseURL(cfg)
 	for {
-		url := fmt.Sprintf("%s/api/v2/teams/%s/memberships?page%%5Bnumber%%5D=%d&page%%5Bsize%%5D=%d",
-			base, groupExternalID, page, pageSize)
-		req, err := c.newRequest(ctx, secrets, http.MethodGet, url)
+		endpoint := fmt.Sprintf("%s/api/v2/teams/%s/memberships?page%%5Bnumber%%5D=%d&page%%5Bsize%%5D=%d",
+			base, url.PathEscape(groupExternalID), page, pageSize)
+		req, err := c.newRequest(ctx, secrets, http.MethodGet, endpoint)
 		if err != nil {
 			return err
 		}

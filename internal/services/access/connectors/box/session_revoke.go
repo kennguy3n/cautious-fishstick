@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 )
 
 // RevokeUserSessions implements access.SessionRevoker. Box exposes
@@ -24,7 +25,7 @@ func (c *BoxAccessConnector) RevokeUserSessions(ctx context.Context, configRaw, 
 	if err != nil {
 		return err
 	}
-	endpoint := c.baseURL() + "/2.0/users/" + userExternalID + "/sessions"
+	endpoint := c.baseURL() + "/2.0/users/" + url.PathEscape(userExternalID) + "/sessions"
 	req, err := c.newRequest(ctx, secrets, http.MethodDelete, endpoint)
 	if err != nil {
 		return err
