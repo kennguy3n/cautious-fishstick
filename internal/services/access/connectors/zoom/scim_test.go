@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 
@@ -79,11 +78,29 @@ func TestZoomConnector_PushSCIMUser_HappyPath(t *testing.T) {
 	if len(captured) != 1 {
 		t.Fatalf("captured = %d; want 1", len(captured))
 	}
-	if !strings.HasSuffix(captured[0].Path, "/scim2/Users") {
-		t.Errorf("path = %q; want suffix /scim2/Users", captured[0].Path)
+	if captured[0].Path != "/scim2/Users" {
+		t.Errorf("path = %q; want exactly /scim2/Users", captured[0].Path)
 	}
 	if captured[0].Auth != "Bearer zoom-access-token" {
 		t.Errorf("auth = %q; want Bearer zoom-access-token", captured[0].Auth)
+	}
+}
+
+// TestZoomConnector_scimBaseURL_StripsRESTPrefix locks in that the SCIM
+// base URL is the host root (`/scim2`) and not the REST API's `/v2`
+// version prefix — a regression caught by Devin Review.
+func TestZoomConnector_scimBaseURL_StripsRESTPrefix(t *testing.T) {
+	conn := New()
+	conn.urlOverride = "https://api.zoom.us/v2"
+	conn.tokenOverride = func(_ context.Context, _ Config, _ Secrets) (string, error) {
+		return "tok", nil
+	}
+	cfg, _, err := conn.scimConfig(context.Background(), zoomSCIMConfig(), zoomSCIMSecrets())
+	if err != nil {
+		t.Fatalf("scimConfig: %v", err)
+	}
+	if got, _ := cfg["scim_base_url"].(string); got != "https://api.zoom.us/scim2" {
+		t.Errorf("scim_base_url = %q; want https://api.zoom.us/scim2", got)
 	}
 }
 
@@ -99,8 +116,8 @@ func TestZoomConnector_PushSCIMGroup_HappyPath(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("PushSCIMGroup: %v", err)
 	}
-	if !strings.HasSuffix(captured[0].Path, "/scim2/Groups") {
-		t.Errorf("path = %q; want suffix /scim2/Groups", captured[0].Path)
+	if captured[0].Path != "/scim2/Groups" {
+		t.Errorf("path = %q; want exactly /scim2/Groups", captured[0].Path)
 	}
 }
 

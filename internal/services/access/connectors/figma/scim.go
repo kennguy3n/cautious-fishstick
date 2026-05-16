@@ -42,7 +42,11 @@ func (c *FigmaAccessConnector) scimConfig(configRaw, secretsRaw map[string]inter
 	if err != nil {
 		return nil, nil, err
 	}
-	scimBaseURL := c.baseURL() + "/scim/v2"
+	// Figma's SCIM 2.0 endpoint lives at the host root (`/scim/v2/Users`),
+	// not under the REST API's `/v1` prefix. Strip a trailing `/v1`
+	// from the REST base before appending `/scim/v2`. urlOverride paths
+	// in tests have no `/v1` suffix, so TrimSuffix is a no-op there.
+	scimBaseURL := strings.TrimSuffix(c.baseURL(), "/v1") + "/scim/v2"
 	scimCfg := map[string]interface{}{
 		"scim_base_url": scimBaseURL,
 	}

@@ -47,7 +47,11 @@ func (c *ZoomAccessConnector) scimConfig(ctx context.Context, configRaw, secrets
 	if err != nil {
 		return nil, nil, err
 	}
-	scimBaseURL := c.baseURL() + "/scim2"
+	// Zoom's SCIM 2.0 endpoint lives at the host root (`/scim2/Users`),
+	// not under the REST API's `/v2` prefix. Strip the trailing `/v2`
+	// from the REST base before appending `/scim2`. urlOverride paths
+	// in tests have no `/v2` suffix, so TrimSuffix is a no-op there.
+	scimBaseURL := strings.TrimSuffix(c.baseURL(), "/v2") + "/scim2"
 	scimCfg := map[string]interface{}{
 		"scim_base_url": scimBaseURL,
 	}

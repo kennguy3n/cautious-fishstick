@@ -64,11 +64,26 @@ func TestFigmaConnector_PushSCIMUser_HappyPath(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("PushSCIMUser: %v", err)
 	}
-	if !strings.HasSuffix(captured[0].Path, "/scim/v2/Users") {
-		t.Errorf("path = %q; want suffix /scim/v2/Users", captured[0].Path)
+	if captured[0].Path != "/scim/v2/Users" {
+		t.Errorf("path = %q; want exactly /scim/v2/Users", captured[0].Path)
 	}
 	if captured[0].Auth != "Bearer figma-token" {
 		t.Errorf("auth = %q; want Bearer figma-token", captured[0].Auth)
+	}
+}
+
+// TestFigmaConnector_scimBaseURL_StripsRESTPrefix locks in that the
+// SCIM base URL is the host root (`/scim/v2`) and not the REST API's
+// `/v1` version prefix — a regression caught by Devin Review.
+func TestFigmaConnector_scimBaseURL_StripsRESTPrefix(t *testing.T) {
+	conn := New()
+	conn.urlOverride = "https://api.figma.com/v1"
+	cfg, _, err := conn.scimConfig(figmaSCIMConfig(), figmaSCIMSecrets())
+	if err != nil {
+		t.Fatalf("scimConfig: %v", err)
+	}
+	if got, _ := cfg["scim_base_url"].(string); got != "https://api.figma.com/scim/v2" {
+		t.Errorf("scim_base_url = %q; want https://api.figma.com/scim/v2", got)
 	}
 }
 
