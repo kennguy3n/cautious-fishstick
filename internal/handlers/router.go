@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
+	"github.com/kennguy3n/cautious-fishstick/internal/services/pam"
 )
 
 // Dependencies bundles the service-layer hooks the handlers need.
@@ -101,6 +102,29 @@ type Dependencies struct {
 	// OrphanReconciler backs the Phase 11 /access/orphans surface.
 	// May be nil; the routes are only registered when wired.
 	OrphanReconciler OrphanReconcilerReader
+
+	// PAMAssetService backs the /pam/assets/* endpoints (CRUD over
+	// PAM inventory + per-asset account management) per
+	// docs/pam/architecture.md. May be nil in dev / test binaries
+	// that have not yet wired the PAM module; the routes are only
+	// registered when this dependency is present.
+	PAMAssetService *pam.PAMAssetService
+
+	// SecretBrokerService backs the /pam/secrets/* endpoints
+	// (vault, reveal-with-step-up-MFA, rotate). May be nil; the
+	// routes are only registered when this dependency is present.
+	SecretBrokerService *pam.SecretBrokerService
+
+	// PAMMFAVerifier backs the step-up MFA gate on the secret-
+	// reveal endpoint. Required when SecretBrokerService is wired;
+	// dev binaries can substitute pam.NewNoOpMFAVerifier() which
+	// always succeeds (with a warning log).
+	PAMMFAVerifier pam.MFAVerifier
+
+	// PAMLeaseService backs the /pam/leases/* endpoints (list +
+	// revoke). May be nil; the routes are only registered when
+	// this dependency is present.
+	PAMLeaseService *pam.PAMLeaseService
 }
 
 // Router builds the *gin.Engine that serves the access platform's
@@ -191,6 +215,19 @@ func Router(deps Dependencies) *gin.Engine {
 	if deps.OrphanReconciler != nil {
 		oh := NewOrphanHandler(deps.OrphanReconciler)
 		oh.Register(r)
+	}
+
+	if deps.PAMAssetService != nil {
+		ah := NewPAMAssetHandler(deps.PAMAssetService)
+		ah.Register(r)
+	}
+	if deps.SecretBrokerService != nil {
+		sh := NewPAMSecretHandler(deps.SecretBrokerService, deps.PAMMFAVerifier)
+		sh.Register(r)
+	}
+	if deps.PAMLeaseService != nil {
+		lh := NewPAMLeaseHandler(deps.PAMLeaseService)
+		lh.Register(r)
 	}
 
 	return r
