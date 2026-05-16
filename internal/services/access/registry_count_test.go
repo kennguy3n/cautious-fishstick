@@ -353,7 +353,7 @@ func TestRegistry_NoOrphanDirectories(t *testing.T) {
 // SCIMProvisioner. Bumping this requires landing the matching
 // scim.go + scim_test.go inside the connector package AND
 // refreshing docs/connectors.md §3 + README.md in the same PR.
-const expectedSCIMProvisionerCount = 14
+const expectedSCIMProvisionerCount = 21
 
 // expectedGroupSyncerCount is the canonical number of
 // AccessConnector implementations that also satisfy GroupSyncer.
