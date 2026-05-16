@@ -74,9 +74,19 @@ const idleEvictionAfter = 10 * time.Minute
 // Operators worried about a compromised IdP connector token should
 // scope that risk by rotating the SCIM bearer in the IdP, not by
 // extending the rate limiter into /scim/*.
+//
+// /pam/* is INCLUDED because the PAM surface handles
+// reveal-on-MFA flows (POST /pam/secrets/:id/reveal) where rate
+// limiting is the second layer of defence against MFA brute-force
+// attempts — the MFAVerifier is the primary gate, the rate limiter
+// keeps an attacker from burning through assertions in a tight
+// loop. Coverage extends to /pam/assets/*, /pam/secrets/*, and
+// /pam/leases/* uniformly so a misbehaving caller can't pivot to
+// less sensitive endpoints to enumerate workspace data either.
 var rateLimitedPathPrefixes = []string{
 	"/access/",
 	"/workspace/",
+	"/pam/",
 }
 
 // workspaceBucket is a single token bucket. tokens is a float so
