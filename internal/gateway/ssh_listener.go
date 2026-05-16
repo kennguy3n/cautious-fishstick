@@ -32,6 +32,15 @@ type SSHListenerConfig struct {
 	// before the SSH handshake completes. Defaults to 10s when
 	// zero.
 	AcceptTimeout time.Duration
+
+	// ShutdownTimeout caps how long Serve will wait for in-flight
+	// SSH sessions to drain after ctx is cancelled before returning.
+	// Defaults to 30s when zero. Active sessions are first asked to
+	// drain by closing their SSH server-side connection (which
+	// unblocks the chans loop in handleConn and the io.Copy goroutines
+	// in handleChannel); if some refuse to terminate within the
+	// timeout, Serve returns anyway so the process can exit.
+	ShutdownTimeout time.Duration
 }
 
 // SSHListener is the gateway's SSH server. It accepts inbound SSH
@@ -62,6 +71,9 @@ func NewSSHListener(cfg SSHListenerConfig) (*SSHListener, error) {
 	}
 	if cfg.AcceptTimeout <= 0 {
 		cfg.AcceptTimeout = 10 * time.Second
+	}
+	if cfg.ShutdownTimeout <= 0 {
+		cfg.ShutdownTimeout = 30 * time.Second
 	}
 	l := &SSHListener{cfg: cfg}
 	l.srvConfig = &ssh.ServerConfig{
@@ -110,7 +122,12 @@ func (l *SSHListener) passwordCallback(conn ssh.ConnMetadata, password []byte) (
 // Serve binds to cfg.Port and accepts incoming connections until
 // ctx is cancelled. Each accepted connection is handled in its own
 // goroutine. Returns the listener-bind error (or context.Canceled
-// on graceful shutdown).
+// on graceful shutdown). On shutdown Serve closes the TCP listener
+// (stopping new Accepts), waits up to cfg.ShutdownTimeout for
+// in-flight sessions to drain, and then returns even if some
+// goroutines have not yet exited so the process can shut down.
+// Active SSH sessions observe ctx.Done() via handleConn closing
+// their server-side SSH connection.
 func (l *SSHListener) Serve(ctx context.Context) error {
 	addr := net.JoinHostPort("", strconv.Itoa(l.cfg.Port))
 	tcp, err := net.Listen("tcp", addr)
@@ -130,7 +147,16 @@ func (l *SSHListener) Serve(ctx context.Context) error {
 		conn, err := tcp.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
-				wg.Wait()
+				done := make(chan struct{})
+				go func() {
+					wg.Wait()
+					close(done)
+				}()
+				select {
+				case <-done:
+				case <-time.After(l.cfg.ShutdownTimeout):
+					log.Printf("gateway: ssh listener drain exceeded %s — returning anyway", l.cfg.ShutdownTimeout)
+				}
 				return ctx.Err()
 			}
 			log.Printf("gateway: ssh accept: %v", err)
@@ -147,6 +173,12 @@ func (l *SSHListener) Serve(ctx context.Context) error {
 // handleConn completes the SSH handshake, validates the inbound
 // token, fans out channels to handleChannel, and tears the
 // connection down on the first error.
+//
+// When ctx is cancelled (e.g., process shutdown) the server-side
+// SSH connection is closed eagerly so the `for newCh := range chans`
+// loop below exits and the goroutine returns. Without this, the
+// outer wg.Wait in Serve would block indefinitely on long-lived
+// SSH sessions that hold their channel open past SIGTERM.
 func (l *SSHListener) handleConn(ctx context.Context, raw net.Conn) {
 	defer raw.Close()
 	if d := l.cfg.AcceptTimeout; d > 0 {
@@ -162,6 +194,21 @@ func (l *SSHListener) handleConn(ctx context.Context, raw net.Conn) {
 	// can be long-lived.
 	_ = raw.SetDeadline(time.Time{})
 	go ssh.DiscardRequests(reqs)
+
+	// Drain hook: on context cancellation, close the SSH server
+	// connection so the chans range below unblocks. The goroutine
+	// also exits naturally when sconn closes via the deferred Close
+	// above, so it does not leak on the happy path.
+	connDone := make(chan struct{})
+	defer close(connDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = sconn.Close()
+		case <-connDone:
+		}
+	}()
+
 	sessID := sconn.Permissions.Extensions["pam-session-id"]
 	log.Printf("gateway: ssh session %s opened from %s", sessID, sconn.RemoteAddr())
 
