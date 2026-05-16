@@ -209,10 +209,10 @@ func (s *AccessReviewService) StartCampaign(ctx context.Context, in StartCampaig
 	// notifications. Auto-certified rows are flipped to
 	// decision=certify so the notification fan-out only pings
 	// reviewers about the rows that still need human attention.
-	// Per PHASES Phase 5 the wire-in is best-effort: an
+	// Per Phase 5 the wire-in is best-effort: an
 	// unreachable AI leaves every row pending.
 	decisions = s.applyAutoCertification(ctx, review, decisions)
-	// Fan-out notifications AFTER commit. Per PHASES Phase 5
+	// Fan-out notifications AFTER commit. Per Phase 5
 	// notifications are best-effort: any error here is logged
 	// inside dispatchPendingNotifications and never returned.
 	s.dispatchPendingNotifications(ctx, review, filterPendingDecisions(decisions))
@@ -222,7 +222,7 @@ func (s *AccessReviewService) StartCampaign(ctx context.Context, in StartCampaig
 // dispatchPendingNotifications resolves reviewers for the supplied
 // decisions and fans out a "pending decisions" notification to each.
 // All failures are logged and swallowed — notifications must NOT
-// roll back the underlying campaign per PHASES Phase 5.
+// roll back the underlying campaign per Phase 5.
 func (s *AccessReviewService) dispatchPendingNotifications(
 	ctx context.Context,
 	review *models.AccessReview,

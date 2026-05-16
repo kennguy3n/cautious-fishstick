@@ -211,8 +211,8 @@ func (r *OrphanReconciler) reconcileWorkspace(ctx context.Context, workspaceID s
 		scanned++
 		rows, err := r.reconcileConnector(ctx, conn, dryRun)
 		if err != nil {
-			// Per docs/architecture.md and docs/architecture.md §12 the
-			// reconciler is best-effort across connectors: log this
+			// Per docs/architecture.md §12 the reconciler is
+			// best-effort across connectors: log this
 			// connector's failure and continue to the next one so a
 			// single broken upstream cannot mask orphans in the rest
 			// of the workspace. Errors are collected and returned as

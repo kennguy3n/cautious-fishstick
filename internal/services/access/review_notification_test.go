@@ -13,7 +13,7 @@ import (
 // the StartCampaign-with-notifier tests. Set Err to drive the
 // "channel returned an error" path; the access service must NOT
 // surface that error to its caller (notifications are best-effort
-// per PHASES Phase 5).
+// per Phase 5).
 type stubReviewNotifier struct {
 	Err   error
 	Calls []stubNotifyCall

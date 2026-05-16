@@ -9,11 +9,8 @@
 // The expected counts here MUST stay in sync with:
 //
 //   - README.md (connector count, optional-interface counts)
-//   - docs/architecture.md (Phase 11 status table)
+//   - docs/architecture.md §12 (Where things run) + §13
 //   - docs/connectors.md §2 capability status
-//   - docs/architecture.md §12 (Where things run)
-//   - docs/connectors.md
-//   - docs/architecture.md §13
 package access_test
 
 import (
@@ -253,7 +250,7 @@ const expectedSSOEnforcementCheckerCount = 14
 func TestRegistry_ExactConnectorCount(t *testing.T) {
 	got := len(access.ListRegisteredProviders())
 	if got != expectedConnectorCount {
-		t.Fatalf("ListRegisteredProviders() count = %d; want %d (update docs/architecture.md + docs/connectors.md + docs/architecture.md + docs/connectors.md + README.md)", got, expectedConnectorCount)
+		t.Fatalf("ListRegisteredProviders() count = %d; want %d (update docs/architecture.md + docs/connectors.md + README.md)", got, expectedConnectorCount)
 	}
 }
 

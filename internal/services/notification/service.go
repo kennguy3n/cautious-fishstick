@@ -34,7 +34,7 @@ type NotificationKind string
 const (
 	// KindReviewerPending is dispatched when an access-review
 	// campaign produces one or more pending decisions for a
-	// reviewer (per PHASES Phase 5 exit criteria).
+	// reviewer (per Phase 5 exit criteria).
 	KindReviewerPending NotificationKind = "reviewer_pending"
 
 	// KindRequesterStatus is dispatched when an access_request
