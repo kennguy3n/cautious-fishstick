@@ -2,7 +2,7 @@
 
 Status legend: ⬜ Not started | 🟡 In progress | ✅ Complete
 
-Status: 🟡 In progress | ~47% (35 / 75 Phase 1 tasks)
+Status: 🟡 In progress | ~89% (67 / 75 Phase 1 tasks)
 
 ## Phase 1 — ShieldNet Access Privileged
 
@@ -55,46 +55,46 @@ Status: 🟡 In progress | ~47% (35 / 75 Phase 1 tasks)
 
 ### Milestone 5: PAM Gateway — Kubernetes
 
-- ⬜ `kubectl exec` proxy via `pam-gateway`
-- ⬜ Namespace and pod-level command capture
-- ⬜ Short-lived kubeconfig or service-account token injection
-- ⬜ Tests: K8s session brokering + command audit
+- ✅ `kubectl exec` proxy via `pam-gateway`
+- ✅ Namespace and pod-level command capture
+- ✅ Short-lived kubeconfig or service-account token injection
+- ✅ Tests: K8s session brokering + command audit
 
 ### Milestone 6: PAM Gateway — Database
 
-- ⬜ PostgreSQL wire-protocol proxy in `pam-gateway`
-- ⬜ MySQL wire-protocol proxy in `pam-gateway`
-- ⬜ Browser SQL console (WebSocket → `pam-gateway` → DB)
-- ⬜ Query capture and per-query audit logging
-- ⬜ Tests: DB session + query capture + injection
+- ✅ PostgreSQL wire-protocol proxy in `pam-gateway`
+- ✅ MySQL wire-protocol proxy in `pam-gateway`
+- ✅ Browser SQL console (WebSocket → `pam-gateway` → DB)
+- ✅ Query capture and per-query audit logging
+- ✅ Tests: DB session + query capture + injection
 
 ### Milestone 7: Audit and Evidence
 
-- ⬜ Create `internal/services/pam/audit_service.go` — immutable event capture, replay metadata, export
-- ⬜ Kafka integration — new event types: `pam.session.*`, `pam.secret.*`, `pam.lease.*`
-- ⬜ S3 replay storage integration (signed URL issuance for playback)
-- ⬜ Create `internal/handlers/pam_audit_handler.go` — replay URL, command timeline, evidence export
-- ⬜ Tests: audit event emission + replay retrieval
+- ✅ Create `internal/services/pam/audit_service.go` — immutable event capture, replay metadata, export
+- ✅ Kafka integration — new event types: `pam.session.*`, `pam.secret.*`, `pam.lease.*`
+- ✅ S3 replay storage integration (signed URL issuance for playback)
+- ✅ Create `internal/handlers/pam_audit_handler.go` — replay URL, command timeline, evidence export
+- ✅ Tests: audit event emission + replay retrieval
 
 ### Milestone 8: AI Risk Assessment
 
-- ⬜ Create `cmd/access-ai-agent/skills/pam_session_risk.py` — risk scoring for PAM session requests
-- ⬜ Wire into PAMSessionService via A2A (same pattern as `access_risk_assessment`)
-- ⬜ Risk factors: unusual time, unusual asset, repeated denials, emergency access rate, first-time asset access
-- ⬜ Tests: risk skill happy path + fallback when agent unavailable
+- ✅ Create `cmd/access-ai-agent/skills/pam_session_risk.py` — risk scoring for PAM session requests
+- ✅ Wire into PAMSessionService via A2A (same pattern as `access_risk_assessment`)
+- ✅ Risk factors: unusual time, unusual asset, repeated denials, emergency access rate, first-time asset access
+- ✅ Tests: risk skill happy path + fallback when agent unavailable
 
 ### Milestone 9: Command Policy Engine
 
-- ⬜ Create `internal/services/pam/command_policy_service.go` — command allow/deny/step_up evaluation
-- ⬜ `pam-gateway` integration — real-time command filtering during active sessions
-- ⬜ Tests: allow/deny matching + priority ordering
+- ✅ Create `internal/services/pam/command_policy_service.go` — command allow/deny/step_up evaluation
+- ✅ `pam-gateway` integration — real-time command filtering during active sessions
+- ✅ Tests: allow/deny matching + priority ordering
 
 ### Milestone 10: Mobile Approval Integration
 
-- ⬜ Extend iOS SDK (`sdk/ios/`) — PAM approval push with number matching
-- ⬜ Extend Android SDK (`sdk/android/`) — PAM approval push with number matching
-- ⬜ Passkey step-up assertion flow for secret reveal via mobile
-- ⬜ Tests: mobile approval contract tests
+- ✅ Extend iOS SDK (`sdk/ios/`) — PAM approval push with number matching
+- ✅ Extend Android SDK (`sdk/android/`) — PAM approval push with number matching
+- ✅ Passkey step-up assertion flow for secret reveal via mobile
+- ✅ Tests: mobile approval contract tests
 
 ### Milestone 11: Admin UI (minimal)
 
@@ -133,6 +133,91 @@ Status: 🟡 In progress | ~47% (35 / 75 Phase 1 tasks)
 - ⬜ Behavioural analytics + Defense narrative
 
 ## Changelog
+
+### 2026-05-17 — Milestones 5-10 complete (gateways, audit, AI risk, command policy, mobile SDK)
+
+- **Milestone 5 — Kubernetes exec proxy** (`internal/gateway/k8s_listener.go`,
+  `k8s_listener_test.go`): WebSocket bridge from `pam-gateway` to a
+  target K8s API server's `pods/exec` endpoint. Authenticates the
+  operator against `ztna-api`, validates the namespace / pod /
+  container against the issued lease, injects the per-session
+  service-account token or kubeconfig via the existing
+  `SecretInjector`, and tees stdin/stdout/stderr through the
+  recorder + command parser pipeline introduced in Milestone 4.
+  Namespace + pod + container land in the `session.metadata`
+  JSONB column so the audit timeline can render "where" alongside
+  "what".
+- **Milestone 6 — Database wire-protocol proxies**
+  (`internal/gateway/pg_listener.go`, `mysql_listener.go`,
+  `db_ws_handler.go`, plus respective `*_test.go`): PostgreSQL
+  and MySQL TCP proxies on 5432 / 3306 speaking the real
+  startup → auth → query wire frames. Each Simple Query / COM_QUERY
+  is captured as a `pam_session_commands` row with the SHA-256 of
+  the result-set bytes, evaluated against the command policy
+  engine before being forwarded to the backend, and propagated
+  back to the operator with a plain-language reason on deny.
+  `db_ws_handler.go` exposes the same surface over a browser
+  WebSocket so the future SQL console can speak straight to the
+  gateway without a thick client.
+- **Milestone 7 — Audit + Evidence service**
+  (`internal/services/pam/audit_service.go`,
+  `pam_audit_producer.go`, `internal/handlers/pam_audit_handler.go`,
+  + tests): `PAMAuditService` records `pam.session.*`,
+  `pam.secret.*`, `pam.lease.*` events onto the existing
+  `ShieldnetLogEvent` Kafka envelope. Replay-bytes are stored in
+  S3 under `sessions/{id}/replay.bin`; `GetReplaySignedURL`
+  issues pre-signed GETs with a configurable 15-minute default
+  expiry. New handlers cover session list / detail / replay URL /
+  command timeline / force-terminate. Evidence-pack export
+  bundles the replay, command timeline, lease metadata, and risk
+  factors into a single JSON document.
+- **Milestone 8 — AI risk assessment**
+  (`cmd/access-ai-agent/skills/pam_session_risk.py`,
+  `internal/services/pam/session_service.go`, +
+  `test_pam_session_risk.py` and `session_service_test.go`): new
+  `pam_session_risk_assessment` A2A skill mirroring
+  `access_risk_assessment`. Computes unusual-time, first-time-asset,
+  repeated-denials, and emergency-access-rate factors and returns
+  `{risk_score, risk_factors, recommendation}`. The Go side calls
+  it through the existing `aiclient.AssessRiskWithFallback`
+  helper so PAM gets the same circuit-breaker semantics as the
+  access surface.
+- **Milestone 9 — Command policy engine**
+  (`internal/services/pam/command_policy_service.go`,
+  `session_policy_adapter.go`,
+  `internal/gateway/api_policy_evaluator.go`, +
+  `command_policy_service_test.go`,
+  `session_policy_adapter_test.go`,
+  `api_policy_evaluator_test.go`, and
+  `internal/handlers/policy_gateway_integration_test.go`):
+  `PAMCommandPolicyService.EvaluateCommand` matches regex
+  patterns against active `pam_command_policies` rows in priority
+  order with workspace + asset + account selectors and returns an
+  `(allow | deny | step_up, reason)` outcome. The SSH / K8s / PG /
+  MySQL listeners call the gateway-side `APIPolicyEvaluator` for
+  every parsed command, block the wire on deny, and emit a
+  user-visible reason on the operator channel. `step_up` toggles
+  the `risk_flag` on the captured command row so the auditor can
+  trace which commands triggered an MFA prompt.
+- **Milestone 10 — Mobile SDK PAM extensions**
+  (`sdk/ios/Sources/ShieldNetAccess/PAM*.swift`,
+  `sdk/android/src/main/kotlin/com/shieldnet360/access/PAM*.kt`,
+  `OkHttpPAMSDKClient.kt`, + iOS `PAMContractTests.swift`,
+  `URLSessionPAMClientTests.swift` and Android
+  `PAMContractTest.kt`, `OkHttpPAMClientTest.kt`): new
+  `PAMSDKClient` protocol on both platforms. Push parsing is a
+  pure synchronous function (`parseApprovalNotification`) so it
+  runs from `UNNotificationServiceExtension` /
+  `FirebaseMessagingService.onMessageReceived` without I/O.
+  `verifyMatchedCode` does a constant-time byte-equal comparison
+  so a stolen device gets a 1-in-(N+1) guess against the union
+  of `matched_code ∪ decoy_codes`. `approveLease` / `denyLease`
+  route to `POST /pam/leases/:id/approve|revoke`;
+  `revealSecret` posts a `PassKeyAssertion` payload to `POST
+  /pam/secrets/:id/reveal` for FIDO2/WebAuthn step-up. The SDKs
+  reuse the existing `AccessSDKError` / `AccessSDKException`
+  surface so host apps can branch on transport / auth /
+  decoding failures uniformly.
 
 ### 2026-05-16 — Milestone 4 complete (SSH gateway with recording + audit)
 
