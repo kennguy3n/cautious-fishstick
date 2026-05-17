@@ -463,26 +463,67 @@ type commandParserTap struct {
 
 func (t *commandParserTap) Read(p []byte) (int, error) {
 	n, err := t.src.Read(p)
-	if n > 0 {
-		// Feed the parser first so SetRiskFlag (called from
-		// evaluatePolicy when a newline closes a line) targets
-		// the just-captured pending command.
-		t.parser.WriteInput(t.ctx, p[:n])
-		denied := t.evaluatePolicy(p[:n])
-		if denied {
-			// Replace the read bytes with a single newline so the
-			// upstream shell sees an empty input. The deny reason
-			// has already been written directly to the operator's
-			// SSH channel in evaluatePolicy — we deliberately do
-			// NOT return it from Read here, because Read feeds
-			// io.Copy(stdin, …) which writes to the upstream
-			// shell. Writing the deny text into that stream would
-			// execute the reason as shell input on the target.
-			p[0] = '\n'
-			return 1, nil
-		}
+	if n == 0 {
+		return n, err
 	}
-	return n, err
+
+	// Walk the read buffer ONE LINE AT A TIME so SetRiskFlag (called
+	// from evaluatePolicy when a newline closes a line) always
+	// targets the right pending command.
+	//
+	// Why this matters: CommandParser.WriteInput treats every newline
+	// in its input as a command boundary — flushPendingLocked
+	// enqueues the previous pending command to the sink, then
+	// startCommandLocked promotes the just-accumulated bytes into a
+	// new pending command. If we hand the full read buffer to
+	// WriteInput in one shot, a paste like "denied-cmd\nnext-cmd\n"
+	// causes WriteInput to advance pending past "denied-cmd" before
+	// evaluatePolicy has a chance to tag it. The subsequent
+	// SetRiskFlag would then land on "next-cmd" instead — corrupting
+	// the audit trail by hiding the deny on the actually-denied
+	// command and falsely flagging an unrelated one.
+	//
+	// Per-line processing keeps the flag on the right command: each
+	// newline-terminated chunk is fed to WriteInput (which makes the
+	// just-typed line the pending command), then evaluatePolicy is
+	// run on the same chunk so the deny flag lands on pending while
+	// pending still refers to the just-closed line. The NEXT chunk's
+	// WriteInput flushes the flagged pending to the sink, exactly
+	// once, with the right risk_flag.
+	//
+	// Output buffer: denied lines collapse to a single '\n' so the
+	// upstream shell sees an empty input. Allowed lines pass through
+	// unchanged. We allocate a fresh slice (rather than aliasing
+	// p[:0]) so the denied-line shrink does not race with the
+	// source bytes still queued behind it.
+	out := make([]byte, 0, n)
+	lineStart := 0
+	for i := 0; i < n; i++ {
+		if p[i] != '\n' && p[i] != '\r' {
+			continue
+		}
+		chunk := p[lineStart : i+1]
+		t.parser.WriteInput(t.ctx, chunk)
+		if t.evaluatePolicy(chunk) {
+			out = append(out, '\n')
+		} else {
+			out = append(out, chunk...)
+		}
+		lineStart = i + 1
+	}
+	// Trailing bytes without a newline terminator: feed both
+	// WriteInput and evaluatePolicy so the parser's input buffer and
+	// the policy tap's lineBuf stay in lockstep. Pass them through
+	// unchanged — we cannot decide deny/allow until we see the
+	// newline.
+	if lineStart < n {
+		partial := p[lineStart:n]
+		t.parser.WriteInput(t.ctx, partial)
+		_ = t.evaluatePolicy(partial)
+		out = append(out, partial...)
+	}
+	copy(p, out)
+	return len(out), err
 }
 
 // evaluatePolicy keeps a running line buffer so newline-terminated

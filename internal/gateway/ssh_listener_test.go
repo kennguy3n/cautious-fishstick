@@ -417,6 +417,198 @@ func TestSSHListener_CommandPolicyDeny(t *testing.T) {
 	}
 }
 
+// TestSSHListener_CommandPolicyDeny_PastedBatch is the regression
+// test for the per-line policy-evaluation bug that Devin Review
+// caught: when the operator pastes (or pipes) two newline-terminated
+// commands in a single Read buffer and only the first is denied,
+// the audit trail must still tag the right command. Before the fix
+// commandParserTap.Read fed the full buffer to WriteInput in one
+// shot — both newlines were processed, advancing the parser's
+// pending pointer past the denied command before SetRiskFlag ran,
+// so the deny flag landed on the SECOND (innocent) command and the
+// actually-denied command appeared unflagged.
+//
+// The test pastes "denied-cmd\nallowed-cmd\n" in a single io.Write
+// and asserts:
+//   - the row for the denied command carries the policy:deny flag
+//   - the row for the allowed command does NOT carry a flag
+//   - the denied command never reaches the upstream shell
+//   - the allowed command DOES reach the upstream shell (so the
+//     gateway is not silently dropping otherwise-legal traffic).
+func TestSSHListener_CommandPolicyDeny_PastedBatch(t *testing.T) {
+	upstream := newFakeUpstreamSSH(t)
+	defer upstream.Close()
+
+	const (
+		sessionID  = "01HXYE2EQR8K4PAMZJ4N7N9X7P"
+		username   = "ops"
+		token      = "deny-paste-token"
+		denyCmd    = "rm-rf-prod"
+		allowedCmd = "ls-allowed"
+		denyReason = "destructive command on prod asset"
+	)
+
+	host, portStr, err := net.SplitHostPort(upstream.Addr())
+	if err != nil {
+		t.Fatalf("split upstream host: %v", err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("parse upstream port: %v", err)
+	}
+
+	authz := &fakeSessionAuthorizer{
+		session: AuthorizedSession{
+			SessionID:   sessionID,
+			WorkspaceID: "ws-paste",
+			LeaseID:     "lease-paste",
+			AssetID:     "asset-paste",
+			AccountID:   "acct-paste",
+			Protocol:    "ssh",
+			TargetHost:  host,
+			TargetPort:  port,
+			Username:    username,
+		},
+		expectedToken: token,
+	}
+	injector := &fakeSecretInjector{secretType: "password", secret: []byte("ignored")}
+	replayStore := NewMemoryReplayStore()
+	commandSink := NewMemoryCommandSink()
+	policy := &fakeCommandPolicy{denyExact: denyCmd, reason: denyReason}
+
+	hostKey := mustGenerateHostKey(t)
+	listener, err := NewSSHListener(SSHListenerConfig{
+		HostKey:       hostKey,
+		Authorizer:    authz,
+		Injector:      injector,
+		ReplayStore:   replayStore,
+		CommandSink:   commandSink,
+		CommandPolicy: policy,
+	})
+	if err != nil {
+		t.Fatalf("NewSSHListener: %v", err)
+	}
+	gw, gwAddr := startListener(t, listener)
+	defer gw.cancel()
+
+	clientCfg := &ssh.ClientConfig{
+		User:            username,
+		Auth:            []ssh.AuthMethod{ssh.Password(token)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+	}
+	cli, err := ssh.Dial("tcp", gwAddr, clientCfg)
+	if err != nil {
+		t.Fatalf("dial gateway: %v", err)
+	}
+	defer cli.Close()
+	sess, err := cli.NewSession()
+	if err != nil {
+		t.Fatalf("client new session: %v", err)
+	}
+	stdin, err := sess.StdinPipe()
+	if err != nil {
+		t.Fatalf("client stdin pipe: %v", err)
+	}
+	stdoutR, err := sess.StdoutPipe()
+	if err != nil {
+		t.Fatalf("client stdout pipe: %v", err)
+	}
+	if err := sess.Shell(); err != nil {
+		t.Fatalf("client shell start: %v", err)
+	}
+
+	// Single write — both lines hit the gateway's commandParserTap.Read
+	// in one buffer, which is exactly the trigger condition for the
+	// original bug.
+	if _, err := io.WriteString(stdin, denyCmd+"\n"+allowedCmd+"\n"); err != nil {
+		t.Fatalf("write batch to stdin: %v", err)
+	}
+
+	// Read upstream stdout until we see the allowed command echo, the
+	// deny banner, and EOF (or our deadline). The fake upstream echoes
+	// unknown commands as "unknown: <line>".
+	stdoutBuf := bufio.NewReader(stdoutR)
+	deadline := time.Now().Add(3 * time.Second)
+	var collected strings.Builder
+	sawAllowedEcho := false
+	sawDenyBanner := false
+	for time.Now().Before(deadline) {
+		line, rerr := stdoutBuf.ReadString('\n')
+		if line != "" {
+			collected.WriteString(line)
+			if strings.Contains(collected.String(), "command blocked by policy") {
+				sawDenyBanner = true
+			}
+			if strings.Contains(collected.String(), "unknown: "+allowedCmd) {
+				sawAllowedEcho = true
+			}
+			if sawAllowedEcho && sawDenyBanner {
+				break
+			}
+		}
+		if rerr != nil {
+			break
+		}
+	}
+	if !sawDenyBanner {
+		t.Fatalf("expected deny banner on operator stdout; got %q", collected.String())
+	}
+	if !sawAllowedEcho {
+		t.Fatalf("expected upstream echo of allowed command %q; got %q", allowedCmd, collected.String())
+	}
+
+	_ = stdin.Close()
+	rest, _ := io.ReadAll(stdoutBuf)
+	combined := collected.String() + string(rest)
+	if strings.Contains(combined, "unknown: "+denyCmd) {
+		t.Fatalf("upstream shell received the denied command; got %q", combined)
+	}
+	if strings.Contains(combined, "unknown: pam-gateway") {
+		t.Fatalf("deny banner was smuggled into upstream stdin and echoed back; got %q", combined)
+	}
+
+	if err := sess.Wait(); err != nil {
+		var exitErr *ssh.ExitError
+		if !errors.As(err, &exitErr) && !errors.Is(err, io.EOF) {
+			t.Logf("client session wait: %v", err)
+		}
+	}
+	_ = cli.Close()
+
+	// Audit assertions — the meat of the regression. Poll until BOTH
+	// rows are visible (the parser flushes the second command on
+	// session teardown).
+	pollDeadline := time.Now().Add(2 * time.Second)
+	var rows []AppendCommandInput
+	for time.Now().Before(pollDeadline) {
+		rows = commandSink.Commands()
+		if len(rows) >= 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(rows) < 2 {
+		t.Fatalf("expected 2 sink rows (deny + allow); got %d: %+v", len(rows), rows)
+	}
+	deniedRow, allowedRow := rows[0], rows[1]
+	if deniedRow.Input != denyCmd {
+		t.Fatalf("row[0] input = %q; want %q", deniedRow.Input, denyCmd)
+	}
+	if deniedRow.RiskFlag == nil {
+		t.Fatalf("row[0] (denied) should carry policy:deny flag; got nil")
+	}
+	if !strings.Contains(*deniedRow.RiskFlag, "policy:deny") {
+		t.Fatalf("row[0] (denied) risk_flag = %q; want substring policy:deny", *deniedRow.RiskFlag)
+	}
+	if allowedRow.Input != allowedCmd {
+		t.Fatalf("row[1] input = %q; want %q", allowedRow.Input, allowedCmd)
+	}
+	if allowedRow.RiskFlag != nil {
+		t.Fatalf("row[1] (allowed) must NOT carry a risk_flag; got %q", *allowedRow.RiskFlag)
+	}
+}
+
 // fakeCommandPolicy is a minimal CommandPolicyEvaluator that returns
 // "deny" with a fixed reason whenever the incoming command matches
 // denyExact, and "allow" for everything else.
