@@ -165,3 +165,99 @@ func TestAPISecretInjector_NilReceiverReturnsError(t *testing.T) {
 		t.Fatal("expected error on nil receiver")
 	}
 }
+
+// TestAPISecretInjector_InjectSecret_K8sToken proves the injector
+// transparently passes through the k8s_token secret_type ztna-api
+// hands back, and that the bytes round-trip cleanly into a
+// ParseK8sUpstream-ready payload — i.e. the K8s listener can dial
+// the upstream cluster with the injected token without further
+// massaging.
+func TestAPISecretInjector_InjectSecret_K8sToken(t *testing.T) {
+	want := injectResponse{
+		SessionID:  "sess-k8s",
+		SecretType: "k8s_token",
+		Plaintext:  `{"server":"https://k8s.example.test","token":"sa-token-abc","insecure_skip_verify":true}`,
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/pam/sessions/sess-k8s/inject-secret" {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(want)
+	}))
+	defer srv.Close()
+	inj := NewAPISecretInjector(srv.URL, "", nil)
+	typ, plaintext, err := inj.InjectSecret(context.Background(), "sess-k8s", "acc-1")
+	if err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+	if typ != "k8s_token" {
+		t.Fatalf("type = %q; want k8s_token", typ)
+	}
+	upstream, err := ParseK8sUpstream(typ, plaintext)
+	if err != nil {
+		t.Fatalf("ParseK8sUpstream: %v", err)
+	}
+	if upstream.Server != "https://k8s.example.test" {
+		t.Fatalf("upstream.Server = %q; want https://k8s.example.test", upstream.Server)
+	}
+	if upstream.Token != "sa-token-abc" {
+		t.Fatalf("upstream.Token = %q; want sa-token-abc", upstream.Token)
+	}
+	if !upstream.InsecureSkipVerify {
+		t.Fatal("upstream.InsecureSkipVerify = false; want true")
+	}
+}
+
+// TestAPISecretInjector_InjectSecret_Kubeconfig mirrors the
+// k8s_token test but with a kubeconfig YAML payload — the same
+// path the operator-installed cluster-admin credential would take.
+func TestAPISecretInjector_InjectSecret_Kubeconfig(t *testing.T) {
+	const kubeconfigYAML = `apiVersion: v1
+kind: Config
+current-context: pam
+contexts:
+  - name: pam
+    context:
+      cluster: pam-cluster
+      user: pam-sa
+clusters:
+  - name: pam-cluster
+    cluster:
+      server: https://k8s.pam.example.test
+      insecure-skip-tls-verify: true
+users:
+  - name: pam-sa
+    user:
+      token: kubecfg-token-xyz
+`
+	want := injectResponse{
+		SessionID:  "sess-cfg",
+		SecretType: "kubeconfig",
+		Plaintext:  kubeconfigYAML,
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(want)
+	}))
+	defer srv.Close()
+	inj := NewAPISecretInjector(srv.URL, "", nil)
+	typ, plaintext, err := inj.InjectSecret(context.Background(), "sess-cfg", "acc-1")
+	if err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+	if typ != "kubeconfig" {
+		t.Fatalf("type = %q; want kubeconfig", typ)
+	}
+	upstream, err := ParseK8sUpstream(typ, plaintext)
+	if err != nil {
+		t.Fatalf("ParseK8sUpstream: %v", err)
+	}
+	if upstream.Server != "https://k8s.pam.example.test" {
+		t.Fatalf("upstream.Server = %q; want https://k8s.pam.example.test", upstream.Server)
+	}
+	if upstream.Token != "kubecfg-token-xyz" {
+		t.Fatalf("upstream.Token = %q; want kubecfg-token-xyz", upstream.Token)
+	}
+	if !upstream.InsecureSkipVerify {
+		t.Fatal("upstream.InsecureSkipVerify = false; want true (kubeconfig requested insecure-skip-tls-verify)")
+	}
+}
