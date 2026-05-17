@@ -141,7 +141,7 @@ Status: 🟡 In progress | ~96% (72 / 75 Phase 1 tasks)
   Kubernetes Deployment, ClusterIP Service, ConfigMap, and
   Kustomize overlay for the `pam-gateway` binary. Deployment
   pins `cpu=500m / mem=512Mi` resource requests, mounts an
-  `emptyDir` at `/var/lib/shieldnet/replay` for active-session
+  `emptyDir` at `/var/lib/pam-gateway/replays` for active-session
   replay buffering, and reads protocol-listener ports + S3
   replay-store config from the ConfigMap
   (`PAM_GATEWAY_{SSH,HEALTH,PG,MYSQL,K8S}_PORT`, `PAM_S3_BUCKET`,
