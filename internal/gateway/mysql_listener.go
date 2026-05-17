@@ -225,13 +225,22 @@ func (l *MySQLListener) handleConn(ctx context.Context, conn net.Conn) {
 		}
 	}
 
-	// Rebind the operator-side reader/writer to taps that route into
-	// the recorder for the post-handshake phase. Any bytes that may
-	// have arrived between the handshake reads and this point are
-	// already in earlyIn (replayed into the recorder above).
+	// Rebind the operator-side reader/writer for the post-handshake
+	// phase. When a recorder is configured we tee bytes through it
+	// so the replay blob captures the full transcript. When no
+	// recorder is configured we MUST still drop the `earlyIn` /
+	// `earlyOut` tees — otherwise the bytesSink instances would
+	// continue to buffer every byte of the session forever, leaking
+	// memory unboundedly on long-running connections. Any bytes that
+	// may have arrived between the handshake reads and this point
+	// are already in earlyIn (replayed into the recorder above when
+	// it exists).
 	if recorder != nil {
 		opReader = io.TeeReader(conn, newRecorderTeeSink(recorder, DirectionInput))
 		opWriter = io.MultiWriter(conn, newRecorderTeeSink(recorder, DirectionOutput))
+	} else {
+		opReader = conn
+		opWriter = conn
 	}
 
 	// Dial the upstream and complete its handshake with the injected
@@ -365,9 +374,14 @@ func (l *MySQLListener) connectUpstream(ctx context.Context, session *Authorized
 	}
 
 	// The upstream may reply with OK, AuthSwitchRequest (to switch
-	// to native_password again with a new salt), or ERR.
+	// to native_password again with a new salt), or ERR. Each reply
+	// we send must carry the next sequence id after the upstream's
+	// last packet — hardcoding the response seq is wrong because
+	// some MySQL distributions send an `AuthMoreData` / second
+	// `AuthSwitchRequest` round, and the protocol increments
+	// strictly per packet within a handshake exchange.
 	for {
-		respPkt, _, err := readMySQLPacket(conn)
+		respPkt, respSeq, err := readMySQLPacket(conn)
 		if err != nil {
 			conn.Close()
 			return nil, fmt.Errorf("read upstream auth reply: %w", err)
@@ -398,7 +412,7 @@ func (l *MySQLListener) connectUpstream(ctx context.Context, session *Authorized
 				return nil, fmt.Errorf("upstream demands auth plugin %q; only mysql_native_password is supported", plugin)
 			}
 			rehash := scrambleNativePassword(plaintext, newSalt)
-			if err := writeMySQLPacket(conn, 3, rehash); err != nil {
+			if err := writeMySQLPacket(conn, respSeq+1, rehash); err != nil {
 				conn.Close()
 				return nil, fmt.Errorf("write auth-switch response: %w", err)
 			}
@@ -438,6 +452,7 @@ func (l *MySQLListener) proxyQueries(ctx context.Context, session *AuthorizedSes
 			// SQL error to the operator. On any policy error we
 			// fail-open and forward the query — matching the SSH
 			// listener's existing semantics.
+			inputAlreadyFed := false
 			if l.cfg.CommandPolicy != nil {
 				action, reason, err := l.cfg.CommandPolicy.EvaluateCommand(ctx, session.WorkspaceID, session.SessionID, sqlText)
 				if err != nil {
@@ -466,7 +481,16 @@ func (l *MySQLListener) proxyQueries(ctx context.Context, session *AuthorizedSes
 						continue
 					case "step_up":
 						if parser != nil {
+							// SetRiskFlag tags whatever command is
+							// currently pending in the parser. We MUST
+							// open the pending command via WriteInput
+							// BEFORE tagging — otherwise pending is
+							// nil (or points at the previous,
+							// already-flushed command) and the flag
+							// is silently dropped.
+							parser.WriteInput(ctx, append(append([]byte{}, pkt[1:]...), '\n'))
 							parser.SetRiskFlag("mysql:policy:step_up")
+							inputAlreadyFed = true
 						}
 						// step_up rules don't block the query in
 						// the Phase 1 wire — mobile MFA prompt is
@@ -474,10 +498,13 @@ func (l *MySQLListener) proxyQueries(ctx context.Context, session *AuthorizedSes
 					}
 				}
 			}
-			if parser != nil {
+			if parser != nil && !inputAlreadyFed {
 				// CommandParser keys command boundaries off newlines
 				// in its input stream. Wrap the SQL text in a trailing
 				// "\n" so each COM_QUERY produces exactly one audit row.
+				// The step_up path above already fed the input so the
+				// flag could attach; do not double-feed here or the
+				// parser would emit a phantom audit row.
 				parser.WriteInput(ctx, append(append([]byte{}, pkt[1:]...), '\n'))
 			}
 			if err := writeMySQLPacket(upstream, seq, pkt); err != nil {
@@ -499,16 +526,47 @@ func (l *MySQLListener) proxyQueries(ctx context.Context, session *AuthorizedSes
 
 // pumpResponse forwards upstream packets to the operator until the
 // upstream signals end-of-response (OK / ERR / final EOF). The MySQL
-// protocol does not put a single sentinel at the end of a result set
-// — instead the server sends: column-count packet, N column-def
-// packets, intermediate EOF, M row packets, final EOF (or OK with
-// CLIENT_DEPRECATE_EOF). To stay lightweight we just count: OK/ERR
-// = done after one packet; otherwise wait for the second EOF/OK.
+// text-result-set protocol is:
+//
+//  1. Single first packet — one of:
+//     - OK   (header 0x00) → done, this was a non-result statement
+//     - ERR  (header 0xFF) → done
+//     - LOCAL_INFILE (0xFB) → we treat as done; we never set the
+//       capability flag so well-behaved servers never send this
+//     - column-count (length-encoded int 1..N) → enter result-set
+//
+//  2. Result-set mode: N column-definition packets, then an
+//     intermediate EOF (header 0xFE, len < 9), then 0+ row packets,
+//     then a final EOF.
+//
+// The well-known pitfall the proxy MUST avoid: an empty-string first
+// column in a data row is encoded as `0x00` (length-encoded string
+// of length 0). Treating 0x00 as an OK header at every packet
+// position would truncate any result set with such a row and
+// desynchronise framing for the rest of the session. We therefore
+// track position state and only honour 0x00 as OK on the first
+// packet (the only position where it is valid without
+// CLIENT_DEPRECATE_EOF, which our gateway does not advertise — see
+// buildHandshakeResponse).
 //
 // parser.WriteOutput is fed every byte we forward so the per-command
 // SHA-256 hash captures the full server response.
 func pumpResponse(opW io.Writer, upstream net.Conn, parser *CommandParser) error {
-	eofSeen := 0
+	const (
+		phaseFirst    = 0 // expecting OK / ERR / column-count
+		phaseColumns  = 1 // expecting column-defs until intermediate EOF
+		phaseRows     = 2 // expecting row data until final EOF
+	)
+	phase := phaseFirst
+	flushParser := func() {
+		if parser != nil {
+			// Flush the pending COM_QUERY into the sink. WriteInput
+			// previously appended "\n" so the parser's pending
+			// command exists; emit one more "\n" here so it gets
+			// flushed even on follow-on queries.
+			parser.WriteInput(context.Background(), []byte("\n"))
+		}
+	}
 	for {
 		pkt, seq, err := readMySQLPacket(upstream)
 		if err != nil {
@@ -525,33 +583,60 @@ func pumpResponse(opW io.Writer, upstream net.Conn, parser *CommandParser) error
 		if len(pkt) == 0 {
 			continue
 		}
-		switch pkt[0] {
-		case okHeader:
-			// Plain OK packet — only valid as end-of-response on the
-			// first packet OR after a result set when
-			// CLIENT_DEPRECATE_EOF is set. Either way we are done.
-			if parser != nil {
-				// Flush the pending COM_QUERY into the sink. WriteInput
-				// previously appended "\n" so the parser's pending
-				// command exists; emit one more "\n" here so it gets
-				// flushed even on follow-on queries.
-				parser.WriteInput(context.Background(), []byte("\n"))
-			}
-			return nil
-		case errHeader:
-			if parser != nil {
-				parser.WriteInput(context.Background(), []byte("\n"))
-			}
-			return nil
-		case eofHeader:
-			if len(pkt) < 9 {
-				eofSeen++
-				if eofSeen >= 2 {
-					if parser != nil {
-						parser.WriteInput(context.Background(), []byte("\n"))
-					}
+		switch phase {
+		case phaseFirst:
+			switch pkt[0] {
+			case okHeader:
+				// Plain OK packet at first position — non-result
+				// statement (INSERT / UPDATE / DDL / etc.). Done.
+				flushParser()
+				return nil
+			case errHeader:
+				flushParser()
+				return nil
+			case 0xFB:
+				// LOCAL_INFILE — the server is asking for a local
+				// file. We never advertised CLIENT_LOCAL_FILES so
+				// a compliant upstream will not send this; treat
+				// defensively as end-of-response.
+				flushParser()
+				return nil
+			case eofHeader:
+				if len(pkt) < 9 {
+					// Spec-out-of-order EOF at first position;
+					// treat defensively as end-of-response.
+					flushParser()
 					return nil
 				}
+				// 0xFE as a length-encoded-int prefix (8 bytes
+				// follow) is a legal first byte for a column-count
+				// > 250 — fall through into result-set mode.
+				phase = phaseColumns
+			default:
+				// Column-count packet — enter result-set mode.
+				phase = phaseColumns
+			}
+		case phaseColumns:
+			// We are reading column-defs until the intermediate
+			// EOF. ERR can also abort the result set here.
+			if pkt[0] == errHeader {
+				flushParser()
+				return nil
+			}
+			if pkt[0] == eofHeader && len(pkt) < 9 {
+				phase = phaseRows
+			}
+		case phaseRows:
+			// Row data — 0x00 here is a row whose first column is
+			// the empty string, NOT an OK packet. Only ERR aborts
+			// and the final EOF terminates.
+			if pkt[0] == errHeader {
+				flushParser()
+				return nil
+			}
+			if pkt[0] == eofHeader && len(pkt) < 9 {
+				flushParser()
+				return nil
 			}
 		}
 	}

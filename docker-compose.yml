@@ -131,6 +131,19 @@ services:
       PAM_GATEWAY_API_KEY: ""
       PAM_GATEWAY_SSH_PORT: "2222"
       PAM_GATEWAY_HEALTH_PORT: "8081"
+      # Enable the local-disk replay store for the dev stack so SSH
+      # sessions exercise the recorder path end-to-end. The directory
+      # is backed by a tmpfs mount below — recordings are
+      # session-scoped and intentionally do not persist across
+      # `docker compose down`. Production deployments swap this for
+      # the S3-backed store via PAM_S3_BUCKET / PAM_S3_REGION (see
+      # cmd/pam-gateway/main.go and docs/pam/architecture.md §9).
+      PAM_GATEWAY_REPLAY_DIR: /var/lib/pam-gateway/replays
+    tmpfs:
+      # tmpfs is the simplest way to give the distroless nonroot
+      # runtime a writable directory without a docker volume. Bound
+      # at 64 MiB which is plenty for dev-stack interactive sessions.
+      - /var/lib/pam-gateway/replays:size=64m,mode=0700,uid=65532,gid=65532
     healthcheck:
       # /health is an unauthenticated liveness probe served by the
       # gateway's HTTP listener on PAM_GATEWAY_HEALTH_PORT.

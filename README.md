@@ -24,20 +24,20 @@ make test
 make docker-up
 ```
 
-Default ports once the stack is up:
+Default ports once the stack is up. The `pam-gateway` K8s, PostgreSQL, and MySQL listeners are container-internal in the dev compose stack — only the SSH and health/SQL-WS ports are mapped to the host, so the PG/MySQL ports do not collide with the system-of-record `Postgres` container or any host-side database listener. Production deployments map the proxy ports onto the dataplane LB (see [`docs/pam/architecture.md`](docs/pam/architecture.md) §9).
 
-| Service                          | Port |
-|----------------------------------|------|
-| `ztna-api`                       | 8080 |
-| `access-workflow-engine`         | 8082 |
-| `access-ai-agent`                | 8090 |
-| `pam-gateway` (SSH)              | 2222 |
-| `pam-gateway` (K8s exec / HTTPS) | 8443 |
-| `pam-gateway` (PostgreSQL)       | 5432 |
-| `pam-gateway` (MySQL / MariaDB)  | 3306 |
-| `pam-gateway` (health + SQL WS)  | 8081 |
-| Postgres                         | 5432 |
-| Redis                            | 6379 |
+| Service                                                | Port            |
+|--------------------------------------------------------|-----------------|
+| `ztna-api`                                             | 8080            |
+| `access-workflow-engine`                               | 8082            |
+| `access-ai-agent`                                      | 8090            |
+| `pam-gateway` (SSH)                                    | 2222            |
+| `pam-gateway` (K8s exec / HTTPS, container-internal)   | 8443            |
+| `pam-gateway` (PostgreSQL proxy, container-internal)   | 5432            |
+| `pam-gateway` (MySQL / MariaDB proxy, container-internal) | 3306         |
+| `pam-gateway` (health + SQL WS)                        | 8081            |
+| Postgres                                               | 5432            |
+| Redis                                                  | 6379            |
 
 Tear down with `make docker-down`. A five-minute walkthrough lives at [`docs/getting-started.md`](docs/getting-started.md).
 

@@ -260,7 +260,14 @@ func (h *DBSQLConsoleHandler) pump(
 	db *sql.DB,
 	session *AuthorizedSession,
 ) error {
-	for sequence := 1; ; sequence++ {
+	// sequence is only advanced after a query has been successfully
+	// dispatched into handleQuery. Rejected messages (malformed JSON,
+	// wrong type, empty SQL) must NOT consume a sequence number — the
+	// audit trail's sequence is meant to be a dense per-query index
+	// so reviewers can spot missing commands; advancing on rejects
+	// would create indistinguishable gaps.
+	sequence := 1
+	for {
 		// SetReadDeadline must use the real wall clock — h.now is
 		// overridden in tests to pin audit-row timestamps, but the
 		// underlying net.Conn always compares against time.Now().
@@ -292,6 +299,7 @@ func (h *DBSQLConsoleHandler) pump(
 		if err := h.handleQuery(ctx, conn, db, session, sequence, sql); err != nil {
 			return err
 		}
+		sequence++
 	}
 }
 
@@ -589,9 +597,17 @@ func buildPostgresDSN(session *AuthorizedSession, _ string, credential []byte) s
 }
 
 // quoteDSNValue wraps v in single quotes (DSN convention) when it
-// contains characters that would terminate a bare DSN token.
+// contains characters that would terminate a bare DSN token. libpq
+// treats ANY whitespace as a token terminator (space, tab, newline,
+// carriage return) and `=` as a key/value separator, so a password
+// containing `=` is otherwise interpreted as a separate DSN
+// parameter (e.g. `password=foo` + `sslmode=disable` in the
+// credential body would override the explicit sslmode set above).
+// We must wrap any value containing those characters in single
+// quotes, with backslash-escaping of the quote and backslash
+// themselves per the libpq spec.
 func quoteDSNValue(v string) string {
-	needsQuote := strings.ContainsAny(v, " \t'\\")
+	needsQuote := strings.ContainsAny(v, " \t\n\r='\\")
 	if !needsQuote {
 		return v
 	}

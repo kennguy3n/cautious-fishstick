@@ -161,11 +161,25 @@ func (l *PGListener) handleConn(ctx context.Context, conn net.Conn) {
 		}
 	}
 
-	// Rebind the backend to taps that route into the recorder.
+	// Rebind the backend for the post-handshake phase. When a
+	// recorder is configured we tee bytes through it so the replay
+	// blob captures the full transcript. When no recorder is
+	// configured we MUST still drop the `earlyIn` / `earlyOut` tees
+	// — otherwise the bytesSink instances would continue to buffer
+	// every byte of the session forever, leaking memory unboundedly
+	// on long-running connections.
+	//
+	// Note: rebinding constructs a fresh pgproto3.Backend with a
+	// fresh internal bufio.Reader. PG clients are well-behaved and
+	// wait for AuthenticationOk before pipelining any queries, so
+	// the old backend's buffered-but-unread bytes are guaranteed
+	// empty in practice.
 	if recorder != nil {
 		recorderInputTap = newRecorderTeeSink(recorder, DirectionInput)
 		recorderOutputTap = newRecorderTeeSink(recorder, DirectionOutput)
 		backend = pgproto3.NewBackend(io.TeeReader(conn, recorderInputTap), io.MultiWriter(conn, recorderOutputTap))
+	} else {
+		backend = pgproto3.NewBackend(conn, conn)
 	}
 
 	// Dial the upstream and complete its handshake using the
@@ -392,6 +406,7 @@ func (l *PGListener) proxyQueries(ctx context.Context, session *AuthorizedSessio
 			// rule that blocked it). On any policy error we
 			// fail-open and forward the query — matching the
 			// SSH listener's existing semantics.
+			inputAlreadyFed := false
 			if l.cfg.CommandPolicy != nil {
 				action, reason, err := l.cfg.CommandPolicy.EvaluateCommand(ctx, session.WorkspaceID, session.SessionID, m.String)
 				if err != nil {
@@ -421,7 +436,16 @@ func (l *PGListener) proxyQueries(ctx context.Context, session *AuthorizedSessio
 						continue
 					case "step_up":
 						if parser != nil {
+							// SetRiskFlag tags whatever command is
+							// currently pending in the parser. We
+							// MUST open the pending command via
+							// WriteInput BEFORE tagging — otherwise
+							// pending is nil (or points at the
+							// previous, already-flushed command) and
+							// the flag is silently dropped.
+							parser.WriteInput(ctx, []byte(m.String+"\n"))
 							parser.SetRiskFlag("pg:policy:step_up")
+							inputAlreadyFed = true
 						}
 						// step_up rules don't block the query in
 						// the Phase 1 wire — mobile MFA prompt is
@@ -429,7 +453,11 @@ func (l *PGListener) proxyQueries(ctx context.Context, session *AuthorizedSessio
 					}
 				}
 			}
-			if parser != nil {
+			if parser != nil && !inputAlreadyFed {
+				// The step_up path above already fed the input so
+				// SetRiskFlag could attach; do not double-feed
+				// here or the parser would emit a phantom audit
+				// row.
 				parser.WriteInput(ctx, []byte(m.String+"\n"))
 			}
 			frontend.Send(m)

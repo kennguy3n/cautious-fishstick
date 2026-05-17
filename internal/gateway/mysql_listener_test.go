@@ -140,7 +140,11 @@ func TestMySQLListener_EndToEnd_RecordsAndCapturesQueries(t *testing.T) {
 		if err := writeMySQLPacket(conn, 0, body); err != nil {
 			t.Fatalf("write COM_QUERY %q: %v", q, err)
 		}
-		// Drain response packets until we see OK / ERR.
+		// Drain response packets until we see OK / ERR / final EOF.
+		// The gateway does not advertise CLIENT_DEPRECATE_EOF so a
+		// SELECT terminates with the second EOF (header 0xFE, len
+		// < 9); a non-SELECT terminates with OK at the first packet.
+		columnsSeen := false
 		for {
 			pkt, _, err := readMySQLPacket(conn)
 			if err != nil {
@@ -149,7 +153,19 @@ func TestMySQLListener_EndToEnd_RecordsAndCapturesQueries(t *testing.T) {
 			if len(pkt) == 0 {
 				continue
 			}
-			if pkt[0] == okHeader || pkt[0] == errHeader {
+			if !columnsSeen && pkt[0] == okHeader {
+				break
+			}
+			if pkt[0] == errHeader {
+				break
+			}
+			if pkt[0] == eofHeader && len(pkt) < 9 {
+				if !columnsSeen {
+					// intermediate EOF — column defs done
+					columnsSeen = true
+					continue
+				}
+				// final EOF — result set complete
 				break
 			}
 		}
@@ -317,6 +333,7 @@ func TestMySQLListener_CommandPolicyDeny(t *testing.T) {
 	if err := writeMySQLPacket(conn, 0, append([]byte{comQuery}, []byte(allowCmd)...)); err != nil {
 		t.Fatalf("write COM_QUERY (allow): %v", err)
 	}
+	columnsSeen := false
 	for {
 		pkt, _, err := readMySQLPacket(conn)
 		if err != nil {
@@ -325,7 +342,17 @@ func TestMySQLListener_CommandPolicyDeny(t *testing.T) {
 		if len(pkt) == 0 {
 			continue
 		}
-		if pkt[0] == okHeader || pkt[0] == errHeader {
+		if !columnsSeen && pkt[0] == okHeader {
+			break
+		}
+		if pkt[0] == errHeader {
+			break
+		}
+		if pkt[0] == eofHeader && len(pkt) < 9 {
+			if !columnsSeen {
+				columnsSeen = true
+				continue
+			}
 			break
 		}
 	}
@@ -645,12 +672,15 @@ func (u *fakeMySQLUpstream) serve(conn net.Conn) {
 			if err := writeMySQLPacket(conn, 4, row); err != nil {
 				return
 			}
-			// Final OK packet (CLIENT_DEPRECATE_EOF style). Using OK
-			// rather than a second EOF gives the listener's
-			// pumpResponse and the test client a single, unambiguous
-			// "result set complete" sentinel — both pieces of code
-			// look at pkt[0] == okHeader to bail out.
-			if err := writeMySQLOK(conn, 5); err != nil {
+			// Final EOF packet — the gateway's buildHandshakeResponse
+			// does NOT advertise CLIENT_DEPRECATE_EOF, so a
+			// spec-compliant upstream sends an EOF (not OK) to
+			// terminate a text-protocol result-set. pumpResponse
+			// recognises this pattern via the result-set phase state
+			// machine and only honours `0x00` (OK header) at the
+			// first packet position — a `0x00` later in the stream
+			// is row data with an empty-string first column.
+			if err := writeMySQLPacket(conn, 5, []byte{eofHeader, 0x00, 0x00, 0x02, 0x00}); err != nil {
 				return
 			}
 		default:
@@ -691,6 +721,118 @@ func buildMySQLColumnDef(name string) []byte {
 func writeLenEncStr(buf *bytes.Buffer, s string) {
 	buf.WriteByte(byte(len(s))) // works for short strings (<251)
 	buf.WriteString(s)
+}
+
+// TestPumpResponse_EmptyStringFirstColumnRow is the regression test
+// for the 0x00 misidentification bug: in MySQL's text result-set
+// protocol, a row whose first column is the empty string encodes
+// as `0x00` (length-encoded string of length 0) — byte-identical
+// to the OK packet header. Before the phase-tracking fix in
+// pumpResponse, every 0x00 was treated as OK and any such row
+// truncated the result set and desynchronised framing for the
+// next query on the same session.
+func TestPumpResponse_EmptyStringFirstColumnRow(t *testing.T) {
+	t.Parallel()
+	upR, upW := net.Pipe()
+	defer upR.Close()
+	var opOut bytes.Buffer
+	done := make(chan error, 1)
+	go func() { done <- pumpResponse(&opOut, upR, nil) }()
+
+	// Build a SELECT result-set with 1 column and a single row
+	// whose value is "" — this row's payload byte is `0x00`,
+	// which is what the bug treated as an OK terminator.
+	packets := []struct {
+		seq     byte
+		payload []byte
+	}{
+		{1, []byte{0x01}},                                   // column-count = 1
+		{2, buildMySQLColumnDef("col")},                     // column definition
+		{3, []byte{eofHeader, 0x00, 0x00, 0x02, 0x00}},      // intermediate EOF
+		{4, []byte{0x00}},                                   // row: first column = "" → 0x00
+		{5, []byte{eofHeader, 0x00, 0x00, 0x02, 0x00}},      // final EOF
+	}
+	for _, p := range packets {
+		if err := writeMySQLPacket(upW, p.seq, p.payload); err != nil {
+			t.Fatalf("write packet seq=%d: %v", p.seq, err)
+		}
+	}
+	_ = upW.Close()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("pumpResponse: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("pumpResponse did not return within timeout")
+	}
+
+	// Verify the entire 5-packet result-set was forwarded to the
+	// operator, not truncated at the 0x00-prefixed row.
+	reader := bytes.NewReader(opOut.Bytes())
+	var forwarded int
+	for reader.Len() > 0 {
+		if _, _, err := readMySQLPacket(reader); err != nil {
+			t.Fatalf("readMySQLPacket forwarded[%d]: %v", forwarded, err)
+		}
+		forwarded++
+	}
+	if forwarded != 5 {
+		t.Errorf("forwarded packet count = %d; want 5 (entire result set must reach operator)", forwarded)
+	}
+}
+
+// TestPumpResponse_OKOnFirstPacket exercises the non-result-set
+// happy path: a single OK packet (INSERT / UPDATE / DDL) at packet
+// position 0 terminates pumpResponse.
+func TestPumpResponse_OKOnFirstPacket(t *testing.T) {
+	t.Parallel()
+	upR, upW := net.Pipe()
+	defer upR.Close()
+	var opOut bytes.Buffer
+	done := make(chan error, 1)
+	go func() { done <- pumpResponse(&opOut, upR, nil) }()
+
+	if err := writeMySQLOK(upW, 1); err != nil {
+		t.Fatalf("write OK: %v", err)
+	}
+	_ = upW.Close()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("pumpResponse: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("pumpResponse did not return")
+	}
+}
+
+// TestPumpResponse_ERROnFirstPacket exercises the error path: an
+// ERR packet at position 0 terminates pumpResponse without any
+// further reads.
+func TestPumpResponse_ERROnFirstPacket(t *testing.T) {
+	t.Parallel()
+	upR, upW := net.Pipe()
+	defer upR.Close()
+	var opOut bytes.Buffer
+	done := make(chan error, 1)
+	go func() { done <- pumpResponse(&opOut, upR, nil) }()
+
+	if err := writeMySQLErr(upW, 1, 1064, "42000", "boom"); err != nil {
+		t.Fatalf("write ERR: %v", err)
+	}
+	_ = upW.Close()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("pumpResponse: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("pumpResponse did not return")
+	}
 }
 
 // _ assertion that the unused io.Reader interface is wired through —

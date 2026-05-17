@@ -678,6 +678,104 @@ func TestSQLConsole_IsDBProtocol(t *testing.T) {
 	}
 }
 
+// TestSQLConsole_SequenceDoesNotAdvanceOnRejectedMessages verifies
+// the audit-trail sequence number is only consumed by queries that
+// reached handleQuery, not by rejected control-frame messages
+// (bad JSON, unsupported message type, empty SQL). A dense
+// per-query sequence is the only way reviewers can tell whether
+// the audit log is complete; if rejected messages bumped the
+// counter the gap would be indistinguishable from a lost row.
+func TestSQLConsole_SequenceDoesNotAdvanceOnRejectedMessages(t *testing.T) {
+	t.Parallel()
+	f := newSQLConsoleFixture(t)
+	conn := f.dial(t)
+
+	// Interleave rejects + successes — each reject must NOT consume
+	// a sequence number.
+	send := func(msg interface{}) { f.send(t, conn, msg) }
+	drainErr := func() {
+		if got := f.readMessage(t, conn); got.Type != "error" {
+			t.Fatalf("expected error frame, got %+v", got)
+		}
+	}
+	drainQuery := func() {
+		// columns + row + end (canned single-row result)
+		_ = f.readMessage(t, conn)
+		_ = f.readMessage(t, conn)
+		if end := f.readMessage(t, conn); end.Type != "end" {
+			t.Fatalf("expected end frame, got %+v", end)
+		}
+	}
+
+	send(map[string]string{"type": "ping"}) // bad type
+	drainErr()
+	send(sqlConsoleClientMessage{Type: "query", SQL: "   \n  "}) // empty
+	drainErr()
+	send(sqlConsoleClientMessage{Type: "query", SQL: "SELECT 1"})
+	drainQuery()
+	send(map[string]string{"type": "ping"}) // another bad type
+	drainErr()
+	send(sqlConsoleClientMessage{Type: "query", SQL: "SELECT 1"})
+	drainQuery()
+
+	captured := f.sink.snapshot()
+	if len(captured) != 2 {
+		t.Fatalf("audit rows = %d; want exactly 2 (one per successful query)", len(captured))
+	}
+	if captured[0].Sequence != 1 {
+		t.Errorf("audit[0].sequence = %d; want 1", captured[0].Sequence)
+	}
+	if captured[1].Sequence != 2 {
+		t.Errorf("audit[1].sequence = %d; want 2 (must not skip on rejected frames)", captured[1].Sequence)
+	}
+}
+
+// TestQuoteDSNValue locks in the set of characters that force
+// quoting of a libpq key=value DSN token. The set must include any
+// whitespace (space / tab / newline / CR) and `=` because libpq
+// uses both as token boundaries, plus `'` and `\\` because those
+// are the quote and escape characters themselves. Missing any of
+// these in the set lets a credential containing that byte either
+// (a) silently truncate to whatever appears before the byte or
+// (b) inject arbitrary DSN parameters like `sslmode=disable`,
+// `host=attacker.example`, etc.
+func TestQuoteDSNValue(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		// Bare values (no special bytes) pass through verbatim.
+		{"plain", "alice", "alice"},
+		{"empty", "", ""},
+		{"digits", "12345", "12345"},
+		// Whitespace forces quoting.
+		{"space", "alice bob", "'alice bob'"},
+		{"tab", "a\tb", "'a\tb'"},
+		{"newline", "alice\nbob", "'alice\nbob'"},
+		{"carriage_return", "alice\rbob", "'alice\rbob'"},
+		{"crlf", "alice\r\nbob", "'alice\r\nbob'"},
+		// `=` forces quoting — otherwise libpq would interpret the
+		// right-hand side as another DSN parameter.
+		{"equals", "abc=def", "'abc=def'"},
+		{"injection_attempt", "abc=sslmode=disable", "'abc=sslmode=disable'"},
+		// Quote/backslash are escaped per libpq rules.
+		{"single_quote", "o'brien", `'o\'brien'`},
+		{"backslash", `a\b`, `'a\\b'`},
+		{"quote_and_backslash", `o'br\ian`, `'o\'br\\ian'`},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := quoteDSNValue(tc.in); got != tc.want {
+				t.Errorf("quoteDSNValue(%q) = %q; want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 // expectedSQLConsoleOutputHash recomputes the SHA-256 hash the
 // handler produces over a result-set, mirroring the in-handler
 // hashing logic. Used so the audit-row assertion in the happy-path
