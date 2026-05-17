@@ -454,8 +454,17 @@ func (l *PGListener) pumpUntilReady(ctx context.Context, session *AuthorizedSess
 	}
 }
 
-func (l *PGListener) flushTelemetry(ctx context.Context, recorder *IORecorder, parser *CommandParser) {
-	flushCtx, cancel := context.WithTimeout(ctx, l.cfg.ShutdownTimeout)
+// flushTelemetry drains the command parser and recorder. The flush
+// context is intentionally detached from the request ctx — on
+// SIGTERM the parent is already cancelled, so a derived context
+// would be born cancelled and parser.Close / recorder.Close would
+// immediately hit their <-ctx.Done() branches and abandon queued
+// audit rows + the replay blob. Detaching from context.Background
+// lets the bounded ShutdownTimeout actually elapse even mid-SIGTERM
+// (matches the SSH + K8s listener behaviour — see SSHListener.handleChannel
+// for the original comment on this invariant).
+func (l *PGListener) flushTelemetry(_ context.Context, recorder *IORecorder, parser *CommandParser) {
+	flushCtx, cancel := context.WithTimeout(context.Background(), l.cfg.ShutdownTimeout)
 	defer cancel()
 	if parser != nil {
 		parser.Close(flushCtx)
