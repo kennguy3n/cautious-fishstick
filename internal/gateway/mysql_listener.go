@@ -551,6 +551,23 @@ func (l *MySQLListener) proxyQueries(ctx context.Context, session *AuthorizedSes
 //
 // parser.WriteOutput is fed every byte we forward so the per-command
 // SHA-256 hash captures the full server response.
+//
+// Double-newline invariant (paired with proxyQueries above):
+//
+//   - proxyQueries always feeds "<sql_text>\n" into the parser BEFORE
+//     forwarding the COM_QUERY, so parser.pending is guaranteed
+//     non-nil by the time pumpResponse runs and any policy verdict
+//     (mysql:policy:deny / step_up) has already attached to it.
+//   - flushParser below emits a second "\n" on every end-of-response
+//     boundary. The first "\n" inside flushPendingLocked enqueues the
+//     finalised command (with output hash + risk flag) to the sink;
+//     the implicit startCommandLocked on that newline finds an empty
+//     input buffer and is a no-op. Net effect: exactly one audit row
+//     per COM_QUERY.
+//
+// Do NOT feed anything other than "\n" through parser.WriteInput here
+// — a non-newline byte would slip into the next pending command's
+// input and surface as a phantom audit row.
 func pumpResponse(opW io.Writer, upstream net.Conn, parser *CommandParser) error {
 	const (
 		phaseFirst    = 0 // expecting OK / ERR / column-count
@@ -560,10 +577,9 @@ func pumpResponse(opW io.Writer, upstream net.Conn, parser *CommandParser) error
 	phase := phaseFirst
 	flushParser := func() {
 		if parser != nil {
-			// Flush the pending COM_QUERY into the sink. WriteInput
-			// previously appended "\n" so the parser's pending
-			// command exists; emit one more "\n" here so it gets
-			// flushed even on follow-on queries.
+			// Second newline of the double-newline invariant
+			// documented in the pumpResponse doc comment. Keep this
+			// line a literal "\n" — do not parameterise.
 			parser.WriteInput(context.Background(), []byte("\n"))
 		}
 	}

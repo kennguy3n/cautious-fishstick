@@ -216,10 +216,26 @@ func (h *DBSQLConsoleHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Upgrade to a WebSocket BEFORE dialling the upstream database.
+	// A failed upgrade (browser tab closed, health probe hitting the
+	// endpoint, malformed Upgrade headers) would otherwise leave us
+	// holding a freshly-opened DB connection that we immediately
+	// close — each failed upgrade burns a connection from the
+	// target asset's pool. After upgrade the only signalling channel
+	// is the WebSocket itself, so a dial failure below is surfaced
+	// to the client as an `error`-typed message frame instead of a
+	// 502 response.
+	conn, err := h.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("gateway: sql-console: upgrade: %v", err)
+		return
+	}
+	defer conn.Close()
+
 	secretType, credential, err := h.injector.InjectSecret(r.Context(), session.SessionID, session.AccountID)
 	if err != nil {
 		log.Printf("gateway: sql-console: inject: %v", err)
-		http.Error(w, "credential unavailable", http.StatusBadGateway)
+		_ = h.writeError(conn, "credential", "credential unavailable")
 		return
 	}
 	// Defensive: clear the credential bytes after the database/sql
@@ -233,17 +249,10 @@ func (h *DBSQLConsoleHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	db, err := h.dialDB(dialCtx, session, secretType, credential)
 	if err != nil {
 		log.Printf("gateway: sql-console: dial: %v", err)
-		http.Error(w, "database connection failed", http.StatusBadGateway)
+		_ = h.writeError(conn, "dial", "database connection failed")
 		return
 	}
 	defer db.Close()
-
-	conn, err := h.upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Printf("gateway: sql-console: upgrade: %v", err)
-		return
-	}
-	defer conn.Close()
 
 	if err := h.pump(r.Context(), conn, db, session); err != nil && !isPeerClose(err) {
 		log.Printf("gateway: sql-console: pump: session=%s err=%v", session.SessionID, err)
@@ -289,14 +298,14 @@ func (h *DBSQLConsoleHandler) pump(
 			}
 			continue
 		}
-		sql := strings.TrimSpace(msg.SQL)
-		if sql == "" {
+		sqlText := strings.TrimSpace(msg.SQL)
+		if sqlText == "" {
 			if werr := h.writeError(conn, "bad_request", "empty sql"); werr != nil {
 				return werr
 			}
 			continue
 		}
-		if err := h.handleQuery(ctx, conn, db, session, sequence, sql); err != nil {
+		if err := h.handleQuery(ctx, conn, db, session, sequence, sqlText); err != nil {
 			return err
 		}
 		sequence++
@@ -482,14 +491,19 @@ type sqlConsoleClientMessage struct {
 }
 
 // sqlConsoleServerMessage is the union of outbound message shapes.
-// Fields not relevant to a particular Type omit cleanly via
-// omitempty so clients can rely on JSON discriminator tags.
+// Fields that don't apply to a given Type are tagged `omitempty`
+// EXCEPT row_count and duration_ms on the `end` frame: those are
+// numerics where the zero value is semantically meaningful (a
+// successful no-rows query, a sub-millisecond duration). The
+// frontend treats their absence as an error, so we always serialise
+// them on every message and accept the trivial extra bytes on
+// non-`end` frames.
 type sqlConsoleServerMessage struct {
 	Type       string   `json:"type"`
 	Columns    []string `json:"columns,omitempty"`
 	Values     []string `json:"values,omitempty"`
-	RowCount   int      `json:"row_count,omitempty"`
-	DurationMS int64    `json:"duration_ms,omitempty"`
+	RowCount   int      `json:"row_count"`
+	DurationMS int64    `json:"duration_ms"`
 	Code       string   `json:"code,omitempty"`
 	Message    string   `json:"message,omitempty"`
 }

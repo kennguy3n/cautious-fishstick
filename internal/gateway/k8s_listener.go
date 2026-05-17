@@ -227,6 +227,19 @@ func (l *K8sListener) handleExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Build the upstream URL BEFORE upgrading the operator socket so
+	// a malformed upstream URL surfaces as a clean HTTP error instead
+	// of a torn WebSocket. ParseK8sUpstream above already vets the
+	// scheme/host shape, but defensively re-validating here means a
+	// future refactor that lets an unsanitised string reach this
+	// function still fails closed.
+	upstreamURL, err := buildUpstreamExecURL(upstream.Server, namespace, pod, container, command, tty, stdin, stdout, stderr)
+	if err != nil {
+		log.Printf("gateway: k8s build upstream url session=%s: %v", sess.SessionID, err)
+		http.Error(w, "invalid upstream server", http.StatusBadGateway)
+		return
+	}
+
 	clientConn, err := l.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		// Upgrader has already written an HTTP error response.
@@ -236,7 +249,6 @@ func (l *K8sListener) handleExec(w http.ResponseWriter, r *http.Request) {
 	// `defer clientConn.Close()` would race with goroutines that
 	// share the conn — bidirectionalProxy owns the close.
 
-	upstreamURL := buildUpstreamExecURL(upstream.Server, namespace, pod, container, command, tty, stdin, stdout, stderr)
 	upstreamConn, err := dialUpstreamExec(r.Context(), upstreamURL, upstream, l.cfg.UpstreamDialTimeout)
 	if err != nil {
 		log.Printf("gateway: k8s dial upstream session=%s: %v", sess.SessionID, err)
@@ -268,7 +280,22 @@ func (l *K8sListener) handleExec(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := proxyK8sExec(r.Context(), clientConn, upstreamConn, recorder, parser); err != nil {
+	// The K8s stdin stream is byte-oriented (interactive shell on
+	// channel 0), so we need the same per-line policy tap the SSH
+	// listener uses — line buffering + EvaluateCommand on each
+	// newline-terminated chunk. filter is nil when no policy is
+	// configured, in which case the proxy still records I/O and
+	// captures per-command audit rows, just without blocking.
+	var filter *k8sStdinFilter
+	if l.cfg.CommandPolicy != nil {
+		filter = &k8sStdinFilter{
+			evaluator:   l.cfg.CommandPolicy,
+			workspaceID: sess.WorkspaceID,
+			sessionID:   sess.SessionID,
+		}
+	}
+
+	if err := proxyK8sExec(r.Context(), clientConn, upstreamConn, recorder, parser, filter); err != nil {
 		log.Printf("gateway: k8s proxy session=%s: %v", sess.SessionID, err)
 	}
 
@@ -386,8 +413,19 @@ func parseBoolQ(v string) bool {
 // gateway needs to mirror them all into the recorder regardless of
 // whether the operator asked for them — partial streams would
 // leave gaps in the replay artefact.
-func buildUpstreamExecURL(server, namespace, pod, container string, command []string, tty, _, _, _ bool) string {
-	u, _ := url.Parse(server)
+//
+// server is expected to be pre-validated by ParseK8sUpstream’s
+// URL-shape check, but the error from url.Parse is propagated
+// explicitly here so a future refactor that bypasses that check
+// fails loudly instead of silently producing a malformed URL.
+func buildUpstreamExecURL(server, namespace, pod, container string, command []string, tty, _, _, _ bool) (string, error) {
+	u, err := url.Parse(server)
+	if err != nil {
+		return "", fmt.Errorf("gateway: parse upstream server %q: %w", server, err)
+	}
+	if u == nil || u.Host == "" {
+		return "", fmt.Errorf("gateway: upstream server %q missing host", server)
+	}
 	switch u.Scheme {
 	case "https":
 		u.Scheme = "wss"
@@ -409,7 +447,7 @@ func buildUpstreamExecURL(server, namespace, pod, container string, command []st
 	q.Set("stdout", "true")
 	q.Set("stderr", "true")
 	u.RawQuery = q.Encode()
-	return u.String()
+	return u.String(), nil
 }
 
 // dialUpstreamExec opens the upstream WebSocket against the K8s API
@@ -440,10 +478,15 @@ func dialUpstreamExec(ctx context.Context, target string, up *K8sUpstream, timeo
 }
 
 // buildUpstreamTLSConfig assembles the *tls.Config the dialer uses
-// for the upstream API server. CAPEM, when present, is added to a
-// fresh RootCAs pool — we never load the system trust store for
-// upstream calls so a host-level cert addition can't widen the
-// gateway's trust boundary without an explicit kubeconfig change.
+// for the upstream API server. When CAPEM is present (the common
+// case for in-cluster kubeconfigs) we pin RootCAs to a fresh pool
+// containing only those certs, so a host-level cert addition can't
+// widen the gateway's trust boundary without an explicit kubeconfig
+// change. When CAPEM is empty we leave RootCAs nil so Go's TLS
+// stack falls through to the host's system trust store — acceptable
+// for managed clusters (EKS / GKE / AKS) whose API servers present
+// publicly-trusted certs. Operators that want to forbid the system
+// store can supply an explicit CAPEM in the upstream payload.
 func buildUpstreamTLSConfig(up *K8sUpstream) *tls.Config {
 	cfg := &tls.Config{
 		MinVersion:         tls.VersionTLS12,
@@ -480,7 +523,7 @@ func packK8sErrorFrame(msg string) []byte {
 //
 // The proxy returns when either side closes the connection. ctx is
 // observed for early cancellation (gateway shutdown).
-func proxyK8sExec(ctx context.Context, client, upstream *websocket.Conn, recorder *IORecorder, parser *CommandParser) error {
+func proxyK8sExec(ctx context.Context, client, upstream *websocket.Conn, recorder *IORecorder, parser *CommandParser, filter *k8sStdinFilter) error {
 	var wg sync.WaitGroup
 	var firstErr error
 	var errOnce sync.Once
@@ -504,11 +547,12 @@ func proxyK8sExec(ctx context.Context, client, upstream *websocket.Conn, recorde
 	}()
 
 	wg.Add(2)
-	// Operator → Upstream
+	// Operator → Upstream (filter only applies to this direction:
+	// stdin frames originate from the operator, never the upstream).
 	go func() {
 		defer wg.Done()
 		defer func() { _ = upstream.Close() }()
-		if err := pumpK8sFrames(client, upstream, recorder, parser, true); err != nil {
+		if err := pumpK8sFrames(ctx, client, upstream, recorder, parser, filter, true); err != nil {
 			setErr(fmt.Errorf("client→upstream: %w", err))
 		}
 	}()
@@ -516,7 +560,7 @@ func proxyK8sExec(ctx context.Context, client, upstream *websocket.Conn, recorde
 	go func() {
 		defer wg.Done()
 		defer func() { _ = client.Close() }()
-		if err := pumpK8sFrames(upstream, client, recorder, parser, false); err != nil {
+		if err := pumpK8sFrames(ctx, upstream, client, recorder, parser, nil, false); err != nil {
 			setErr(fmt.Errorf("upstream→client: %w", err))
 		}
 	}()
@@ -528,7 +572,13 @@ func proxyK8sExec(ctx context.Context, client, upstream *websocket.Conn, recorde
 // indicates the direction (operator → upstream when true). The
 // channel-prefixed framing is preserved on the wire; the recorder
 // and parser observe the unframed payload bytes only.
-func pumpK8sFrames(src, dst *websocket.Conn, recorder *IORecorder, parser *CommandParser, fromClient bool) error {
+//
+// When filter != nil and the frame is an operator-side stdin frame,
+// the filter applies the command policy line-by-line: denied lines
+// collapse to a single '\n' on the upstream wire and an error frame
+// is sent back to the operator on the stderr channel. filter MUST
+// be nil for the upstream→operator direction.
+func pumpK8sFrames(ctx context.Context, src, dst *websocket.Conn, recorder *IORecorder, parser *CommandParser, filter *k8sStdinFilter, fromClient bool) error {
 	for {
 		msgType, payload, err := src.ReadMessage()
 		if err != nil {
@@ -561,9 +611,43 @@ func pumpK8sFrames(src, dst *websocket.Conn, recorder *IORecorder, parser *Comma
 		channel := payload[0]
 		body := payload[1:]
 
-		// Feed the audit + recording taps before forwarding so a
-		// crash mid-write still leaves a partial trail.
-		recordK8sFrame(recorder, parser, channel, body, fromClient)
+		// Record the ORIGINAL body (pre-filter) so the replay shows
+		// exactly what the operator sent — including denied commands
+		// the upstream never saw. Recording is direction-gated:
+		// stdin frames must originate from the operator, and
+		// stdout / stderr frames from the upstream. Cross-direction
+		// frames (a malformed upstream blasting channel=0, or vice
+		// versa) are forwarded but not recorded so the replay
+		// timeline can't be poisoned by a bogus peer.
+		recordK8sFrame(recorder, channel, body, fromClient)
+
+		if fromClient && channel == k8sChanStdin {
+			forward := body
+			if parser != nil {
+				if filter != nil {
+					forward = filter.process(ctx, parser, src, body)
+				} else {
+					parser.WriteInput(context.Background(), body)
+				}
+			}
+			if len(forward) == 0 {
+				// Entire frame was denied — nothing to forward upstream.
+				continue
+			}
+			if filter != nil {
+				// Rebuild the frame with the channel prefix because
+				// filter may have shortened the body (denied lines
+				// collapse to a single '\n'). When filter is nil,
+				// forward aliases body and the original payload is
+				// reusable as-is.
+				newPayload := make([]byte, 1+len(forward))
+				newPayload[0] = channel
+				copy(newPayload[1:], forward)
+				payload = newPayload
+			}
+		} else if parser != nil && !fromClient && (channel == k8sChanStdout || channel == k8sChanStderr) {
+			parser.WriteOutput(body)
+		}
 
 		if err := dst.WriteMessage(msgType, payload); err != nil {
 			return err
@@ -571,36 +655,127 @@ func pumpK8sFrames(src, dst *websocket.Conn, recorder *IORecorder, parser *Comma
 	}
 }
 
-// recordK8sFrame tees one decoded channel frame into the recorder
-// and command parser. The parser only cares about stdin (input
-// boundary) and stdout/stderr (output hash); resize and error
-// frames are control traffic.
+// recordK8sFrame tees one decoded channel frame into the recorder.
+// Direction is gated on fromClient: stdin frames must come from the
+// operator, stdout / stderr frames from the upstream. Mis-directed
+// frames are dropped at the recorder (still forwarded on the wire)
+// so a malformed peer can't poison the replay timeline by writing
+// to the wrong channel.
 //
 // The recorder stores a copy of body so the WebSocket read buffer
 // can be reused for the next frame without corrupting the
 // recording.
-func recordK8sFrame(recorder *IORecorder, parser *CommandParser, channel byte, body []byte, fromClient bool) {
-	if len(body) == 0 {
+func recordK8sFrame(recorder *IORecorder, channel byte, body []byte, fromClient bool) {
+	if recorder == nil || len(body) == 0 {
 		return
 	}
-	if recorder != nil {
-		switch channel {
-		case k8sChanStdin:
-			recorder.Record(DirectionInput, append([]byte(nil), body...))
-		case k8sChanStdout:
-			recorder.Record(DirectionOutput, append([]byte(nil), body...))
-		case k8sChanStderr:
-			recorder.Record(DirectionStderr, append([]byte(nil), body...))
-		}
+	switch {
+	case fromClient && channel == k8sChanStdin:
+		recorder.Record(DirectionInput, append([]byte(nil), body...))
+	case !fromClient && channel == k8sChanStdout:
+		recorder.Record(DirectionOutput, append([]byte(nil), body...))
+	case !fromClient && channel == k8sChanStderr:
+		recorder.Record(DirectionStderr, append([]byte(nil), body...))
 	}
-	if parser != nil {
-		if fromClient && channel == k8sChanStdin {
+}
+
+// k8sStdinFilter applies the command policy to operator-side stdin
+// frames. K8s exec uses a byte-oriented channel-prefixed protocol
+// (stdin is channel 0), so we mirror the SSH listener's
+// commandParserTap pattern: buffer bytes until a newline, evaluate
+// the just-closed line, and tag the parser's pending command with
+// the verdict.
+//
+// Lifecycle: one filter per K8s exec session. lineBuf holds the
+// partial line still being accumulated across frames; it is reset
+// on each newline.
+type k8sStdinFilter struct {
+	evaluator   CommandPolicyEvaluator
+	workspaceID string
+	sessionID   string
+	lineBuf     []byte
+}
+
+// process feeds body through the parser line-by-line and returns
+// the bytes to forward upstream. Denied lines collapse to a single
+// '\n' so the upstream sees an empty input. A deny verdict also
+// writes an error frame back to the operator via errSink on the
+// k8s stderr channel so the operator's terminal shows the reason.
+//
+// The parser is fed inside this function so SetRiskFlag attaches
+// to the right pending command — the same per-line ordering as the
+// SSH listener's commandParserTap.Read.
+func (f *k8sStdinFilter) process(ctx context.Context, parser *CommandParser, errSink *websocket.Conn, body []byte) []byte {
+	if f == nil || parser == nil || len(body) == 0 {
+		if parser != nil {
 			parser.WriteInput(context.Background(), body)
 		}
-		if !fromClient && (channel == k8sChanStdout || channel == k8sChanStderr) {
-			parser.WriteOutput(body)
-		}
+		return body
 	}
+	out := make([]byte, 0, len(body))
+	lineStart := 0
+	for i := 0; i < len(body); i++ {
+		c := body[i]
+		if c != '\n' && c != '\r' {
+			if len(f.lineBuf) < defaultMaxInputBytes {
+				f.lineBuf = append(f.lineBuf, c)
+			}
+			continue
+		}
+		chunk := body[lineStart : i+1]
+		parser.WriteInput(context.Background(), chunk)
+		denied, reason := f.evaluateLine(ctx, parser)
+		if denied {
+			out = append(out, '\n')
+			if errSink != nil {
+				msg := "\r\npam-gateway: command blocked by policy"
+				if reason != "" {
+					msg += ": " + reason
+				}
+				msg += "\r\n"
+				frame := make([]byte, 1+len(msg))
+				frame[0] = k8sChanStderr
+				copy(frame[1:], msg)
+				_ = errSink.WriteMessage(websocket.BinaryMessage, frame)
+			}
+		} else {
+			out = append(out, chunk...)
+		}
+		lineStart = i + 1
+	}
+	if lineStart < len(body) {
+		partial := body[lineStart:]
+		parser.WriteInput(context.Background(), partial)
+		out = append(out, partial...)
+	}
+	return out
+}
+
+// evaluateLine evaluates the accumulated lineBuf against the
+// command policy, clears the buffer, and updates the parser's risk
+// flag on deny / step_up. Returns (denied=true, reason) when the
+// caller should collapse the line on the upstream wire.
+func (f *k8sStdinFilter) evaluateLine(ctx context.Context, parser *CommandParser) (denied bool, reason string) {
+	line := string(f.lineBuf)
+	f.lineBuf = f.lineBuf[:0]
+	if line == "" || f.evaluator == nil {
+		return false, ""
+	}
+	evalCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	action, r, err := f.evaluator.EvaluateCommand(evalCtx, f.workspaceID, f.sessionID, line)
+	if err != nil {
+		log.Printf("gateway: k8s evaluate command session=%s: %v", f.sessionID, err)
+		return false, ""
+	}
+	switch action {
+	case "deny":
+		parser.SetRiskFlag("k8s:policy:deny")
+		return true, r
+	case "step_up":
+		parser.SetRiskFlag("k8s:policy:step_up")
+	}
+	return false, ""
 }
 
 // isExpectedCloseErr returns true when err is one of the close

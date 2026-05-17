@@ -403,8 +403,11 @@ func TestExtractBearerToken(t *testing.T) {
 // three regardless of what the operator asked for).
 func TestBuildUpstreamExecURL(t *testing.T) {
 	t.Parallel()
-	got := buildUpstreamExecURL("https://api.cluster.example:6443", "payments", "api-pod", "app",
+	got, err := buildUpstreamExecURL("https://api.cluster.example:6443", "payments", "api-pod", "app",
 		[]string{"/bin/sh", "-c", "uptime"}, false, true, true, true)
+	if err != nil {
+		t.Fatalf("buildUpstreamExecURL: %v", err)
+	}
 	u, err := url.Parse(got)
 	if err != nil {
 		t.Fatalf("parse %q: %v", got, err)
@@ -430,6 +433,160 @@ func TestBuildUpstreamExecURL(t *testing.T) {
 			t.Errorf("%s = %q, want true", k, q.Get(k))
 		}
 	}
+}
+
+// TestBuildUpstreamExecURL_BadServer verifies the function refuses
+// malformed server URLs instead of returning a panic-prone partial.
+func TestBuildUpstreamExecURL_BadServer(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		"://no-scheme",     // url.Parse returns an error
+		"https://",         // host empty
+		"not-a-url-at-all", // no scheme + no host
+	}
+	for _, server := range cases {
+		_, err := buildUpstreamExecURL(server, "ns", "pod", "c", []string{"echo"}, false, true, true, true)
+		if err == nil {
+			t.Errorf("buildUpstreamExecURL(%q) returned nil error; want non-nil", server)
+		}
+	}
+}
+
+// TestK8sStdinFilter_DeniedLineCollapsesAndTagsPending feeds a
+// two-line stdin frame through the filter where the first line
+// matches the deny rule. The filter should:
+//
+//   - return only the second line + the placeholder newline for the
+//     first, so the upstream never receives "rm -rf /";
+//   - tag the parser's pending command (the just-closed deny line)
+//     with "k8s:policy:deny" so the audit row is flagged.
+func TestK8sStdinFilter_DeniedLineCollapsesAndTagsPending(t *testing.T) {
+	t.Parallel()
+	sink := NewMemoryCommandSink()
+	parser, err := NewCommandParser("ses-k8s-1", sink, CommandParserConfig{})
+	if err != nil {
+		t.Fatalf("NewCommandParser: %v", err)
+	}
+	defer parser.Close(context.Background())
+
+	filter := &k8sStdinFilter{
+		evaluator:   &fakeCommandPolicy{denyExact: "rm -rf /", reason: "destructive"},
+		workspaceID: "ws-1",
+		sessionID:   "ses-k8s-1",
+	}
+
+	body := []byte("rm -rf /\nuptime\n")
+	out := filter.process(context.Background(), parser, nil, body)
+	wantOut := "\nuptime\n"
+	if string(out) != wantOut {
+		t.Errorf("filter forward bytes = %q, want %q", out, wantOut)
+	}
+
+	// Trigger the parser to flush the most recently captured
+	// command so the deny flag we set on `rm -rf /` lands in the
+	// sink. Close calls flushPendingLocked.
+	parser.Close(context.Background())
+	rows := sink.Commands()
+	if len(rows) < 1 {
+		t.Fatalf("expected at least 1 captured command, got %d", len(rows))
+	}
+	var denyRow *AppendCommandInput
+	for i := range rows {
+		if rows[i].Input == "rm -rf /" {
+			denyRow = &rows[i]
+			break
+		}
+	}
+	if denyRow == nil {
+		t.Fatalf("no captured row for 'rm -rf /'; got %+v", rows)
+	}
+	if denyRow.RiskFlag == nil || *denyRow.RiskFlag != "k8s:policy:deny" {
+		t.Errorf("denied row risk_flag = %v, want %q", denyRow.RiskFlag, "k8s:policy:deny")
+	}
+}
+
+// TestK8sStdinFilter_StepUpTagsPendingButForwards verifies that
+// step_up tags the row but still forwards the command bytes
+// upstream (Phase 1 step_up does not block the wire — the MFA
+// prompt is out-of-band).
+func TestK8sStdinFilter_StepUpTagsPendingButForwards(t *testing.T) {
+	t.Parallel()
+	sink := NewMemoryCommandSink()
+	parser, err := NewCommandParser("ses-k8s-2", sink, CommandParserConfig{})
+	if err != nil {
+		t.Fatalf("NewCommandParser: %v", err)
+	}
+	defer parser.Close(context.Background())
+
+	filter := &k8sStdinFilter{
+		evaluator:   &stubStepUpPolicy{stepUpExact: "kubectl get secret app"},
+		workspaceID: "ws-1",
+		sessionID:   "ses-k8s-2",
+	}
+
+	body := []byte("kubectl get secret app\n")
+	out := filter.process(context.Background(), parser, nil, body)
+	if string(out) != string(body) {
+		t.Errorf("step_up filter forward bytes = %q, want %q", out, body)
+	}
+	parser.Close(context.Background())
+	rows := sink.Commands()
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 captured command, got %d (%+v)", len(rows), rows)
+	}
+	if rows[0].RiskFlag == nil || *rows[0].RiskFlag != "k8s:policy:step_up" {
+		t.Errorf("step_up row risk_flag = %v, want %q", rows[0].RiskFlag, "k8s:policy:step_up")
+	}
+}
+
+// TestK8sStdinFilter_PartialLineSpansFrames covers the cross-frame
+// line buffer: the operator types "rm -rf" in one frame, " /\n" in
+// the next, and the policy still recognises the joined line.
+func TestK8sStdinFilter_PartialLineSpansFrames(t *testing.T) {
+	t.Parallel()
+	sink := NewMemoryCommandSink()
+	parser, err := NewCommandParser("ses-k8s-3", sink, CommandParserConfig{})
+	if err != nil {
+		t.Fatalf("NewCommandParser: %v", err)
+	}
+	defer parser.Close(context.Background())
+
+	filter := &k8sStdinFilter{
+		evaluator:   &fakeCommandPolicy{denyExact: "rm -rf /", reason: "destructive"},
+		workspaceID: "ws-1",
+		sessionID:   "ses-k8s-3",
+	}
+	if got := filter.process(context.Background(), parser, nil, []byte("rm -rf")); string(got) != "rm -rf" {
+		t.Errorf("partial #1 forward = %q, want unchanged", got)
+	}
+	if got := filter.process(context.Background(), parser, nil, []byte(" /\n")); string(got) != "\n" {
+		t.Errorf("partial #2 forward = %q, want collapsed newline", got)
+	}
+	parser.Close(context.Background())
+	rows := sink.Commands()
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 captured command, got %d (%+v)", len(rows), rows)
+	}
+	if rows[0].Input != "rm -rf /" {
+		t.Errorf("captured input = %q, want %q", rows[0].Input, "rm -rf /")
+	}
+	if rows[0].RiskFlag == nil || *rows[0].RiskFlag != "k8s:policy:deny" {
+		t.Errorf("captured risk_flag = %v, want %q", rows[0].RiskFlag, "k8s:policy:deny")
+	}
+}
+
+// stubStepUpPolicy returns "step_up" for an exact-match command and
+// "allow" otherwise. Used by the filter tests to exercise the
+// step_up branch without dragging in the full PAMCommandPolicyService.
+type stubStepUpPolicy struct {
+	stepUpExact string
+}
+
+func (s *stubStepUpPolicy) EvaluateCommand(_ context.Context, _, _, input string) (string, string, error) {
+	if s != nil && input == s.stepUpExact {
+		return "step_up", "", nil
+	}
+	return "allow", "", nil
 }
 
 // ---------------------------------------------------------------------

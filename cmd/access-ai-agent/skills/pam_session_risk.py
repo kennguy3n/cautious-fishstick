@@ -162,23 +162,43 @@ def run(payload: Dict[str, Any]) -> Dict[str, Any]:
         "reason": reason,
     }
 
+    # Build a normalised view of the inputs for the LLM prompt so
+    # bool-typed values that the stub already rejected (e.g.
+    # ``time_of_day: True``) don't leak through to the model as
+    # raw `True` / `False`. is_first_access / is_emergency are
+    # rendered as strict booleans because the rule path above only
+    # treats `True` as positive.
+    processed_payload: Dict[str, Any] = {
+        "user_id": user_id,
+        "asset_id": asset_id,
+        "protocol": protocol,
+        "criticality": criticality,
+        "time_of_day": int(time_of_day) if isinstance(time_of_day, (int, float)) else None,
+        "previous_denials": previous_denials if isinstance(previous_denials, int) else None,
+        "is_first_access": payload.get("is_first_access") is True,
+        "is_emergency": payload.get("is_emergency") is True,
+    }
+
     # Phase 5 LLM scoring: same wire-in as access_risk_assessment.
     try:
-        return _llm_score(payload, deterministic)
+        return _llm_score(processed_payload, deterministic)
     except LLMUnavailable as exc:
         logger.debug("llm PAM scoring unavailable: %s", exc)
         return deterministic
 
 
-def _llm_score(payload: Dict[str, Any], deterministic: Dict[str, Any]) -> Dict[str, Any]:
+def _llm_score(processed_payload: Dict[str, Any], deterministic: Dict[str, Any]) -> Dict[str, Any]:
     """Invoke the configured LLM and parse its structured response.
 
     The deterministic baseline is handed to the LLM as context so the
     model has the rule-based signals it can corroborate or override.
+    ``processed_payload`` is the canonical, type-validated view of
+    the request fields the stub already inspected — passing the raw
+    payload here would defeat the type-validation the stub performed.
     On any deviation we surface :class:`LLMUnavailable` so the caller
     falls back to the deterministic result.
     """
-    prompt = _build_prompt(payload, deterministic)
+    prompt = _build_prompt(processed_payload, deterministic)
     result = call_llm(
         prompt,
         system=(
@@ -213,23 +233,25 @@ def _llm_score(payload: Dict[str, Any], deterministic: Dict[str, Any]) -> Dict[s
     }
 
 
-def _build_prompt(payload: Dict[str, Any], deterministic: Dict[str, Any]) -> str:
+def _build_prompt(processed_payload: Dict[str, Any], deterministic: Dict[str, Any]) -> str:
     """Render the LLM prompt without leaking secrets.
 
-    Only fields the deterministic stub already inspected are
-    forwarded so the model never sees an injected credential or
-    long free-text field.
+    Only fields the deterministic stub already inspected and type-
+    validated are forwarded so the model never sees an injected
+    credential, a bool sneaking in as ``time_of_day``, or a long
+    free-text field. ``processed_payload`` is the canonical view
+    built in ``run`` — never the raw caller-supplied dict.
     """
     return (
         "Score this PAM session request:\n"
-        f"user_id: {payload.get('user_id')}\n"
-        f"asset_id: {payload.get('asset_id')}\n"
-        f"protocol: {payload.get('protocol')}\n"
-        f"criticality: {payload.get('criticality')}\n"
-        f"time_of_day: {payload.get('time_of_day')}\n"
-        f"previous_denials: {payload.get('previous_denials')}\n"
-        f"is_first_access: {payload.get('is_first_access')}\n"
-        f"is_emergency: {payload.get('is_emergency')}\n\n"
+        f"user_id: {processed_payload.get('user_id')}\n"
+        f"asset_id: {processed_payload.get('asset_id')}\n"
+        f"protocol: {processed_payload.get('protocol')}\n"
+        f"criticality: {processed_payload.get('criticality')}\n"
+        f"time_of_day: {processed_payload.get('time_of_day')}\n"
+        f"previous_denials: {processed_payload.get('previous_denials')}\n"
+        f"is_first_access: {processed_payload.get('is_first_access')}\n"
+        f"is_emergency: {processed_payload.get('is_emergency')}\n\n"
         f"Deterministic baseline (corroborate or override): {deterministic}\n"
     )
 
@@ -260,14 +282,18 @@ def _hour_or_default(value: Any, default: int) -> int:
 def _recommend(score: str, factors: List[str], previous_denials: Any) -> str:
     """Translate a (score, factors) pair into a routing recommendation.
 
-    Rules — kept narrow so test coverage is exhaustive:
+    Rules — evaluated top-to-bottom; the first matching rule wins.
+    Kept narrow so test coverage is exhaustive:
 
-      - 3+ prior denials                                        → deny
-      - emergency_access                                        → require_approval (or deny)
-      - score == high                                           → require_approval
-      - score == medium AND any high-signal factor              → require_approval
-      - score == low AND no factors                             → auto_approve
-      - default                                                 → require_approval
+      1. previous_denials >= DENIAL_DENY_THRESHOLD                → ``deny``
+      2. emergency_access in factors                              → ``require_approval``
+      3. score == "high"                                          → ``require_approval``
+      4. score == "low" and no factors at all                     → ``auto_approve``
+      5. anything else (medium, or low+factors)                   → ``require_approval``
+
+    Rule 5 is the catch-all that covers the medium band: there is
+    no separate "medium + high-signal factor" branch in the
+    implementation — every medium request flows through here.
     """
     if isinstance(previous_denials, int) and previous_denials >= DENIAL_DENY_THRESHOLD:
         return "deny"

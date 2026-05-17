@@ -597,39 +597,43 @@ func TestSQLConsole_NonDBProtocol(t *testing.T) {
 	}
 }
 
-// TestSQLConsole_InjectFailure returns 502 when the secret injector
-// is unavailable.
+// TestSQLConsole_InjectFailure surfaces credential-injector errors
+// as a WebSocket `error` frame with code "credential". The handler
+// upgrades the request BEFORE injecting the secret (so a failed
+// upgrade can't burn a vault read), so an injector failure is
+// reported on the open WebSocket, not as an HTTP 502.
 func TestSQLConsole_InjectFailure(t *testing.T) {
 	t.Parallel()
 	f := newSQLConsoleFixture(t)
 	f.injector.wantErr = errors.New("vault unreachable")
-	url := strings.Replace(f.dialURL, "ws://", "http://", 1)
-	resp, err := http.Get(url)
-	if err != nil {
-		t.Fatalf("GET: %v", err)
+	conn := f.dial(t)
+	msg := f.readMessage(t, conn)
+	if msg.Type != "error" {
+		t.Fatalf("frame type = %q; want error", msg.Type)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadGateway {
-		t.Errorf("status = %d; want 502 for inject failure", resp.StatusCode)
+	if msg.Code != "credential" {
+		t.Errorf("error.code = %q; want credential", msg.Code)
 	}
 }
 
-// TestSQLConsole_DialFailure returns 502 when the database dialer
-// can't establish a connection to the asset.
+// TestSQLConsole_DialFailure surfaces database-dial errors as a
+// WebSocket `error` frame with code "dial". The handler upgrades
+// the request BEFORE dialling the database (so a failed upgrade
+// can't burn a target connection-pool slot), so a dial failure is
+// reported on the open WebSocket, not as an HTTP 502.
 func TestSQLConsole_DialFailure(t *testing.T) {
 	t.Parallel()
 	f := newSQLConsoleFixture(t)
 	f.handler.dialDB = func(_ context.Context, _ *AuthorizedSession, _ string, _ []byte) (*sql.DB, error) {
 		return nil, errors.New("connection refused")
 	}
-	url := strings.Replace(f.dialURL, "ws://", "http://", 1)
-	resp, err := http.Get(url)
-	if err != nil {
-		t.Fatalf("GET: %v", err)
+	conn := f.dial(t)
+	msg := f.readMessage(t, conn)
+	if msg.Type != "error" {
+		t.Fatalf("frame type = %q; want error", msg.Type)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadGateway {
-		t.Errorf("status = %d; want 502 for dial failure", resp.StatusCode)
+	if msg.Code != "dial" {
+		t.Errorf("error.code = %q; want dial", msg.Code)
 	}
 }
 

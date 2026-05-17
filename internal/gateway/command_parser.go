@@ -137,6 +137,12 @@ func NewCommandParser(sessionID string, sink CommandSink, cfg CommandParserConfi
 
 // worker drains queueCh into the sink. The sink is given a 5s
 // timeout per call so a hung HTTP endpoint cannot pin shutdown.
+//
+// Worker lifecycle invariant: this goroutine is started exactly once
+// by NewCommandParser and exits exactly once, when Close closes
+// queueCh. Concurrent Close calls are serialised by the p.closed
+// guard in Close; only the first invocation closes queueCh, so the
+// worker is never sent on a closed channel and never exits early.
 func (p *CommandParser) worker() {
 	defer close(p.workerDone)
 	for cmd := range p.queueCh {
