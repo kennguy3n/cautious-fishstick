@@ -246,6 +246,195 @@ func TestSSHListener_EndToEnd_RecordsAndCapturesCommands(t *testing.T) {
 	}
 }
 
+// TestSSHListener_CommandPolicyDeny verifies that when the command
+// policy evaluator returns "deny" for a typed command, the deny
+// reason is written *to the operator's SSH channel* (visible on
+// the client's stdout) and NOT smuggled back into upstream stdin
+// (which would execute the human-readable reason as shell input
+// on the target asset). It is the regression test for the bug
+// Devin Review caught on PR #96.
+func TestSSHListener_CommandPolicyDeny(t *testing.T) {
+	upstream := newFakeUpstreamSSH(t)
+	defer upstream.Close()
+
+	const (
+		sessionID  = "01HXYE2EQR8K4PAMZJ4N7N9X7L"
+		username   = "ops"
+		token      = "deny-token"
+		denyCmd    = "rm-rf-prod"
+		denyReason = "destructive command on prod asset"
+	)
+
+	host, portStr, err := net.SplitHostPort(upstream.Addr())
+	if err != nil {
+		t.Fatalf("split upstream host: %v", err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("parse upstream port: %v", err)
+	}
+
+	authz := &fakeSessionAuthorizer{
+		session: AuthorizedSession{
+			SessionID:   sessionID,
+			WorkspaceID: "ws-deny",
+			LeaseID:     "lease-deny",
+			AssetID:     "asset-deny",
+			AccountID:   "acct-deny",
+			Protocol:    "ssh",
+			TargetHost:  host,
+			TargetPort:  port,
+			Username:    username,
+		},
+		expectedToken: token,
+	}
+	injector := &fakeSecretInjector{secretType: "password", secret: []byte("ignored")}
+	replayStore := NewMemoryReplayStore()
+	commandSink := NewMemoryCommandSink()
+	policy := &fakeCommandPolicy{denyExact: denyCmd, reason: denyReason}
+
+	hostKey := mustGenerateHostKey(t)
+	listener, err := NewSSHListener(SSHListenerConfig{
+		HostKey:       hostKey,
+		Authorizer:    authz,
+		Injector:      injector,
+		ReplayStore:   replayStore,
+		CommandSink:   commandSink,
+		CommandPolicy: policy,
+	})
+	if err != nil {
+		t.Fatalf("NewSSHListener: %v", err)
+	}
+	gw, gwAddr := startListener(t, listener)
+	defer gw.cancel()
+
+	clientCfg := &ssh.ClientConfig{
+		User:            username,
+		Auth:            []ssh.AuthMethod{ssh.Password(token)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+	}
+	cli, err := ssh.Dial("tcp", gwAddr, clientCfg)
+	if err != nil {
+		t.Fatalf("dial gateway: %v", err)
+	}
+	defer cli.Close()
+	sess, err := cli.NewSession()
+	if err != nil {
+		t.Fatalf("client new session: %v", err)
+	}
+	stdin, err := sess.StdinPipe()
+	if err != nil {
+		t.Fatalf("client stdin pipe: %v", err)
+	}
+	stdoutR, err := sess.StdoutPipe()
+	if err != nil {
+		t.Fatalf("client stdout pipe: %v", err)
+	}
+	if err := sess.Shell(); err != nil {
+		t.Fatalf("client shell start: %v", err)
+	}
+
+	// Issue the denied command. The listener should swap its bytes
+	// for an empty newline on the upstream side and emit the deny
+	// reason directly to the operator's channel (stdout from the
+	// client's perspective).
+	if _, err := io.WriteString(stdin, denyCmd+"\n"); err != nil {
+		t.Fatalf("write deny cmd to stdin: %v", err)
+	}
+	stdoutBuf := bufio.NewReader(stdoutR)
+	deadline := time.Now().Add(3 * time.Second)
+	var collected strings.Builder
+	for time.Now().Before(deadline) {
+		line, rerr := stdoutBuf.ReadString('\n')
+		if line != "" {
+			collected.WriteString(line)
+			if strings.Contains(collected.String(), "command blocked by policy") {
+				break
+			}
+		}
+		if rerr != nil {
+			break
+		}
+	}
+	if !strings.Contains(collected.String(), "command blocked by policy") {
+		t.Fatalf("expected deny banner on operator stdout; got %q", collected.String())
+	}
+	if !strings.Contains(collected.String(), denyReason) {
+		t.Fatalf("expected deny reason %q on operator stdout; got %q", denyReason, collected.String())
+	}
+
+	// The fake upstream echoes any unknown command back as "unknown: <line>".
+	// The denied command was rewritten to an empty newline before
+	// reaching the upstream shell, so we MUST NOT see an "unknown:
+	// rm-rf-prod" echo — that would mean the policy bypass we're
+	// fixing has regressed. We also must not see the deny reason
+	// echoed as input ("unknown: pam-gateway: command blocked …").
+	_ = stdin.Close()
+	rest, _ := io.ReadAll(stdoutBuf)
+	combined := collected.String() + string(rest)
+	if strings.Contains(combined, "unknown: "+denyCmd) {
+		t.Fatalf("upstream shell received the denied command; got %q", combined)
+	}
+	if strings.Contains(combined, "unknown: pam-gateway") {
+		t.Fatalf("deny banner was smuggled into upstream stdin and echoed back; got %q", combined)
+	}
+
+	// Tear the session down so the listener flushes the parser /
+	// recorder.
+	if err := sess.Wait(); err != nil {
+		var exitErr *ssh.ExitError
+		if !errors.As(err, &exitErr) && !errors.Is(err, io.EOF) {
+			t.Logf("client session wait: %v", err)
+		}
+	}
+	_ = cli.Close()
+
+	// The deny path still records the typed bytes as a command row,
+	// flagged with policy:deny so audit downstream can spot the
+	// attempt. Poll the sink with a small timeout.
+	pollDeadline := time.Now().Add(2 * time.Second)
+	var rows []AppendCommandInput
+	for time.Now().Before(pollDeadline) {
+		rows = commandSink.Commands()
+		if len(rows) >= 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(rows) < 1 {
+		t.Fatalf("expected the denied command to be captured as a sink row; got 0 rows")
+	}
+	row := rows[0]
+	if row.Input != denyCmd {
+		t.Fatalf("captured row input mismatch: want %q; got %q", denyCmd, row.Input)
+	}
+	if row.RiskFlag == nil {
+		t.Fatalf("captured row should carry a policy:deny risk flag; got nil")
+	}
+	if !strings.Contains(*row.RiskFlag, "policy:deny") {
+		t.Fatalf("captured row should carry policy:deny reason; got %q", *row.RiskFlag)
+	}
+}
+
+// fakeCommandPolicy is a minimal CommandPolicyEvaluator that returns
+// "deny" with a fixed reason whenever the incoming command matches
+// denyExact, and "allow" for everything else.
+type fakeCommandPolicy struct {
+	denyExact string
+	reason    string
+}
+
+func (p *fakeCommandPolicy) EvaluateCommand(_ context.Context, _, _, input string) (string, string, error) {
+	if p == nil {
+		return "allow", "", nil
+	}
+	if input == p.denyExact {
+		return "deny", p.reason, nil
+	}
+	return "allow", "", nil
+}
+
 // TestSSHListener_RejectsBadToken proves the gateway never opens a
 // channel to the upstream when the operator's connect token does
 // not authorize against the control plane.

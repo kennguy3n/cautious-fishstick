@@ -447,8 +447,10 @@ func (l *SSHListener) handleChannel(ctx context.Context, sconn *ssh.ServerConn, 
 // commandParserTap wraps the downstream-client stdin reader so the
 // parser sees every byte the operator types. Bytes flow through
 // unchanged to the upstream shell unless the command policy engine
-// (Milestone 9) rejects them — denied lines are dropped and a
-// plain-language message is written back to the client.
+// (Milestone 9) rejects them — denied lines are replaced with an
+// empty newline before being forwarded to the shell, and a
+// plain-language reason is written directly to the operator's SSH
+// channel so they see why the command was blocked.
 type commandParserTap struct {
 	src         io.Reader
 	parser      *CommandParser
@@ -457,15 +459,9 @@ type commandParserTap struct {
 	workspaceID string
 	ch          ssh.Channel
 	lineBuf     []byte
-	denyPending []byte
 }
 
 func (t *commandParserTap) Read(p []byte) (int, error) {
-	if len(t.denyPending) > 0 {
-		n := copy(p, t.denyPending)
-		t.denyPending = t.denyPending[n:]
-		return n, nil
-	}
 	n, err := t.src.Read(p)
 	if n > 0 {
 		// Feed the parser first so SetRiskFlag (called from
@@ -475,8 +471,13 @@ func (t *commandParserTap) Read(p []byte) (int, error) {
 		denied := t.evaluatePolicy(p[:n])
 		if denied {
 			// Replace the read bytes with a single newline so the
-			// upstream shell sees an empty input — the deny
-			// message is enqueued for the next read.
+			// upstream shell sees an empty input. The deny reason
+			// has already been written directly to the operator's
+			// SSH channel in evaluatePolicy — we deliberately do
+			// NOT return it from Read here, because Read feeds
+			// io.Copy(stdin, …) which writes to the upstream
+			// shell. Writing the deny text into that stream would
+			// execute the reason as shell input on the target.
 			p[0] = '\n'
 			return 1, nil
 		}
@@ -488,8 +489,9 @@ func (t *commandParserTap) Read(p []byte) (int, error) {
 // commands can be checked against the policy engine. Returns true
 // when the line was denied — the caller substitutes an empty
 // newline for the remainder so the line never reaches the upstream
-// shell, and writes the deny reason back to the operator on the
-// next read.
+// shell. The deny reason is written directly to the operator's SSH
+// channel here (not buffered for Read) because Read's output is
+// piped to upstream stdin, not back to the operator.
 func (t *commandParserTap) evaluatePolicy(b []byte) bool {
 	if t.evaluator == nil {
 		return false
@@ -511,8 +513,12 @@ func (t *commandParserTap) evaluatePolicy(b []byte) bool {
 			switch action {
 			case "deny":
 				t.parser.SetRiskFlag("policy:deny")
-				msg := fmt.Sprintf("\r\npam-gateway: command blocked by policy: %s\r\n", reason)
-				t.denyPending = append(t.denyPending, []byte(msg)...)
+				if t.ch != nil {
+					msg := fmt.Sprintf("\r\npam-gateway: command blocked by policy: %s\r\n", reason)
+					if _, werr := t.ch.Write([]byte(msg)); werr != nil {
+						log.Printf("gateway: write deny message to operator session=%s: %v", t.parser.sessionID, werr)
+					}
+				}
 				return true
 			case "step_up":
 				t.parser.SetRiskFlag("policy:step_up")
