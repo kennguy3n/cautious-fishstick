@@ -37,17 +37,20 @@ import (
 //     observations on a single grant's recent usage)
 //   - policy_recommendation     → Explanation (+ RiskFactors when
 //     surfacing rationale)
+//   - pam_session_risk_assessment → RiskScore + RiskFactors +
+//     Recommendation
 //
 // Unknown fields in the JSON payload are intentionally allowed
 // (encoding/json default) so server-side schema additions don't break
 // existing Go callers.
 type SkillResponse struct {
-	RiskScore   string         `json:"risk_score,omitempty"`
-	RiskFactors []string       `json:"risk_factors,omitempty"`
-	Decision    string         `json:"decision,omitempty"`
-	Reason      string         `json:"reason,omitempty"`
-	Explanation string         `json:"explanation,omitempty"`
-	Anomalies   []AnomalyEvent `json:"anomalies,omitempty"`
+	RiskScore      string         `json:"risk_score,omitempty"`
+	RiskFactors    []string       `json:"risk_factors,omitempty"`
+	Decision       string         `json:"decision,omitempty"`
+	Reason         string         `json:"reason,omitempty"`
+	Explanation    string         `json:"explanation,omitempty"`
+	Anomalies      []AnomalyEvent `json:"anomalies,omitempty"`
+	Recommendation string         `json:"recommendation,omitempty"`
 }
 
 // AnomalyEvent is one entry in the access_anomaly_detection response.

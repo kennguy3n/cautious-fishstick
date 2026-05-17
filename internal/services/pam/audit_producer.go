@@ -297,6 +297,19 @@ func (n *NoOpPAMAuditProducer) Events() []PAMAuditEvent {
 	return out
 }
 
+// Reset clears the recorded batches + events counter so tests that
+// span multiple lifecycle transitions can scope assertions to a
+// single phase without slicing into Events() at known offsets.
+func (n *NoOpPAMAuditProducer) Reset() {
+	if n == nil {
+		return
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.batches = 0
+	n.events = nil
+}
+
 // Compile-time interface assertions.
 var (
 	_ PAMAuditProducer = (*KafkaPAMAuditProducer)(nil)
