@@ -100,6 +100,115 @@ func (a *RiskAssessmentAdapter) AssessRequestRisk(
 	return resp.RiskScore, resp.RiskFactors, ok
 }
 
+// PAMSessionRiskPayload is the canonical request shape for the
+// pam_session_risk_assessment skill. The Go service layer marshals
+// one of these per pending PAM session into a /a2a/invoke call and
+// the Python agent returns SkillResponse.RiskScore +
+// SkillResponse.RiskFactors + SkillResponse.Recommendation.
+//
+// Fields mirror the input contract documented at the top of
+// cmd/access-ai-agent/skills/pam_session_risk.py — keep them in
+// sync. Optional fields use omitempty so callers can populate just
+// the slice they care about.
+type PAMSessionRiskPayload struct {
+	WorkspaceID      string `json:"workspace_id,omitempty"`
+	UserID           string `json:"user_id"`
+	AssetID          string `json:"asset_id"`
+	Protocol         string `json:"protocol"`
+	Criticality      string `json:"criticality"`
+	TimeOfDay        int    `json:"time_of_day,omitempty"`
+	PreviousDenials  int    `json:"previous_denials,omitempty"`
+	IsFirstAccess    bool   `json:"is_first_access,omitempty"`
+	IsEmergency      bool   `json:"is_emergency,omitempty"`
+	WorkingHoursStart int   `json:"working_hours_start,omitempty"`
+	WorkingHoursEnd   int   `json:"working_hours_end,omitempty"`
+}
+
+// allowedPAMRecommendations is the set of recommendation strings the
+// Python pam_session_risk skill is allowed to return. Anything else
+// is treated as "AI returned an unexpected verdict" and the caller
+// falls back to require_approval (the conservative default). Keep
+// this in sync with cmd/access-ai-agent/skills/pam_session_risk.py
+// ALLOWED_RECOMMENDATIONS.
+var allowedPAMRecommendations = map[string]struct{}{
+	"auto_approve":     {},
+	"require_approval": {},
+	"deny":             {},
+}
+
+// defaultPAMRecommendation is the fallback recommendation when the
+// AI agent is unreachable or returns an unrecognised value. We
+// default to require_approval so a session never auto-approves on
+// an unsignalled AI failure — operator review covers the gap.
+const defaultPAMRecommendation = "require_approval"
+
+// AssessPAMSessionRiskWithFallback wraps InvokeSkill(
+// "pam_session_risk_assessment", payload) with the
+// docs/pam/architecture.md §6 fallback semantics:
+//
+//   - On success with a recognised recommendation: returns
+//     (risk_score, risk_factors, recommendation, true).
+//   - On any error, nil client, empty response, or unrecognised
+//     recommendation: logs a warning and returns
+//     (DefaultRiskScore, ["ai_unavailable"],
+//     defaultPAMRecommendation, false) so the caller can stamp a
+//     conservative default on the pam_sessions row.
+//
+// AI is decision-support, not critical path — a momentarily-down
+// agent must NOT block PAM session creation.
+func AssessPAMSessionRiskWithFallback(
+	ctx context.Context,
+	client *AIClient,
+	payload PAMSessionRiskPayload,
+) (riskScore string, riskFactors []string, recommendation string, ok bool) {
+	if client == nil {
+		log.Printf("aiclient: pam session risk: client is nil; using fallback risk_score=%s recommendation=%s", DefaultRiskScore, defaultPAMRecommendation)
+		return DefaultRiskScore, []string{"ai_unavailable"}, defaultPAMRecommendation, false
+	}
+	resp, err := client.InvokeSkill(ctx, "pam_session_risk_assessment", payload)
+	if err != nil {
+		if errors.Is(err, ErrAIUnconfigured) {
+			log.Printf("aiclient: pam session risk: AI unconfigured; using fallback risk_score=%s recommendation=%s", DefaultRiskScore, defaultPAMRecommendation)
+		} else {
+			log.Printf("aiclient: pam session risk: AI unavailable (%v); using fallback risk_score=%s recommendation=%s", err, DefaultRiskScore, defaultPAMRecommendation)
+		}
+		return DefaultRiskScore, []string{"ai_unavailable"}, defaultPAMRecommendation, false
+	}
+	if resp == nil || resp.RiskScore == "" {
+		log.Printf("aiclient: pam session risk: AI returned empty response; using fallback risk_score=%s recommendation=%s", DefaultRiskScore, defaultPAMRecommendation)
+		return DefaultRiskScore, []string{"ai_unavailable"}, defaultPAMRecommendation, false
+	}
+	rec := resp.Recommendation
+	if _, allowed := allowedPAMRecommendations[rec]; !allowed {
+		log.Printf("aiclient: pam session risk: AI returned unexpected recommendation %q; defaulting to %s", rec, defaultPAMRecommendation)
+		rec = defaultPAMRecommendation
+	}
+	return resp.RiskScore, resp.RiskFactors, rec, true
+}
+
+// PAMSessionRiskAdapter wraps *AIClient so PAMSessionService can be
+// wired with a risk assessor without the service package depending
+// on the aiclient package directly. Mirrors RiskAssessmentAdapter.
+//
+// Inner may be nil — the adapter returns the fallback in that case
+// so cmd/ztna-api wiring stays one-line even when the AI agent is
+// intentionally unconfigured.
+type PAMSessionRiskAdapter struct {
+	Inner *AIClient
+}
+
+// AssessSessionRisk satisfies pam.PAMRiskAssessor by forwarding to
+// AssessPAMSessionRiskWithFallback.
+func (a *PAMSessionRiskAdapter) AssessSessionRisk(
+	ctx context.Context,
+	payload PAMSessionRiskPayload,
+) (string, []string, string, bool) {
+	if a == nil {
+		return DefaultRiskScore, []string{"ai_unavailable"}, defaultPAMRecommendation, false
+	}
+	return AssessPAMSessionRiskWithFallback(ctx, a.Inner, payload)
+}
+
 // ReviewAutomationPayload is the canonical request shape for the
 // access_review_automation skill. The Go service layer marshals one
 // of these per pending decision into a /a2a/invoke call and the

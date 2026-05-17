@@ -37,15 +37,17 @@ The PAM module reuses:
 
 ## Quick orientation
 
-PAM-specific code will live under:
+PAM-specific code lives under:
 
-- `internal/services/pam/` — core PAM services (session broker, secret broker, audit evidence, asset inventory)
-- `internal/handlers/pam_*.go` — HTTP handlers for `/pam/*` routes
-- `internal/models/pam_*.go` — GORM models for PAM tables
+- `internal/services/pam/` — core PAM services: `AssetService`, `SecretBrokerService`, `LeaseService`, `SessionService`, `PAMAuditService`, `PAMCommandPolicyService`
+- `internal/handlers/pam_*.go` — HTTP handlers for `/pam/assets/*`, `/pam/secrets/*`, `/pam/leases/*`, `/pam/sessions/*`, `/pam/policies/*`
+- `internal/models/pam_*.go` — GORM models for the 8 PAM tables (asset, account, secret, session, session-command, lease, command-policy, rotation-schedule)
 - `internal/workers/handlers/pam_*.go` — queue job handlers for PAM async work
 - `internal/cron/pam_*.go` — PAM-specific schedulers (rotation, hygiene, lease expiry)
-- `cmd/pam-gateway/` — Go binary for SSH, K8s, and DB session brokering
-- `cmd/access-ai-agent/skills/pam_*.py` — PAM-specific AI skills
+- `internal/gateway/` — gateway library: `SSHListener`, `K8sListener`, `PGListener`, `MySQLListener`, `IORecorder`, `CommandParser`, `APIPolicyEvaluator`, `db_ws_handler`
+- `cmd/pam-gateway/` — Go binary that brokers SSH (2222), K8s exec (8443), PostgreSQL (5432), MySQL/MariaDB (3306), and exposes a health + SQL-console WS port (8081)
+- `cmd/access-ai-agent/skills/pam_*.py` — PAM-specific AI skills (`pam_session_risk_assessment`)
+- `sdk/ios/Sources/ShieldNetAccess/PAM*.swift`, `sdk/android/src/main/kotlin/com/shieldnet360/access/PAM*.kt` — `PAMSDKClient` extensions of the iOS / Android Access SDKs for approval push + number matching + passkey reveal
 
 PAM extends the existing `ztna-api` router via new `Dependencies` fields (following the nil-safe pattern in [`internal/handlers/router.go`](../../internal/handlers/router.go)) and adds one new binary (`pam-gateway`) for protocol-level session brokering.
 

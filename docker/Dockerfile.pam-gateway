@@ -1,0 +1,38 @@
+# Multi-stage build for the pam-gateway service. Mirrors the ztna-api
+# image: a golang:1.25-alpine build stage produces a static
+# (CGO_ENABLED=0) binary under /out/pam-gateway, then a distroless
+# runtime stage executes the binary as a non-root user. The runtime
+# resource profile target is cpu=500m mem=512Mi per
+# docs/pam/architecture.md §9.
+
+# syntax=docker/dockerfile:1.7
+
+FROM golang:1.25-alpine AS build
+WORKDIR /src
+
+# Pull module deps in a dedicated layer so a code-only change does
+# not re-download the entire module cache.
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod download
+
+COPY . .
+
+# Static binary. -trimpath + -ldflags="-s -w" strip absolute paths and
+# debug symbols for a smaller image; CGO_ENABLED=0 lets us land on
+# distroless static.
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/pam-gateway ./cmd/pam-gateway
+
+FROM gcr.io/distroless/static-debian12:nonroot AS runtime
+USER nonroot:nonroot
+COPY --from=build /out/pam-gateway /pam-gateway
+# 2222 = SSH listener (Milestone 4); 8081 = health/metrics; future
+# milestones add K8s (8443), PG (5432) and MySQL (3306).
+EXPOSE 2222 8081
+ENTRYPOINT ["/pam-gateway"]

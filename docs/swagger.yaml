@@ -562,6 +562,160 @@ paths:
         '400': { description: workspace_id required }
         '404': { description: Lease not found in workspace }
         '409': { description: Lease already revoked or expired }
+  /pam/sessions:
+    get:
+      summary: List PAM sessions in a workspace
+      description: |
+        Read surface of the `PAMAuditService`. Supports optional
+        `state` / `user_id` / `asset_id` filters; results are
+        ordered by `started_at` descending.
+      tags: [pam-sessions]
+      parameters:
+        - { name: workspace_id, in: query, required: true, schema: { type: string } }
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [requested, active, completed, terminated, failed]
+        - { name: user_id, in: query, required: false, schema: { type: string } }
+        - { name: asset_id, in: query, required: false, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+        '400': { description: workspace_id required }
+  /pam/sessions/{id}:
+    get:
+      summary: Session detail with replay metadata
+      description: |
+        Returns the `pam_sessions` row plus aggregated metadata
+        (command count, risk score, replay storage key). Cross-
+        tenant lookups are blocked at the service layer.
+      tags: [pam-sessions]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: workspace_id, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+        '400': { description: workspace_id required }
+        '404': { description: Session not found in workspace }
+  /pam/sessions/{id}/replay:
+    get:
+      summary: Issue a pre-signed replay URL for a recorded session
+      description: |
+        Returns a JSON envelope containing a 15-minute pre-signed S3
+        GET URL pointing at the `sessions/{id}/replay.bin` artefact.
+        Replay artefacts are produced by `internal/gateway.IORecorder`
+        during live brokerage; a 404 here means the session had no
+        recorded I/O (e.g. failed before the channel opened) or the
+        artefact has not yet flushed.
+      tags: [pam-sessions]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: workspace_id, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Signed URL envelope }
+        '400': { description: workspace_id required }
+        '404': { description: Session or replay artefact not found }
+  /pam/sessions/{id}/commands:
+    get:
+      summary: Command audit trail for a session
+      description: |
+        Returns ordered `pam_session_commands` rows for the session
+        (sequence asc). Each row carries the operator input, a
+        SHA-256 output hash, a timestamp, and the `risk_flag` toggled
+        by the command policy engine.
+      tags: [pam-sessions]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: workspace_id, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+        '400': { description: workspace_id required }
+        '404': { description: Session not found in workspace }
+  /pam/sessions/{id}/evidence:
+    get:
+      summary: Export an evidence pack for a session
+      description: |
+        Bundles the replay storage key + signed URL, the full
+        command timeline, the originating lease metadata, and the
+        AI risk factors into a single JSON document suitable for
+        compliance export.
+      tags: [pam-sessions]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: workspace_id, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Evidence pack }
+        '400': { description: workspace_id required }
+        '404': { description: Session not found in workspace }
+  /pam/sessions/{id}/terminate:
+    post:
+      summary: Force-terminate an active PAM session
+      description: |
+        Marks the session as `terminated`, emits a
+        `pam.session.terminated` audit event, and signals the
+        gateway to close the operator channel on its next tick.
+        The body must include `workspace_id` and a non-empty
+        `reason`.
+      tags: [pam-sessions]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workspace_id, reason]
+              properties:
+                workspace_id: { type: string }
+                reason: { type: string, minLength: 1 }
+      responses:
+        '200': { description: OK }
+        '400': { description: workspace_id or reason missing }
+        '404': { description: Session not found in workspace }
+        '409': { description: Session already terminated or completed }
+  /pam/policy/evaluate:
+    post:
+      summary: Evaluate a command against the active PAM command policies
+      description: |
+        Called by `pam-gateway` on every parsed command before it
+        forwards to the target. The service matches the input
+        against `pam_command_policies` rows (regex pattern + workspace
+        + asset + account selectors, in priority order) and returns
+        an `(action, reason)` tuple where `action` is `allow`,
+        `deny`, or `step_up`. On `deny` the gateway writes the
+        reason to the operator channel and blocks the wire; on
+        `step_up` the gateway prompts the operator for MFA and
+        toggles `risk_flag` on the captured command row.
+      tags: [pam-policy]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workspace_id, session_id, input]
+              properties:
+                workspace_id: { type: string }
+                session_id: { type: string }
+                asset_id: { type: string }
+                account_id: { type: string }
+                input: { type: string, description: Operator-typed command text }
+      responses:
+        '200':
+          description: Evaluation result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [action]
+                properties:
+                  action:
+                    type: string
+                    enum: [allow, deny, step_up]
+                  reason: { type: string }
+        '400': { description: Required field missing }
   /swagger:
     get:
       summary: Serve this OpenAPI 3.0 spec

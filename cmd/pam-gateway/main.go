@@ -32,6 +32,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -44,6 +45,16 @@ import (
 const pamGatewayShutdownTimeout = 30 * time.Second
 
 func main() {
+	// `--healthcheck` is a self-probe mode used by the docker-compose
+	// healthcheck command (the distroless runtime image has no curl).
+	// It performs a quick HTTP GET against the local /health endpoint
+	// and exits 0/1 based on the response.
+	for _, arg := range os.Args[1:] {
+		if arg == "--healthcheck" || arg == "-healthcheck" {
+			os.Exit(runHealthcheck())
+		}
+	}
+
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatalf("pam-gateway: load config: %v", err)
@@ -57,6 +68,20 @@ func main() {
 	// indefinitely (Devin Review finding on PR #95).
 	authz := gateway.NewAPIAuthorizer(cfg.APIURL, cfg.APIKey, nil)
 	injector := gateway.NewAPISecretInjector(cfg.APIURL, cfg.APIKey, nil)
+	commandSink := gateway.NewAPICommandSink(cfg.APIURL, cfg.APIKey, nil)
+	policyEval := gateway.NewAPIPolicyEvaluator(cfg.APIURL, cfg.APIKey, nil)
+
+	var replayStore gateway.ReplayStore
+	if cfg.ReplayDir != "" {
+		fs, err := gateway.NewFilesystemReplayStore(cfg.ReplayDir)
+		if err != nil {
+			log.Fatalf("pam-gateway: init replay store: %v", err)
+		}
+		replayStore = fs
+		log.Printf("pam-gateway: replay store rooted at %s", fs.Root())
+	} else {
+		log.Printf("pam-gateway: PAM_GATEWAY_REPLAY_DIR unset — session recordings disabled")
+	}
 
 	var ca *gateway.SSHCertificateAuthority
 	if cfg.SSHCAKeyPath != "" {
@@ -75,11 +100,14 @@ func main() {
 	}
 
 	listener, err := gateway.NewSSHListener(gateway.SSHListenerConfig{
-		Port:       cfg.SSHPort,
-		HostKey:    hostKey,
-		Authorizer: authz,
-		Injector:   injector,
-		CA:         ca,
+		Port:          cfg.SSHPort,
+		HostKey:       hostKey,
+		Authorizer:    authz,
+		Injector:      injector,
+		CA:            ca,
+		ReplayStore:   replayStore,
+		CommandSink:   commandSink,
+		CommandPolicy: policyEval,
 	})
 	if err != nil {
 		log.Fatalf("pam-gateway: build ssh listener: %v", err)
@@ -97,9 +125,18 @@ func main() {
 		}
 	}()
 
+	consoleHandler, err := gateway.NewDBSQLConsoleHandler(gateway.DBSQLConsoleConfig{
+		Authorizer:    authz,
+		Injector:      injector,
+		CommandSink:   commandSink,
+		CommandPolicy: policyEval,
+	})
+	if err != nil {
+		log.Fatalf("pam-gateway: build sql console handler: %v", err)
+	}
 	healthSrv := &http.Server{
 		Addr:              net.JoinHostPort("", strconv.Itoa(cfg.HealthPort)),
-		Handler:           healthHandler(),
+		Handler:           healthHandler(consoleHandler),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	wg.Add(1)
@@ -122,16 +159,31 @@ func main() {
 	log.Printf("pam-gateway: stopped")
 }
 
-// healthHandler returns the /health endpoint handler. The endpoint
-// is intentionally cheap — it returns 200 unconditionally so
-// orchestrators can pick the readiness signal up without consulting
-// the upstream ztna-api.
-func healthHandler() http.Handler {
+// healthHandler returns the gateway's auxiliary HTTP mux:
+//
+//   - /health is intentionally cheap and unconditional so
+//     orchestrators can pick the readiness signal up without
+//     consulting the upstream ztna-api.
+//   - /pam/sql-console is the browser SQL console WebSocket
+//     endpoint. The handler validates the connect token against
+//     ztna-api before upgrading; an unauthenticated GET returns
+//     401 without leaking any session state.
+//
+// console may be nil in test contexts where the SQL console is
+// not wired; in that case the route returns 503.
+func healthHandler(console http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
+	if console != nil {
+		mux.Handle("/pam/sql-console", console)
+	} else {
+		mux.HandleFunc("/pam/sql-console", func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "sql console not configured", http.StatusServiceUnavailable)
+		})
+	}
 	return mux
 }
 
@@ -177,6 +229,7 @@ type config struct {
 	APIKey         string
 	S3Bucket       string
 	S3Region       string
+	ReplayDir      string
 	SSHHostKeyPath string
 	SSHCAKeyPath   string
 	SSHCAValidity  time.Duration
@@ -193,6 +246,7 @@ func loadConfig() (config, error) {
 		APIKey:         os.Getenv("PAM_GATEWAY_API_KEY"),
 		S3Bucket:       os.Getenv("PAM_S3_BUCKET"),
 		S3Region:       os.Getenv("PAM_S3_REGION"),
+		ReplayDir:      os.Getenv("PAM_GATEWAY_REPLAY_DIR"),
 		SSHHostKeyPath: os.Getenv("PAM_GATEWAY_SSH_HOST_KEY"),
 		SSHCAKeyPath:   os.Getenv("PAM_GATEWAY_SSH_CA_KEY"),
 		SSHCAValidity:  5 * time.Minute,
@@ -221,8 +275,33 @@ func loadConfig() (config, error) {
 	if cfg.APIURL == "" {
 		return cfg, errors.New("PAM_GATEWAY_API_URL is required")
 	}
-	if cfg.APIKey == "" {
-		return cfg, errors.New("PAM_GATEWAY_API_KEY is required")
-	}
+	// API key is optional for the dev compose stack (matches the
+	// ztna-api side, which also accepts an empty key locally). In
+	// production deployments the helm chart sets the env var to a
+	// rotating secret.
 	return cfg, nil
+}
+
+// runHealthcheck issues a short-timeout GET against the local
+// /health endpoint and reports the exit code the docker-compose
+// healthcheck should observe. The listen port is read from the same
+// env var the main server uses so port overrides work transparently.
+func runHealthcheck() int {
+	port := os.Getenv("PAM_GATEWAY_HEALTH_PORT")
+	if port == "" {
+		port = "8081"
+	}
+	// Allow operators to pass either a bare port (8081) or a full
+	// ":8081" suffix without rejecting one of the forms.
+	port = strings.TrimPrefix(port, ":")
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get("http://127.0.0.1:" + port + "/health")
+	if err != nil {
+		return 1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
 }

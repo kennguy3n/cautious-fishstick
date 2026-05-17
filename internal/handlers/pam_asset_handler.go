@@ -283,7 +283,8 @@ func writePAMError(c *gin.Context, err error) {
 	case errors.Is(err, pam.ErrAssetNotFound),
 		errors.Is(err, pam.ErrAccountNotFound),
 		errors.Is(err, pam.ErrSecretNotFound),
-		errors.Is(err, pam.ErrLeaseNotFound):
+		errors.Is(err, pam.ErrLeaseNotFound),
+		errors.Is(err, pam.ErrSessionNotFound):
 		abortWithError(c, http.StatusNotFound, err.Error(), "not_found", err.Error())
 	case errors.Is(err, pam.ErrMFARequired):
 		abortWithError(c, http.StatusBadRequest, err.Error(), "mfa_required", err.Error())
@@ -291,6 +292,11 @@ func writePAMError(c *gin.Context, err error) {
 		abortWithError(c, http.StatusForbidden, err.Error(), "mfa_failed", err.Error())
 	case errors.Is(err, pam.ErrLeaseAlreadyTerminal):
 		abortWithError(c, http.StatusConflict, err.Error(), "conflict", err.Error())
+	case errors.Is(err, pam.ErrReplayUnavailable):
+		// 409 Conflict — the session exists, just has no replay
+		// blob to sign. Lets operators distinguish "session not
+		// found" (404) from "session has no replay yet" (409).
+		abortWithError(c, http.StatusConflict, err.Error(), "replay_unavailable", err.Error())
 	default:
 		writeError(c, http.StatusInternalServerError, err)
 	}

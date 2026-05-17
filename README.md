@@ -24,16 +24,20 @@ make test
 make docker-up
 ```
 
-Default ports once the stack is up:
+Default ports once the stack is up. The `pam-gateway` K8s, PostgreSQL, and MySQL listeners are container-internal in the dev compose stack — only the SSH and health/SQL-WS ports are mapped to the host, so the PG/MySQL ports do not collide with the system-of-record `Postgres` container or any host-side database listener. Production deployments map the proxy ports onto the dataplane LB (see [`docs/pam/architecture.md`](docs/pam/architecture.md) §9).
 
-| Service                   | Port |
-|---------------------------|------|
-| `ztna-api`                | 8080 |
-| `access-workflow-engine`  | 8082 |
-| `access-ai-agent`         | 8090 |
-| `pam-gateway` (SSH)       | 2222 |
-| Postgres                  | 5432 |
-| Redis                     | 6379 |
+| Service                                                | Port            |
+|--------------------------------------------------------|-----------------|
+| `ztna-api`                                             | 8080            |
+| `access-workflow-engine`                               | 8082            |
+| `access-ai-agent`                                      | 8090            |
+| `pam-gateway` (SSH)                                    | 2222            |
+| `pam-gateway` (K8s exec / HTTPS, container-internal)   | 8443            |
+| `pam-gateway` (PostgreSQL proxy, container-internal)   | 5432            |
+| `pam-gateway` (MySQL / MariaDB proxy, container-internal) | 3306         |
+| `pam-gateway` (health + SQL WS)                        | 8081            |
+| Postgres                                               | 5432            |
+| Redis                                                  | 6379            |
 
 Tear down with `make docker-down`. A five-minute walkthrough lives at [`docs/getting-started.md`](docs/getting-started.md).
 
@@ -57,7 +61,7 @@ Server-side AI agents over the A2A protocol provide risk assessment, auto-certif
 Connectors are auto-classified as `tunnel` (private resource via OpenZiti), `sso_only` (federated through Keycloak), or `api_only` (direct SaaS REST), so SaaS-heavy estates don't pay tunnel overhead they don't need. A six-layer leaver kill switch revokes grants, team memberships, the Keycloak user, upstream sessions, SCIM provisioning, and the OpenZiti identity in a single off-boarding call — every layer best-effort, idempotent, and audited.
 
 ### Privileged Access Management (PAM)
-Identity-first privileged-access broker for SMEs. The PAM module ships an asset and account inventory, a secret broker with AES-GCM envelope encryption and step-up MFA on reveal, JIT leases wired through the existing access-request state machine, and a standalone `pam-gateway` binary that proxies SSH sessions using short-lived CA-signed certificates (with credential injection as a fallback). Full design and roadmap live in [`docs/pam/`](docs/pam/).
+Identity-first privileged-access broker for SMEs. The PAM module ships an asset and account inventory, a secret broker with AES-GCM envelope encryption and step-up MFA on reveal, and JIT leases wired through the existing access-request state machine. The standalone `pam-gateway` binary brokers SSH (short-lived CA-signed certificates with credential-injection fallback), `kubectl exec` over WebSocket, and PostgreSQL / MySQL wire-protocol proxies — each session is recorded to S3, each command is captured with an output hash, and every command is filtered in real-time by the policy engine (`allow` / `deny` / `step_up`). The `PAMAuditService` ships immutable session events on the existing Kafka `ShieldnetLogEvent` envelope and issues 15-minute pre-signed replay URLs for the future replay UI. The `pam_session_risk_assessment` A2A skill scores each lease request against unusual-time, first-time-asset, repeated-denials, and emergency-access-rate factors. The iOS + Android SDKs ship matching `PAMSDKClient` surfaces for push-driven approver flows (number matching + passkey step-up). Full design and roadmap live in [`docs/pam/`](docs/pam/).
 
 ---
 
@@ -102,8 +106,11 @@ cautious-fishstick/
 │   ├── models/                    # Database models
 │   ├── services/access/           # Access service + connector framework
 │   │   └── connectors/            # 200 provider packages
-│   ├── services/pam/              # PAM asset / secret / lease services
-│   ├── gateway/                   # PAM gateway library (SSH listener, CA, client)
+│   ├── services/pam/              # PAM asset / secret / lease / session /
+│   │                              # audit / command-policy services
+│   ├── gateway/                   # PAM gateway library (SSH / K8s / PG /
+│   │                              # MySQL listeners, recorder, command
+│   │                              # parser, policy evaluator, SQL WS handler)
 │   ├── services/notification/     # Email / Slack / WebPush notifiers
 │   ├── workers/                   # Worker job handlers
 │   └── pkg/                       # Shared libraries (aiclient, credentials, …)
