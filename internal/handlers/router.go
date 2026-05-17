@@ -125,6 +125,13 @@ type Dependencies struct {
 	// revoke). May be nil; the routes are only registered when
 	// this dependency is present.
 	PAMLeaseService *pam.PAMLeaseService
+
+	// PAMAuditService backs the /pam/sessions/* read surface
+	// (list, detail, replay URL, command timeline, evidence
+	// export, terminate) per docs/pam/architecture.md §6. May be
+	// nil; the routes are only registered when this dependency
+	// is present.
+	PAMAuditService *pam.PAMAuditService
 }
 
 // Router builds the *gin.Engine that serves the access platform's
@@ -228,6 +235,10 @@ func Router(deps Dependencies) *gin.Engine {
 	if deps.PAMLeaseService != nil {
 		lh := NewPAMLeaseHandler(deps.PAMLeaseService)
 		lh.Register(r)
+	}
+	if deps.PAMAuditService != nil {
+		ah := NewPAMAuditHandler(deps.PAMAuditService)
+		ah.Register(r)
 	}
 
 	return r
