@@ -125,9 +125,18 @@ func main() {
 		}
 	}()
 
+	consoleHandler, err := gateway.NewDBSQLConsoleHandler(gateway.DBSQLConsoleConfig{
+		Authorizer:    authz,
+		Injector:      injector,
+		CommandSink:   commandSink,
+		CommandPolicy: policyEval,
+	})
+	if err != nil {
+		log.Fatalf("pam-gateway: build sql console handler: %v", err)
+	}
 	healthSrv := &http.Server{
 		Addr:              net.JoinHostPort("", strconv.Itoa(cfg.HealthPort)),
-		Handler:           healthHandler(),
+		Handler:           healthHandler(consoleHandler),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	wg.Add(1)
@@ -150,16 +159,31 @@ func main() {
 	log.Printf("pam-gateway: stopped")
 }
 
-// healthHandler returns the /health endpoint handler. The endpoint
-// is intentionally cheap — it returns 200 unconditionally so
-// orchestrators can pick the readiness signal up without consulting
-// the upstream ztna-api.
-func healthHandler() http.Handler {
+// healthHandler returns the gateway's auxiliary HTTP mux:
+//
+//   - /health is intentionally cheap and unconditional so
+//     orchestrators can pick the readiness signal up without
+//     consulting the upstream ztna-api.
+//   - /pam/sql-console is the browser SQL console WebSocket
+//     endpoint. The handler validates the connect token against
+//     ztna-api before upgrading; an unauthenticated GET returns
+//     401 without leaking any session state.
+//
+// console may be nil in test contexts where the SQL console is
+// not wired; in that case the route returns 503.
+func healthHandler(console http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
+	if console != nil {
+		mux.Handle("/pam/sql-console", console)
+	} else {
+		mux.HandleFunc("/pam/sql-console", func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "sql console not configured", http.StatusServiceUnavailable)
+		})
+	}
 	return mux
 }
 
