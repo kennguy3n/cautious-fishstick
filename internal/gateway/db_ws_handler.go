@@ -403,6 +403,13 @@ func (h *DBSQLConsoleHandler) handleQuery(
 	}
 	duration := h.now().Sub(start)
 	finalHash := hex.EncodeToString(hasher.Sum(nil))
+	// appendAudit BEFORE writing the end frame so the audit row is
+	// committed by the time the client observes the query as
+	// complete. The previous order (end frame → appendAudit) was
+	// racy: a client that read end and immediately inspected the
+	// command sink could miss the row that the handler was still
+	// in the middle of writing.
+	h.appendAudit(ctx, session.SessionID, sequence, sqlText, finalHash, riskFlag, start)
 	if werr := h.writeJSON(conn, sqlConsoleServerMessage{
 		Type:       "end",
 		RowCount:   rowCount,
@@ -410,7 +417,6 @@ func (h *DBSQLConsoleHandler) handleQuery(
 	}); werr != nil {
 		return werr
 	}
-	h.appendAudit(ctx, session.SessionID, sequence, sqlText, finalHash, riskFlag, start)
 	return nil
 }
 
