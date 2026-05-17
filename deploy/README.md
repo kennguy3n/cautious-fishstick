@@ -10,16 +10,30 @@ platform. Two equivalent paths:
 
 ## What gets deployed
 
-Four runtime services (see [`docs/architecture.md`](../docs/architecture.md#12-where-things-run)):
+Five runtime services (see [`docs/architecture.md`](../docs/architecture.md#12-where-things-run)):
 
 - **ztna-api** — public HTTP surface (port 8080). HPA 2–10 replicas.
 - **access-connector-worker** — Redis-queue consumer (no Service).
 - **access-workflow-engine** — cluster-internal webhook engine (port 8082).
 - **access-ai-agent** — Python A2A skill server (port 8090).
+- **pam-gateway** — PAM data-plane broker. Cluster-internal ports
+  2222 (SSH) / 8081 (health + SQL-WS) / 5432 (PG proxy) / 3306
+  (MySQL proxy) / 8443 (K8s exec). Manifests at
+  [`k8s/pam-gateway/`](./k8s/pam-gateway/); Helm template at
+  [`helm/shieldnet-access/templates/pam-gateway.yaml`](./helm/shieldnet-access/templates/pam-gateway.yaml)
+  rendered from the `pamGateway.*` keys in
+  [`values.yaml`](./helm/shieldnet-access/values.yaml).
 
-Only `ztna-api` is exposed publicly. The other three live on the
-cluster-internal network and authenticate via the shared
-`ACCESS_AI_AGENT_API_KEY` / `X-API-Key` header.
+Only `ztna-api` (and the operator-facing pam-gateway listeners on
+the dataplane LB) are exposed publicly. The other services live on
+the cluster-internal network and authenticate via the shared
+`ACCESS_AI_AGENT_API_KEY` / `X-API-Key` header. Production
+deployments map the pam-gateway proxy ports onto the dataplane LB
+directly (no host-port shift — the dev-stack `15432` / `13306` /
+`18443` remap is a docker-compose convenience to avoid colliding
+with the local Postgres). See
+[`../docs/pam/architecture.md`](../docs/pam/architecture.md) §9 for
+the deployment topology.
 
 ## Kustomize quick start
 

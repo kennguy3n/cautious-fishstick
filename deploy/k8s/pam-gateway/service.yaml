@@ -1,0 +1,47 @@
+# Cluster-internal Service for pam-gateway. A LoadBalancer ingress
+# is configured separately by the platform team — operator clients
+# (ssh / psql / mysql / kubectl) connect to that ingress, never
+# directly to the ClusterIP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: pam-gateway
+  namespace: shieldnet-access
+  labels:
+    app.kubernetes.io/name: pam-gateway
+    app.kubernetes.io/part-of: shieldnet-access
+    app.kubernetes.io/component: gateway
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: pam-gateway
+  ports:
+    - name: ssh
+      port: 2222
+      targetPort: ssh
+      protocol: TCP
+    - name: pg
+      port: 5432
+      targetPort: pg
+      protocol: TCP
+    - name: mysql
+      port: 3306
+      targetPort: mysql
+      protocol: TCP
+    - name: k8s
+      port: 8443
+      targetPort: k8s
+      protocol: TCP
+    - name: health
+      port: 8081
+      targetPort: health
+      protocol: TCP
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pam-gateway
+  namespace: shieldnet-access
+  labels:
+    app.kubernetes.io/name: pam-gateway
+    app.kubernetes.io/part-of: shieldnet-access

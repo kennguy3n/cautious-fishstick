@@ -7,12 +7,13 @@ Dockerfiles directly — no separate registry workflow.
 
 ## Dockerfiles
 
-| File                              | Service                  | Port | Entrypoint                |
-|-----------------------------------|--------------------------|:----:|---------------------------|
-| `Dockerfile.ztna-api`             | `ztna-api`               | 8080 | `/ztna-api`               |
-| `Dockerfile.access-worker`        | `access-connector-worker`| —    | `/access-worker`          |
-| `Dockerfile.access-workflow`      | `access-workflow-engine` | 8082 | `/access-workflow`        |
-| `../cmd/access-ai-agent/Dockerfile` | `access-ai-agent`      | 8090 | `python main.py`          |
+| File                              | Service                  | Port(s)                                                | Entrypoint                |
+|-----------------------------------|--------------------------|--------------------------------------------------------|---------------------------|
+| `Dockerfile.ztna-api`             | `ztna-api`               | 8080                                                   | `/ztna-api`               |
+| `Dockerfile.access-worker`        | `access-connector-worker`| —                                                      | `/access-worker`          |
+| `Dockerfile.access-workflow`      | `access-workflow-engine` | 8082                                                   | `/access-workflow`        |
+| `Dockerfile.pam-gateway`          | `pam-gateway`            | 2222 (SSH) / 8081 (health) / 5432 (PG) / 3306 (MySQL) / 8443 (K8s) | `/pam-gateway`            |
+| `../cmd/access-ai-agent/Dockerfile` | `access-ai-agent`      | 8090                                                   | `python main.py`          |
 
 The Python sidecar lives next to its source under
 [`cmd/access-ai-agent/`](../cmd/access-ai-agent/) — keeping the
@@ -55,8 +56,17 @@ healthcheck so the container needs a working Python runtime.
 docker build -f docker/Dockerfile.ztna-api -t ztna-api .
 docker build -f docker/Dockerfile.access-worker -t access-worker .
 docker build -f docker/Dockerfile.access-workflow -t access-workflow .
+docker build -f docker/Dockerfile.pam-gateway -t pam-gateway .
 docker build -f cmd/access-ai-agent/Dockerfile -t access-ai-agent cmd/access-ai-agent
 ```
+
+`Dockerfile.pam-gateway` follows the same `golang:1.25-alpine` →
+`gcr.io/distroless/static-debian12:nonroot` two-stage pattern as the
+other Go services; the only difference is the wider `EXPOSE` set
+(2222 / 8081 / 5432 / 3306 / 8443) for the SSH / health / PG / MySQL
+/ K8s listeners. The PG, MySQL and K8s ports are container-internal
+in the dev compose stack and surface on the host as `15432` /
+`13306` / `18443` (see [`../README.md`](../README.md#quick-start)).
 
 Or build all four through the compose stack:
 

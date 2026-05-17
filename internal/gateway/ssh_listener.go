@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -631,22 +632,36 @@ func (l *SSHListener) buildTargetClientConfig(ctx context.Context, sessionID, ac
 	return cfg, nil
 }
 
-// LoadOrGenerateHostKey reads the SSH host key at path; if path is
-// empty or the file does not exist, a fresh 2048-bit RSA key is
-// generated in memory. The generated key is *not* persisted —
-// production deployments must point PAM_GATEWAY_SSH_HOST_KEY at a
-// stable on-disk key so operator clients can pin the host
-// fingerprint.
-func LoadOrGenerateHostKey(path string) (ssh.Signer, error) {
-	if path != "" {
-		pem, err := os.ReadFile(path)
+// LoadOrGenerateHostKey resolves the SSH host key from one of three
+// places, in priority order:
+//
+//  1. inline PEM content (when valueOrPath begins with a `-----BEGIN`
+//     header, after whitespace trimming) — this is what K8s Secret
+//     env injection via `valueFrom: secretKeyRef` produces;
+//  2. a filesystem path (any non-empty value that is NOT inline PEM) —
+//     this is the production pattern where the Secret is mounted as
+//     a file and the env var points at the mount path;
+//  3. an ephemeral 2048-bit RSA key (when valueOrPath is empty or the
+//     referenced file does not exist) — fine for dev, NOT for
+//     production because operator clients will see a host-key change
+//     after every pod restart.
+//
+// Accepting both forms means an operator can pick whichever K8s
+// Secret pattern they prefer (env injection vs. volume mount) without
+// having to re-template the manifest.
+func LoadOrGenerateHostKey(valueOrPath string) (ssh.Signer, error) {
+	if isInlinePEM(valueOrPath) {
+		return ssh.ParsePrivateKey([]byte(strings.TrimSpace(valueOrPath)))
+	}
+	if valueOrPath != "" {
+		pem, err := os.ReadFile(valueOrPath)
 		if err == nil {
 			return ssh.ParsePrivateKey(pem)
 		}
 		if !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("gateway: read host key %s: %w", path, err)
+			return nil, fmt.Errorf("gateway: read host key %s: %w", valueOrPath, err)
 		}
-		log.Printf("gateway: ssh host key %s not found — generating ephemeral key", path)
+		log.Printf("gateway: ssh host key %s not found — generating ephemeral key", valueOrPath)
 	} else {
 		log.Printf("gateway: PAM_GATEWAY_SSH_HOST_KEY unset — generating ephemeral key")
 	}
@@ -659,4 +674,14 @@ func LoadOrGenerateHostKey(path string) (ssh.Signer, error) {
 		return nil, fmt.Errorf("gateway: signer from generated host key: %w", err)
 	}
 	return signer, nil
+}
+
+// isInlinePEM reports whether s contains PEM-encoded key material
+// rather than a filesystem path. A leading `-----BEGIN` marker (after
+// trimming whitespace) is the canonical PEM frame, so a value
+// starting with that prefix cannot also be a valid filesystem path
+// on any common OS — making the path-vs-content discrimination
+// unambiguous.
+func isInlinePEM(s string) bool {
+	return strings.HasPrefix(strings.TrimSpace(s), "-----BEGIN")
 }

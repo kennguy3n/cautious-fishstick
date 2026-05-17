@@ -31,11 +31,34 @@ jobs:
       - name: Build
         run: go build ./...
 
+      - name: Build pam-gateway
+        # Explicit per-binary build for the protocol-proxy. `go build
+        # ./...` already covers it via the `./cmd/pam-gateway` import,
+        # but the dedicated step makes broken main-package wiring
+        # (missing imports, refactored listeners) fail fast and obvious
+        # in the CI log instead of getting buried inside the all-packages
+        # build output.
+        run: go build -o /tmp/pam-gateway ./cmd/pam-gateway
+
       - name: Vet
         run: go vet ./...
 
       - name: Test (race + 180s timeout)
         run: go test -race -timeout=180s ./...
+
+      - name: Test pam-gateway packages (gateway + pam services + pam handlers)
+        # Re-run the PAM-specific package set with verbose output so a
+        # regression in MS 4–10 surfaces in the CI log without having to
+        # download artifacts. The earlier `go test ./...` step already
+        # exercises these; this is an audit trail, not a duplicate test.
+        # internal/handlers/ is a flat package — `./internal/handlers/...`
+        # is the canonical pattern Go expands to that single package, and
+        # `go test -run` filters the PAM handler tests by name.
+        run: |
+          go test -race -timeout=180s -v \
+            ./internal/gateway/... \
+            ./internal/services/pam/...
+          go test -race -timeout=180s -v -run '^TestPAM' ./internal/handlers/...
 
       - name: Verify swagger spec is up to date
         run: bash scripts/generate-swagger.sh --check
@@ -62,14 +85,15 @@ jobs:
         # service with a healthcheck reports healthy, so this catches
         # Dockerfile breakages and missing inter-service wiring (e.g.
         # the ztna-api → access-ai-agent dependency declared in
-        # docker-compose.yml). We deliberately scope `--wait` to the
-        # three long-running services with health endpoints —
+        # docker-compose.yml, or the pam-gateway → ztna-api dependency
+        # declared next to it). We deliberately scope `--wait` to the
+        # four long-running services with health endpoints —
         # access-connector-worker is a queue consumer that exits with
         # code 0 after draining and has no healthcheck, so including
         # it would race `--wait` against worker shutdown.
         run: |
           docker compose up -d --build --wait --wait-timeout 300 \
-            ztna-api access-workflow-engine access-ai-agent
+            ztna-api access-workflow-engine access-ai-agent pam-gateway
 
       - name: Probe ztna-api /health
         run: |
@@ -88,6 +112,18 @@ jobs:
           set -euo pipefail
           curl -fsSL --max-time 10 --retry 5 --retry-delay 3 --retry-connrefused \
             http://localhost:8090/healthz | tee /dev/stderr | grep -q '"status"'
+
+      - name: Probe pam-gateway /health
+        # The gateway's /health is unauthenticated and intentionally
+        # cheap (cmd/pam-gateway/main.go:healthHandler). Probing it
+        # confirms the binary booted and bound its health listener —
+        # the SSH / PG / MySQL / K8s listeners on 2222 / 15432 /
+        # 13306 / 18443 are exercised by the integration suite, not
+        # the compose smoke job.
+        run: |
+          set -euo pipefail
+          curl -fsSL --max-time 10 --retry 5 --retry-delay 3 --retry-connrefused \
+            http://localhost:8081/health | tee /dev/stderr | grep -q '"status"'
 
       - name: Dump service logs on failure
         if: failure()

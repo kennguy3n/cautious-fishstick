@@ -1,0 +1,63 @@
+# Non-sensitive runtime configuration for pam-gateway. The
+# PAM_GATEWAY_API_KEY, PAM_GATEWAY_SSH_HOST_KEY, and
+# PAM_GATEWAY_SSH_CA_KEY values are stored in the companion Secret
+# (pam-gateway-secrets); everything safely visible to cluster-readers
+# lives here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pam-gateway-config
+  namespace: shieldnet-access
+  labels:
+    app.kubernetes.io/name: pam-gateway
+    app.kubernetes.io/part-of: shieldnet-access
+data:
+  api-url: "http://ztna-api.shieldnet-access.svc.cluster.local:8080"
+  # The DB / K8s proxies are opt-in — leaving the port values empty
+  # keeps those listeners off so a cluster that only needs SSH
+  # exposure doesn't open additional TCP listeners. Set to the
+  # wire-protocol defaults (5432 / 3306 / 8443) to enable.
+  pg-port: ""
+  mysql-port: ""
+  k8s-port: ""
+  # Local-disk recorder buffer. Persistent storage is provided by
+  # PAM_S3_BUCKET / PAM_S3_REGION below — emptyDir mounted at this
+  # path (see deployment.yaml) only buffers in-flight bytes.
+  replay-dir: "/var/lib/pam-gateway/replays"
+  # S3 destination for finalised session recordings. Empty values
+  # disable the S3 path so the operator must opt in to the
+  # cross-region recording bucket per environment.
+  s3-bucket: ""
+  s3-region: ""
+---
+# The Secret is provided here as a placeholder so operators can see
+# the keys pam-gateway expects. The real values are populated out of
+# band (sealed-secrets, External Secrets Operator, or kubectl create
+# secret) — never commit production credentials.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pam-gateway-secrets
+  namespace: shieldnet-access
+  labels:
+    app.kubernetes.io/name: pam-gateway
+    app.kubernetes.io/part-of: shieldnet-access
+type: Opaque
+stringData:
+  # Shared API key the gateway presents to ztna-api on every
+  # /pam/authorize, /pam/inject, /pam/audit/commands call. Must
+  # match the ACCESS_AI_AGENT_API_KEY value the API trusts. Rotate
+  # via External Secrets or sealed-secrets.
+  api-key: "CHANGE_ME"
+  # OpenSSH-formatted private key the SSH listener presents to
+  # operator clients on the operator-facing :2222 listener. Empty
+  # value triggers the boot-time auto-generated key in
+  # cmd/pam-gateway/main.go — fine for dev, NOT for production
+  # because operator clients will see a host-key change after every
+  # pod restart.
+  ssh-host-key: ""
+  # CA private key the gateway signs short-lived (5m) user
+  # certificates with for the SSH-cert injection path. Empty value
+  # falls back to plaintext credential injection (still valid, just
+  # less defensible). Rotate quarterly.
+  ssh-ca-key: ""

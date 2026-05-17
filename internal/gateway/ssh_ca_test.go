@@ -3,6 +3,9 @@ package gateway
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/pem"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -123,5 +126,102 @@ func TestLoadSSHCAFromPath_EmptyPathRejected(t *testing.T) {
 func TestLoadSSHCAFromPath_MissingFileRejected(t *testing.T) {
 	if _, err := LoadSSHCAFromPath("/nonexistent/path/to/ca/key", time.Minute); err == nil {
 		t.Fatal("expected error for missing file")
+	}
+}
+
+// caKeyPEM returns a fresh ed25519 private key marshalled to OpenSSH
+// PEM form, suitable for feeding into LoadSSHCAFromPath.
+func caKeyPEM(t *testing.T) []byte {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate ca key: %v", err)
+	}
+	block, err := ssh.MarshalPrivateKey(priv, "")
+	if err != nil {
+		t.Fatalf("marshal ca key: %v", err)
+	}
+	return pem.EncodeToMemory(block)
+}
+
+func TestLoadSSHCAFromPath_FilePath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ca.pem")
+	if err := os.WriteFile(path, caKeyPEM(t), 0o600); err != nil {
+		t.Fatalf("write ca key: %v", err)
+	}
+	ca, err := LoadSSHCAFromPath(path, time.Minute)
+	if err != nil {
+		t.Fatalf("LoadSSHCAFromPath(path): %v", err)
+	}
+	if ca.Fingerprint() == "" {
+		t.Fatal("loaded CA fingerprint is empty")
+	}
+}
+
+// TestLoadSSHCAFromPath_InlinePEM exercises the K8s-Secret-env path:
+// when the value is the PEM key material itself (what
+// `valueFrom: secretKeyRef` injects), LoadSSHCAFromPath must parse it
+// directly instead of treating it as a filesystem path and failing
+// with ENAMETOOLONG.
+func TestLoadSSHCAFromPath_InlinePEM(t *testing.T) {
+	inline := string(caKeyPEM(t))
+	ca, err := LoadSSHCAFromPath(inline, time.Minute)
+	if err != nil {
+		t.Fatalf("LoadSSHCAFromPath(inline PEM): %v", err)
+	}
+	if ca.Fingerprint() == "" {
+		t.Fatal("loaded CA fingerprint is empty")
+	}
+}
+
+func TestLoadOrGenerateHostKey_EmptyGeneratesEphemeral(t *testing.T) {
+	signer, err := LoadOrGenerateHostKey("")
+	if err != nil {
+		t.Fatalf("LoadOrGenerateHostKey(\"\"): %v", err)
+	}
+	if signer == nil {
+		t.Fatal("expected non-nil signer")
+	}
+}
+
+func TestLoadOrGenerateHostKey_MissingFileGeneratesEphemeral(t *testing.T) {
+	signer, err := LoadOrGenerateHostKey(filepath.Join(t.TempDir(), "does-not-exist"))
+	if err != nil {
+		t.Fatalf("LoadOrGenerateHostKey(missing): %v", err)
+	}
+	if signer == nil {
+		t.Fatal("expected non-nil signer for missing file")
+	}
+}
+
+func TestLoadOrGenerateHostKey_FilePath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "host.pem")
+	if err := os.WriteFile(path, caKeyPEM(t), 0o600); err != nil {
+		t.Fatalf("write host key: %v", err)
+	}
+	signer, err := LoadOrGenerateHostKey(path)
+	if err != nil {
+		t.Fatalf("LoadOrGenerateHostKey(path): %v", err)
+	}
+	if signer == nil {
+		t.Fatal("expected non-nil signer for valid path")
+	}
+}
+
+// TestLoadOrGenerateHostKey_InlinePEM exercises the K8s-Secret-env
+// path: when the value is the PEM key material itself (what
+// `valueFrom: secretKeyRef` injects), the loader must parse it
+// directly instead of trying to os.ReadFile a multi-line PEM string
+// as a filesystem path and crashing the binary at boot.
+func TestLoadOrGenerateHostKey_InlinePEM(t *testing.T) {
+	inline := string(caKeyPEM(t))
+	signer, err := LoadOrGenerateHostKey(inline)
+	if err != nil {
+		t.Fatalf("LoadOrGenerateHostKey(inline PEM): %v", err)
+	}
+	if signer == nil {
+		t.Fatal("expected non-nil signer for inline PEM")
 	}
 }

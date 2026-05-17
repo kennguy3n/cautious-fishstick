@@ -2,7 +2,7 @@
 
 Status legend: ⬜ Not started | 🟡 In progress | ✅ Complete
 
-Status: 🟡 In progress | ~89% (67 / 75 Phase 1 tasks)
+Status: 🟡 In progress | ~96% (72 / 75 Phase 1 tasks)
 
 ## Phase 1 — ShieldNet Access Privileged
 
@@ -106,13 +106,13 @@ Status: 🟡 In progress | ~89% (67 / 75 Phase 1 tasks)
 
 ### Milestone 12: Deployment and CI
 
-- ⬜ Kubernetes manifests: `deploy/k8s/pam-gateway/`
-- ⬜ Helm templates: `deploy/helm/shieldnet-access/templates/pam-gateway.yaml`
-- ⬜ CI workflow updates for `pam-gateway` build and test
-- ⬜ Integration tests: end-to-end PAM session flow
-- ⬜ Documentation: update root `README.md` with PAM section
-- ⬜ Documentation: update `docs/architecture.md` with PAM component map
-- ⬜ Documentation: update `cmd/README.md` with `pam-gateway` binary
+- ✅ Kubernetes manifests: `deploy/k8s/pam-gateway/`
+- ✅ Helm templates: `deploy/helm/shieldnet-access/templates/pam-gateway.yaml`
+- ✅ CI workflow updates for `pam-gateway` build and test
+- ✅ Integration tests: end-to-end PAM session flow
+- ✅ Documentation: update root `README.md` with PAM section
+- ✅ Documentation: update `docs/architecture.md` with PAM component map
+- ✅ Documentation: update `cmd/README.md` with `pam-gateway` binary
 
 ## Phase 2 — Last Mile + Automation (future)
 
@@ -133,6 +133,77 @@ Status: 🟡 In progress | ~89% (67 / 75 Phase 1 tasks)
 - ⬜ Behavioural analytics + Defense narrative
 
 ## Changelog
+
+### 2026-05-17 — Milestone 12 complete (Deployment + CI infrastructure)
+
+- **PAM gateway deployment manifests**
+  (`deploy/k8s/pam-gateway/{deployment,service,configmap,kustomization}.yaml`):
+  Kubernetes Deployment, ClusterIP Service, ConfigMap, and
+  Kustomize overlay for the `pam-gateway` binary. Deployment
+  pins `cpu=500m / mem=512Mi` resource requests, mounts an
+  `emptyDir` at `/var/lib/pam-gateway/replays` for active-session
+  replay buffering, and reads protocol-listener ports + S3
+  replay-store config from the ConfigMap
+  (`PAM_GATEWAY_{SSH,HEALTH,PG,MYSQL,K8S}_PORT`, `PAM_S3_BUCKET`,
+  `PAM_S3_REGION`). Listed under
+  `deploy/k8s/kustomization.yaml` so a single
+  `kubectl apply -k deploy/k8s` rolls out the full platform.
+- **Helm template**
+  (`deploy/helm/shieldnet-access/templates/pam-gateway.yaml`):
+  values-driven Deployment + Service + ConfigMap rendered from
+  `pamGateway.*` keys in `values.yaml` (image, replicas,
+  resources, listener ports, GOMEMLIMIT / GOGC, replay volume
+  size). Matches the templating + label / selector conventions
+  already used by `ztna-api.yaml` so the chart stays uniform.
+- **CI workflow updates** (`.github/workflows/ci.yml`):
+  - Explicit `Build pam-gateway` step running
+    `go build -o /tmp/pam-gateway ./cmd/pam-gateway` so broken
+    main-package wiring (missing imports, refactored listeners)
+    fails fast in the CI log instead of being buried inside the
+    `go build ./...` output.
+  - Explicit `Test pam-gateway packages` step running the
+    gateway + PAM services + PAM handlers test trees with
+    `-v` so a regression in MS 4–10 surfaces in the CI log
+    without downloading test artifacts.
+  - `docker-compose-smoke` job now waits on `pam-gateway`
+    alongside `ztna-api / access-workflow-engine /
+    access-ai-agent` and probes `/health` on host port 8081
+    to confirm the binary booted and bound its health
+    listener.
+- **End-to-end integration suite**
+  (`internal/integration/pam_e2e_test.go`,
+  `internal/integration/e2e_helpers_test.go`):
+  - `TestPAM_E2E_FullLeaseLifecycle` drives the canonical PAM
+    operator flow against the real Gin router and real PAM
+    service constructors: vault password → register SSH
+    bastion → bind operator account → request 30-min lease →
+    approver grants → granted lease appears in
+    `GET /pam/leases?active=true`. Uses
+    `access.PassthroughEncryptor` so the suite does not depend
+    on `ACCESS_CREDENTIAL_DEK` being set, and checks
+    defensively that the encrypted ciphertext never escapes
+    through any of the JSON envelopes.
+  - `TestPAM_E2E_RevokeLease` covers the revoke half of the
+    state machine — first revoke stamps `revoked_at`, a second
+    revoke is a no-op that must not regress the timestamp.
+  - The suite shares the existing `newE2EDB` /  `doJSON` /
+    `silenceLogs` helpers from `e2e_helpers_test.go`;
+    `AutoMigrate` now covers the eight PAM models so a future
+    test can drive a mixed access + PAM scenario off a single
+    schema. Both tests carry `//go:build integration` so they
+    do NOT run in `go test ./...` — the dedicated
+    `go test -tags=integration ./internal/integration/...`
+    invocation picks them up.
+- **Docker-compose host-port remap**
+  (`docker-compose.yml`, `README.md` port table): the
+  pam-gateway's Postgres / MySQL / K8s listeners (5432 / 3306
+  / 8443) stay container-internal and are no longer mapped to
+  the host. Operator-driven flows that need an externally
+  reachable proxy bind the host ports `15432` / `13306` /
+  `18443` instead so they cannot collide with the dev-stack
+  Postgres on 5432 (the PR #96 review finding). The SSH
+  listener still maps `2222:2222` and the health probe still
+  maps `8081:8081` since neither collides.
 
 ### 2026-05-17 — Milestones 5-10 complete (gateways, audit, AI risk, command policy, mobile SDK)
 

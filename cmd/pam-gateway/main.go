@@ -16,8 +16,13 @@
 //  3. Initialise the SSH CA (if PAM_GATEWAY_SSH_CA_KEY is set);
 //     otherwise the gateway falls back to credential injection.
 //  4. Start the SSH listener on PAM_GATEWAY_SSH_PORT.
-//  5. Start the health HTTP server on PAM_GATEWAY_HEALTH_PORT.
-//  6. Block on SIGINT/SIGTERM; on signal cancel the listener
+//  5. Start the PG / MySQL / K8s listeners when their port env
+//     vars are set (PAM_GATEWAY_PG_PORT, PAM_GATEWAY_MYSQL_PORT,
+//     PAM_GATEWAY_K8S_PORT) — each one stays off by default so a
+//     dev compose stack only opens the protocols an operator has
+//     opted into.
+//  6. Start the health HTTP server on PAM_GATEWAY_HEALTH_PORT.
+//  7. Block on SIGINT/SIGTERM; on signal cancel the listener
 //     contexts and drain in-flight sessions up to
 //     pam_gatewayShutdownTimeout.
 package main
@@ -125,6 +130,78 @@ func main() {
 		}
 	}()
 
+	// Optional PG / MySQL / K8s listeners. Each one stays off when
+	// its port env var is unset so the dev compose stack and the
+	// existing test surface keep their current behaviour. Production
+	// deployments enable the protocols their operators need via
+	// values.yaml (deploy/helm/shieldnet-access/values.yaml) or the
+	// k8s ConfigMap (deploy/k8s/pam-gateway/configmap.yaml).
+	if cfg.PGPort > 0 {
+		pg, err := gateway.NewPGListener(gateway.PGListenerConfig{
+			Port:          cfg.PGPort,
+			Authorizer:    authz,
+			Injector:      injector,
+			ReplayStore:   replayStore,
+			CommandSink:   commandSink,
+			CommandPolicy: policyEval,
+		})
+		if err != nil {
+			log.Fatalf("pam-gateway: build pg listener: %v", err)
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			log.Printf("pam-gateway: pg listener starting on :%d", cfg.PGPort)
+			if err := pg.Serve(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Printf("pam-gateway: pg listener exited: %v", err)
+			}
+		}()
+	}
+	if cfg.MySQLPort > 0 {
+		my, err := gateway.NewMySQLListener(gateway.MySQLListenerConfig{
+			Port:          cfg.MySQLPort,
+			Authorizer:    authz,
+			Injector:      injector,
+			ReplayStore:   replayStore,
+			CommandSink:   commandSink,
+			CommandPolicy: policyEval,
+		})
+		if err != nil {
+			log.Fatalf("pam-gateway: build mysql listener: %v", err)
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			log.Printf("pam-gateway: mysql listener starting on :%d", cfg.MySQLPort)
+			if err := my.Serve(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Printf("pam-gateway: mysql listener exited: %v", err)
+			}
+		}()
+	}
+	if cfg.K8sPort > 0 {
+		k8s, err := gateway.NewK8sListener(gateway.K8sListenerConfig{
+			Port:          cfg.K8sPort,
+			TLSCertPath:   cfg.K8sTLSCertPath,
+			TLSKeyPath:    cfg.K8sTLSKeyPath,
+			Authorizer:    authz,
+			Injector:      injector,
+			ReplayStore:   replayStore,
+			CommandSink:   commandSink,
+			CommandPolicy: policyEval,
+		})
+		if err != nil {
+			log.Fatalf("pam-gateway: build k8s listener: %v", err)
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			log.Printf("pam-gateway: k8s listener starting on :%d (tls=%t)", cfg.K8sPort, cfg.K8sTLSCertPath != "")
+			if err := k8s.Serve(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Printf("pam-gateway: k8s listener exited: %v", err)
+			}
+		}()
+	}
+
 	consoleHandler, err := gateway.NewDBSQLConsoleHandler(gateway.DBSQLConsoleConfig{
 		Authorizer:    authz,
 		Injector:      injector,
@@ -223,16 +300,21 @@ func redactURL(u string) string {
 
 // config carries the resolved PAM_GATEWAY_* environment values.
 type config struct {
-	SSHPort        int
-	HealthPort     int
-	APIURL         string
-	APIKey         string
-	S3Bucket       string
-	S3Region       string
-	ReplayDir      string
-	SSHHostKeyPath string
-	SSHCAKeyPath   string
-	SSHCAValidity  time.Duration
+	SSHPort         int
+	HealthPort      int
+	PGPort          int
+	MySQLPort       int
+	K8sPort         int
+	K8sTLSCertPath  string
+	K8sTLSKeyPath   string
+	APIURL          string
+	APIKey          string
+	S3Bucket        string
+	S3Region        string
+	ReplayDir       string
+	SSHHostKeyPath  string
+	SSHCAKeyPath    string
+	SSHCAValidity   time.Duration
 }
 
 // loadConfig resolves the binary's runtime configuration from
@@ -250,6 +332,8 @@ func loadConfig() (config, error) {
 		SSHHostKeyPath: os.Getenv("PAM_GATEWAY_SSH_HOST_KEY"),
 		SSHCAKeyPath:   os.Getenv("PAM_GATEWAY_SSH_CA_KEY"),
 		SSHCAValidity:  5 * time.Minute,
+		K8sTLSCertPath: os.Getenv("PAM_GATEWAY_K8S_TLS_CERT"),
+		K8sTLSKeyPath:  os.Getenv("PAM_GATEWAY_K8S_TLS_KEY"),
 	}
 	if v := os.Getenv("PAM_GATEWAY_SSH_PORT"); v != "" {
 		n, err := strconv.Atoi(v)
@@ -264,6 +348,27 @@ func loadConfig() (config, error) {
 			return cfg, fmt.Errorf("PAM_GATEWAY_HEALTH_PORT=%q: %w", v, err)
 		}
 		cfg.HealthPort = n
+	}
+	if v := os.Getenv("PAM_GATEWAY_PG_PORT"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return cfg, fmt.Errorf("PAM_GATEWAY_PG_PORT=%q: %w", v, err)
+		}
+		cfg.PGPort = n
+	}
+	if v := os.Getenv("PAM_GATEWAY_MYSQL_PORT"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return cfg, fmt.Errorf("PAM_GATEWAY_MYSQL_PORT=%q: %w", v, err)
+		}
+		cfg.MySQLPort = n
+	}
+	if v := os.Getenv("PAM_GATEWAY_K8S_PORT"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return cfg, fmt.Errorf("PAM_GATEWAY_K8S_PORT=%q: %w", v, err)
+		}
+		cfg.K8sPort = n
 	}
 	if v := os.Getenv("PAM_GATEWAY_SSH_CA_VALIDITY"); v != "" {
 		d, err := time.ParseDuration(v)

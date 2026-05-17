@@ -32,7 +32,14 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 FROM gcr.io/distroless/static-debian12:nonroot AS runtime
 USER nonroot:nonroot
 COPY --from=build /out/pam-gateway /pam-gateway
-# 2222 = SSH listener (Milestone 4); 8081 = health/metrics; future
-# milestones add K8s (8443), PG (5432) and MySQL (3306).
-EXPOSE 2222 8081
+# Protocol ports the binary can bind to. Each one is off by default;
+# the binary only opens a listener when its PAM_GATEWAY_*_PORT env
+# var is set (see cmd/pam-gateway/main.go and
+# docs/pam/architecture.md §9).
+#   2222 = SSH listener           (Milestone 4)
+#   5432 = PostgreSQL proxy       (Milestone 6)
+#   3306 = MySQL proxy            (Milestone 6)
+#   8443 = Kubernetes exec proxy  (Milestone 5)
+#   8081 = health / SQL console   (Milestone 4)
+EXPOSE 2222 5432 3306 8443 8081
 ENTRYPOINT ["/pam-gateway"]

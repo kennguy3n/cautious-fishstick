@@ -7,7 +7,9 @@
 #   - access-connector-worker (queue consumer; no port)
 #   - access-workflow-engine (HTTP webhooks on :8082)
 #   - access-ai-agent (A2A skill server on :8090)
-#   - pam-gateway (SSH proxy on :2222, health on :8081)
+#   - pam-gateway (SSH proxy on :2222, health on :8081, plus the
+#     PG/MySQL/K8s proxies on remapped host ports 15432 / 13306 /
+#     18443 so they don't collide with the dev-stack Postgres)
 #
 # Env vars and ports follow docs/architecture.md §12 and
 # docs/pam/architecture.md §9. Every service has a real healthcheck so
@@ -131,6 +133,14 @@ services:
       PAM_GATEWAY_API_KEY: ""
       PAM_GATEWAY_SSH_PORT: "2222"
       PAM_GATEWAY_HEALTH_PORT: "8081"
+      # The PG / MySQL / K8s proxies are off by default — each one
+      # only binds when its port env var is set. The dev stack opts
+      # all three in on the container's standard wire-protocol ports
+      # (host-side they get remapped below so they don't collide
+      # with the Postgres service). See cmd/pam-gateway/main.go.
+      PAM_GATEWAY_PG_PORT: "5432"
+      PAM_GATEWAY_MYSQL_PORT: "3306"
+      PAM_GATEWAY_K8S_PORT: "8443"
       # Enable the local-disk replay store for the dev stack so SSH
       # sessions exercise the recorder path end-to-end. The directory
       # is backed by a tmpfs mount below — recordings are
@@ -157,6 +167,16 @@ services:
     ports:
       - "2222:2222"
       - "8081:8081"
+      # The PG / MySQL / K8s proxies expose the standard wire-protocol
+      # ports inside the container, but their host-side mappings are
+      # bumped by 10_000 so they don't collide with the dev-stack
+      # Postgres on :5432 (PR #96 review finding). Connect with
+      # `psql -h localhost -p 15432`, `mysql -h 127.0.0.1 -P 13306`,
+      # or `kubectl --server=https://localhost:18443` and pass the
+      # PAM connect token from the lease approval UI.
+      - "15432:5432"
+      - "13306:3306"
+      - "18443:8443"
     networks: [access]
 
   access-ai-agent:

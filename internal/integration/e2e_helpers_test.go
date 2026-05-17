@@ -49,6 +49,21 @@ func newE2EDB(t *testing.T) *gorm.DB {
 		&models.TeamMember{},
 		&models.Policy{},
 		&models.Resource{},
+		// PAM tables — kept in this shared helper rather than a
+		// pam-specific newPAMTestDB so the existing access-platform
+		// e2e tests keep running against a single migrated schema
+		// (no behavioural change: the access tables above are
+		// orthogonal to the pam_* tables below) and so the
+		// integration suite can drive a mixed access + PAM scenario
+		// out of one DB if a future test needs to.
+		&models.PAMAsset{},
+		&models.PAMAccount{},
+		&models.PAMSecret{},
+		&models.PAMSession{},
+		&models.PAMSessionCommand{},
+		&models.PAMLease{},
+		&models.PAMCommandPolicy{},
+		&models.PAMRotationSchedule{},
 	); err != nil {
 		t.Fatalf("auto migrate e2e db: %v", err)
 	}

@@ -15,7 +15,7 @@ processes.
 | `access-connector-worker/`     | `access-connector-worker` | —     | Redis-queue consumer (sync / provision / revoke / audit). No HTTP surface. |
 | `access-workflow-engine/`      | `access-workflow-engine`  | 8082  | LangGraph-style approval orchestrator + Phase-11 background crons.   |
 | `access-ai-agent/`             | `access-ai-agent`         | 8090  | Python A2A skill server (risk assessment, explain, suggest).         |
-| `pam-gateway/`                 | `pam-gateway`             | 2222  | PAM SSH gateway. Validates one-shot connect tokens via `ztna-api` and proxies the channel to the target asset using a short-lived CA-signed cert (or injected credential fallback). |
+| `pam-gateway/`                 | `pam-gateway`             | 2222 (SSH) / 8081 (health + SQL WS) / 5432 (PG proxy) / 3306 (MySQL proxy) / 8443 (K8s exec) | PAM data-plane broker. Validates one-shot connect tokens via `ztna-api`, then proxies SSH (short-lived CA-signed cert with credential-injection fallback), `kubectl exec` over WebSocket, and PostgreSQL / MySQL wire-protocol traffic to the target asset. Every channel is teed through the session recorder + command parser + policy evaluator so audit / replay / `allow|deny|step_up` happen on every command. PG / MySQL / K8s listener ports are container-internal — `docker-compose.yml` maps them to host ports `15432` / `13306` / `18443` to avoid colliding with the dev-stack Postgres. |
 
 Run any of them locally with `go run ./cmd/<binary>` (Go services)
 or `python cmd/access-ai-agent/main.py` (Python). The compose stack
@@ -80,6 +80,31 @@ SIGINT / SIGTERM with a bounded watchdog (see commit `fc24693`).
 
 See [`cmd/access-ai-agent/README.md`](./access-ai-agent/README.md)
 for the A2A skill catalogue and request envelope.
+
+### `pam-gateway` ([cmd/pam-gateway/](./pam-gateway/))
+
+| Variable                              | Required | Default                                | Notes                                                                                                                              |
+|---------------------------------------|:--------:|----------------------------------------|------------------------------------------------------------------------------------------------------------------------------------|
+| `PAM_GATEWAY_API_URL`                 | yes      | unset                                  | `ztna-api` base URL (e.g. `http://ztna-api:8080`). Used for token validation, command audit POSTs, and policy evaluation.          |
+| `PAM_GATEWAY_API_KEY`                 | prod     | unset                                  | Shared `X-API-Key` the gateway presents on every `/pam/authorize`, `/pam/inject`, `/pam/audit/commands` call to `ztna-api`. Empty value is accepted in dev. |
+| `PAM_GATEWAY_SSH_PORT`                | no       | `2222`                                 | SSH listener TCP port (parsed as an integer; no leading colon).                                                                    |
+| `PAM_GATEWAY_HEALTH_PORT`             | no       | `8081`                                 | HTTP listener for `/health` and the browser SQL-console WebSocket upgrade.                                                          |
+| `PAM_GATEWAY_PG_PORT`                 | no       | unset (listener off)                   | PostgreSQL wire-protocol proxy TCP port. Listener stays off when unset so an SSH-only deployment does not open the extra socket. Compose / Helm set `5432` and map it to host port `15432`. |
+| `PAM_GATEWAY_MYSQL_PORT`              | no       | unset (listener off)                   | MySQL / MariaDB wire-protocol proxy TCP port. Off by default; compose / Helm set `3306` and map it to host port `13306`.            |
+| `PAM_GATEWAY_K8S_PORT`                | no       | unset (listener off)                   | `kubectl exec` WebSocket bridge TCP port. Off by default; compose / Helm set `8443` and map it to host port `18443`.                |
+| `PAM_GATEWAY_K8S_TLS_CERT` / `_TLS_KEY` | no     | unset                                  | Optional TLS material for the K8s listener. Unset = listener serves plaintext WS (acceptable for dev / behind a mesh sidecar).      |
+| `PAM_GATEWAY_SSH_HOST_KEY`            | prod     | ephemeral (in-memory)                  | PEM-encoded Ed25519 / RSA host key path. Unset = a fresh key is generated at boot (acceptable for dev; rotates every restart).      |
+| `PAM_GATEWAY_SSH_CA_KEY`              | no       | unset                                  | CA private-key path for short-lived SSH user-cert signing. Unset = listener falls back to plaintext credential injection.            |
+| `PAM_GATEWAY_SSH_CA_VALIDITY`         | no       | `5m`                                   | TTL for SSH user certs the listener signs (Go duration syntax).                                                                     |
+| `PAM_GATEWAY_REPLAY_DIR`              | dev      | `/var/lib/pam-gateway/replays`         | Local-disk replay store path. Production deployments override with the S3-backed store via `PAM_S3_BUCKET` / `PAM_S3_REGION`.       |
+| `PAM_S3_BUCKET`                       | prod     | unset                                  | S3 bucket for session replay-byte sinks.                                                                                            |
+| `PAM_S3_REGION`                       | prod     | unset                                  | S3 region for the replay store.                                                                                                     |
+| `GOMEMLIMIT`                          | no       | unset                                  | Helm default sets `460MiB` so the Go runtime collaborates with the cgroup memory limit (512 MiB request).                           |
+| `GOGC`                                | no       | `100`                                  | Standard Go runtime GC target.                                                                                                       |
+
+`/health` is unauthenticated and cheap (handler at
+`cmd/pam-gateway/main.go:healthHandler`); the docker-compose smoke
+job + Kubernetes liveness probe both rely on it.
 
 ## Shared invariants
 
