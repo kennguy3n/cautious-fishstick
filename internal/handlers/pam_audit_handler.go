@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 
@@ -211,6 +212,20 @@ func (h *PAMAuditHandler) TerminateSession(c *gin.Context) {
 	}
 	session, err := h.auditService.TerminateSession(c.Request.Context(), body.WorkspaceID, id, body.ActorUserID, body.Reason)
 	if err != nil {
+		// The service contract (audit_service.go:365) is that a
+		// non-nil session alongside a non-nil error means the DB
+		// state flip succeeded but the Kafka audit emit failed.
+		// The DB row is the source of truth, so the admin UI must
+		// see a 200 with the terminated session — otherwise a
+		// retry would attempt to flip an already-terminated row
+		// and the operator would think the terminate failed. Log
+		// the audit-emit failure for downstream remediation
+		// (Kafka reconciler / alerting).
+		if session != nil {
+			log.Printf("handlers: pam-audit: terminate session=%s state-flip succeeded but audit emit failed: %v", id, err)
+			c.JSON(http.StatusOK, session)
+			return
+		}
 		writePAMError(c, err)
 		return
 	}

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -24,6 +25,24 @@ type auditStubReplayer struct {
 func (s *auditStubReplayer) PresignGet(_ context.Context, key string, ttl time.Duration) (string, error) {
 	return fmt.Sprintf("%s/%s?ttl=%s", s.prefix, key, ttl), nil
 }
+
+// erroringPAMAuditProducer satisfies pam.PAMAuditProducer and
+// returns an error from every publish call so tests can exercise
+// the "DB flip succeeded but audit emit failed" path through
+// PAMAuditService.TerminateSession.
+type erroringPAMAuditProducer struct {
+	err error
+}
+
+func (p *erroringPAMAuditProducer) PublishPAMEvent(_ context.Context, _ pam.PAMAuditEvent) error {
+	return p.err
+}
+
+func (p *erroringPAMAuditProducer) PublishPAMEvents(_ context.Context, _ []pam.PAMAuditEvent) error {
+	return p.err
+}
+
+func (p *erroringPAMAuditProducer) Close() error { return nil }
 
 // newPAMAuditEngine wires a router with only the PAMAuditService
 // dependency bound. The producer is a no-op so the audit-emit calls
@@ -274,5 +293,56 @@ func TestPAMAuditHandler_TerminateSession_CrossWorkspaceReturns404(t *testing.T)
 	})
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d; want 404", w.Code)
+	}
+}
+
+// TestPAMAuditHandler_TerminateSession_AuditEmitFailureReturns200
+// is a regression test for the bug where TerminateSession returned
+// HTTP 500 even though the DB row had already been flipped to
+// terminated. PAMAuditService.TerminateSession's contract is that a
+// non-nil session alongside a non-nil error means the state flip
+// succeeded but the audit emit didn't — the row is the source of
+// truth, so the handler must surface the 200 + terminated session.
+// We exercise the path end-to-end by injecting a producer that
+// always errors and asserting the DB row is the canonical
+// terminated state at the end.
+func TestPAMAuditHandler_TerminateSession_AuditEmitFailureReturns200(t *testing.T) {
+	db := newTestDB(t)
+	svc, err := pam.NewPAMAuditService(pam.PAMAuditServiceConfig{
+		DB:              db,
+		Producer:        &erroringPAMAuditProducer{err: errors.New("kafka down")},
+		Replayer:        &auditStubReplayer{prefix: "https://s3.example/replay"},
+		ReplayURLExpiry: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("NewPAMAuditService: %v", err)
+	}
+	r := Router(Dependencies{PAMAuditService: svc, DisableRateLimiter: true})
+	seedAuditSession(t, db, models.PAMSession{
+		ID: "sess-1", WorkspaceID: "ws-1", UserID: "u", AssetID: "a", AccountID: "acct",
+		Protocol: "ssh", State: models.PAMSessionStateActive,
+	})
+	w := doJSON(t, r, http.MethodPost, "/pam/sessions/sess-1/terminate", map[string]interface{}{
+		"workspace_id":  "ws-1",
+		"actor_user_id": "admin-1",
+		"reason":        "policy violation",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s; want 200 (DB row is source of truth)", w.Code, w.Body.String())
+	}
+	var got models.PAMSession
+	decodeJSON(t, w, &got)
+	if got.State != models.PAMSessionStateTerminated {
+		t.Fatalf("response state = %q; want terminated", got.State)
+	}
+	var fresh models.PAMSession
+	if err := db.Where("id = ?", "sess-1").First(&fresh).Error; err != nil {
+		t.Fatalf("reload session: %v", err)
+	}
+	if fresh.State != models.PAMSessionStateTerminated {
+		t.Fatalf("db state = %q; want terminated", fresh.State)
+	}
+	if fresh.EndedAt == nil {
+		t.Fatal("db ended_at is nil; want stamped")
 	}
 }
