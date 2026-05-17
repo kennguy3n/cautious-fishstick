@@ -207,6 +207,225 @@ func TestPGListener_EndToEnd_RecordsAndCapturesQueries(t *testing.T) {
 	}
 }
 
+// TestPGListener_CommandPolicyDeny drives the gateway with a
+// CommandPolicy whose verdict is "deny" for a specific query and
+// asserts:
+//
+//   - the operator receives a synthetic ErrorResponse (severity
+//     ERROR, sqlstate 42501 = insufficient_privilege) plus
+//     ReadyForQuery, so libpq stays in the expected protocol state
+//   - the query NEVER reaches the upstream — the fake PG would
+//     have logged it via the captured sink, and the recorder would
+//     have buffered the bytes; both must be empty for the denied
+//     query
+//   - the captured command row carries the policy:deny risk flag
+//     so audit can surface the attempt
+//
+// A subsequent allowed query proceeds normally through the same
+// session, proving the listener does NOT tear down the session on
+// deny (Phase 1 design: deny is per-query, not per-session).
+func TestPGListener_CommandPolicyDeny(t *testing.T) {
+	upstream := newFakePGUpstream(t)
+	defer upstream.Close()
+
+	const (
+		sessionID = "01HXYE2EQR8K4PAMZJ4N7P9X9D"
+		token     = "pg-policy-token"
+		password  = "pg-upstream-secret"
+		username  = "ops"
+		database  = "appdb"
+		denyCmd   = "DROP TABLE users"
+		allowCmd  = "SELECT 1"
+		reason    = "destructive command on prod asset"
+	)
+
+	host, portStr, err := net.SplitHostPort(upstream.Addr())
+	if err != nil {
+		t.Fatalf("split upstream addr: %v", err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("parse upstream port: %v", err)
+	}
+
+	authz := &fakeSessionAuthorizer{
+		expectedToken: token,
+		session: AuthorizedSession{
+			SessionID:   sessionID,
+			WorkspaceID: "ws-pg-deny",
+			LeaseID:     "lease-pg-deny",
+			AssetID:     "asset-pg-deny",
+			AccountID:   "acc-pg-deny",
+			Protocol:    "postgres",
+			TargetHost:  host,
+			TargetPort:  port,
+			Username:    username,
+		},
+	}
+	injector := &fakeSecretInjector{secretType: "pg_password", secret: []byte(password)}
+	replayStore := NewMemoryReplayStore()
+	commandSink := NewMemoryCommandSink()
+	policy := &fakeCommandPolicy{denyExact: denyCmd, reason: reason}
+
+	listener, err := NewPGListener(PGListenerConfig{
+		Port:          0,
+		Authorizer:    authz,
+		Injector:      injector,
+		ReplayStore:   replayStore,
+		CommandSink:   commandSink,
+		CommandPolicy: policy,
+	})
+	if err != nil {
+		t.Fatalf("NewPGListener: %v", err)
+	}
+	gateway := startPGListener(t, listener)
+	defer gateway.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	conn, err := net.Dial("tcp", gateway.Addr())
+	if err != nil {
+		t.Fatalf("dial gateway: %v", err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatalf("set deadline: %v", err)
+	}
+	front := pgproto3.NewFrontend(conn, conn)
+
+	// Handshake.
+	front.Send(&pgproto3.StartupMessage{
+		ProtocolVersion: pgproto3.ProtocolVersionNumber,
+		Parameters:      map[string]string{"user": username, "database": database},
+	})
+	if err := front.Flush(); err != nil {
+		t.Fatalf("flush startup: %v", err)
+	}
+	if msg, err := front.Receive(); err != nil {
+		t.Fatalf("receive auth challenge: %v", err)
+	} else if _, ok := msg.(*pgproto3.AuthenticationCleartextPassword); !ok {
+		t.Fatalf("want AuthenticationCleartextPassword, got %T", msg)
+	}
+	front.Send(&pgproto3.PasswordMessage{Password: token})
+	if err := front.Flush(); err != nil {
+		t.Fatalf("flush password: %v", err)
+	}
+	gotAuthOK := false
+	gotReady := false
+	deadline := time.Now().Add(5 * time.Second)
+	for !(gotAuthOK && gotReady) && time.Now().Before(deadline) {
+		msg, err := front.Receive()
+		if err != nil {
+			t.Fatalf("receive auth-ok: %v", err)
+		}
+		switch msg.(type) {
+		case *pgproto3.AuthenticationOk:
+			gotAuthOK = true
+		case *pgproto3.ReadyForQuery:
+			gotReady = true
+		}
+	}
+	if !gotAuthOK || !gotReady {
+		t.Fatalf("incomplete handshake: authOK=%v ready=%v", gotAuthOK, gotReady)
+	}
+
+	// Issue the denied query. Expect ErrorResponse + ReadyForQuery
+	// synthesised by the gateway (not by the upstream).
+	front.Send(&pgproto3.Query{String: denyCmd})
+	if err := front.Flush(); err != nil {
+		t.Fatalf("flush deny query: %v", err)
+	}
+	gotErr := false
+	gotReadyAfterDeny := false
+	denyDeadline := time.Now().Add(5 * time.Second)
+	for !(gotErr && gotReadyAfterDeny) && time.Now().Before(denyDeadline) {
+		msg, err := front.Receive()
+		if err != nil {
+			t.Fatalf("receive after deny query: %v", err)
+		}
+		switch m := msg.(type) {
+		case *pgproto3.ErrorResponse:
+			gotErr = true
+			if m.Severity != "ERROR" {
+				t.Errorf("deny ErrorResponse severity = %q; want ERROR", m.Severity)
+			}
+			if m.Code != "42501" {
+				t.Errorf("deny ErrorResponse code = %q; want 42501", m.Code)
+			}
+			if !strings.Contains(m.Message, reason) {
+				t.Errorf("deny ErrorResponse message = %q; want substring %q", m.Message, reason)
+			}
+		case *pgproto3.ReadyForQuery:
+			gotReadyAfterDeny = true
+		}
+	}
+	if !gotErr {
+		t.Fatalf("never received ErrorResponse for denied query")
+	}
+	if !gotReadyAfterDeny {
+		t.Fatalf("never received ReadyForQuery after deny")
+	}
+
+	// Now issue a permitted query through the same session and
+	// confirm it goes through normally — the deny path must not
+	// poison the session.
+	front.Send(&pgproto3.Query{String: allowCmd})
+	if err := front.Flush(); err != nil {
+		t.Fatalf("flush allow query: %v", err)
+	}
+	gotComplete := false
+	gotReadyAfterAllow := false
+	allowDeadline := time.Now().Add(5 * time.Second)
+	for !(gotComplete && gotReadyAfterAllow) && time.Now().Before(allowDeadline) {
+		msg, err := front.Receive()
+		if err != nil {
+			t.Fatalf("receive after allow query: %v", err)
+		}
+		switch msg.(type) {
+		case *pgproto3.CommandComplete:
+			gotComplete = true
+		case *pgproto3.ReadyForQuery:
+			gotReadyAfterAllow = true
+		}
+	}
+	if !gotComplete || !gotReadyAfterAllow {
+		t.Fatalf("incomplete reply for allowed query after deny: complete=%v ready=%v", gotComplete, gotReadyAfterAllow)
+	}
+
+	front.Send(&pgproto3.Terminate{})
+	_ = front.Flush()
+	_ = conn.Close()
+
+	// Wait for the listener to flush its parser → sink pipeline.
+	rows := waitForCommandRows(ctx, commandSink, 2)
+	if len(rows) < 2 {
+		t.Fatalf("captured %d command rows, want 2: %+v", len(rows), rows)
+	}
+
+	// First row is the denied command. It MUST carry the policy:deny
+	// risk flag, with the denied SQL text as input.
+	denyRow := rows[0]
+	if denyRow.Input != denyCmd {
+		t.Errorf("deny row input = %q; want %q", denyRow.Input, denyCmd)
+	}
+	if denyRow.RiskFlag == nil {
+		t.Fatalf("deny row should carry a policy:deny risk flag; got nil")
+	}
+	if !strings.Contains(*denyRow.RiskFlag, "policy:deny") {
+		t.Errorf("deny row risk flag = %q; want policy:deny", *denyRow.RiskFlag)
+	}
+
+	// Second row is the allowed command — no risk flag.
+	allowRow := rows[1]
+	if allowRow.Input != allowCmd {
+		t.Errorf("allow row input = %q; want %q", allowRow.Input, allowCmd)
+	}
+	if allowRow.RiskFlag != nil {
+		t.Errorf("allow row should not have a risk flag; got %q", *allowRow.RiskFlag)
+	}
+}
+
 // TestPGListener_RejectsBadToken proves the listener gives the
 // client a clean FATAL ErrorResponse and never opens an upstream
 // connection when the authorizer rejects the supplied password.

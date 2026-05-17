@@ -39,6 +39,7 @@ import (
 	"github.com/kennguy3n/cautious-fishstick/internal/pkg/aiclient"
 	"github.com/kennguy3n/cautious-fishstick/internal/pkg/database"
 	"github.com/kennguy3n/cautious-fishstick/internal/services/access"
+	"github.com/kennguy3n/cautious-fishstick/internal/services/pam"
 
 	// Blank-imports register each connector with the process-global
 	// access registry via init() side-effects. Forgetting to import a
@@ -310,6 +311,18 @@ func main() {
 		deps.ConnectorListReader = connListSvc
 		deps.OrphanReconciler = orphanReconciler
 		deps.JMLService = jmlSvc
+
+		// PAM command-policy engine. The adapter is what the
+		// gateway calls over HTTP (POST /pam/policy/evaluate) to
+		// resolve session_id -> (asset, account) metadata and
+		// score the command. A non-nil constructor error here
+		// would be a programmer bug (db is non-nil at this
+		// point), so we log.Fatal rather than degrade.
+		pamPolicySvc, pamPolicyErr := pam.NewPAMCommandPolicyService(db)
+		if pamPolicyErr != nil {
+			log.Fatalf("ztna-api: build pam command policy service: %v", pamPolicyErr)
+		}
+		deps.PAMPolicyAdapter = pam.NewSessionPolicyAdapter(db, pamPolicySvc)
 	} else {
 		log.Printf("ztna-api: ACCESS_DATABASE_URL unset; running without DB — handlers will return 503")
 	}

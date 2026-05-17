@@ -179,6 +179,185 @@ func TestMySQLListener_EndToEnd_RecordsAndCapturesQueries(t *testing.T) {
 	}
 }
 
+// TestMySQLListener_CommandPolicyDeny drives a MySQL session
+// against a fake upstream with a CommandPolicy installed that
+// denies a specific query. The test asserts:
+//
+//   - the operator receives a synthetic ERR packet (sqlstate 42000,
+//     error code 1227 = ER_SPECIFIC_ACCESS_DENIED_ERROR) so
+//     client drivers surface a normal SQL error
+//   - the denied query is captured as a command row with the
+//     mysql:policy:deny risk flag
+//   - a subsequent allowed query proceeds through the same session
+//     and is captured WITHOUT a risk flag
+func TestMySQLListener_CommandPolicyDeny(t *testing.T) {
+	const (
+		sessionID = "01HXYE2EQR8K4PAMZJ4N7M9X8P"
+		username  = "ops"
+		token     = "mysql-policy-token"
+		password  = "upstream-secret"
+		dbName    = ""
+		denyCmd   = "DROP TABLE users"
+		allowCmd  = "SELECT 1"
+		reason    = "destructive command on prod asset"
+	)
+
+	upstream := newFakeMySQLUpstream(t, username, password)
+	defer upstream.Close()
+
+	host, portStr, err := net.SplitHostPort(upstream.Addr())
+	if err != nil {
+		t.Fatalf("split upstream host: %v", err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("parse upstream port: %v", err)
+	}
+
+	authz := &fakeSessionAuthorizer{
+		expectedToken: token,
+		session: AuthorizedSession{
+			SessionID:   sessionID,
+			WorkspaceID: "ws-mysql-deny",
+			LeaseID:     "lease-mysql-deny",
+			AssetID:     "asset-mysql-deny",
+			AccountID:   "acct-mysql-deny",
+			Protocol:    "mysql",
+			TargetHost:  host,
+			TargetPort:  port,
+			Username:    username,
+		},
+	}
+	injector := &fakeSecretInjector{secretType: "mysql_password", secret: []byte(password)}
+	replayStore := NewMemoryReplayStore()
+	commandSink := NewMemoryCommandSink()
+	policy := &fakeCommandPolicy{denyExact: denyCmd, reason: reason}
+
+	listener, err := NewMySQLListener(MySQLListenerConfig{
+		Authorizer:    authz,
+		Injector:      injector,
+		ReplayStore:   replayStore,
+		CommandSink:   commandSink,
+		CommandPolicy: policy,
+	})
+	if err != nil {
+		t.Fatalf("NewMySQLListener: %v", err)
+	}
+	gw := startMySQLListener(t, listener)
+	defer gw.cancel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	conn, err := net.DialTimeout("tcp", gw.addr, 3*time.Second)
+	if err != nil {
+		t.Fatalf("dial gateway: %v", err)
+	}
+	defer conn.Close()
+
+	// Greeting → handshake → auth switch → token → OK.
+	greetPkt, _, err := readMySQLPacket(conn)
+	if err != nil {
+		t.Fatalf("read greeting: %v", err)
+	}
+	greet, err := parseGreeting(greetPkt)
+	if err != nil {
+		t.Fatalf("parse greeting: %v", err)
+	}
+	hsResp := buildHandshakeResponse(username, dbName, scrambleNativePassword([]byte("bogus"), greet.Salt), "mysql_native_password")
+	if err := writeMySQLPacket(conn, 1, hsResp); err != nil {
+		t.Fatalf("write handshake response: %v", err)
+	}
+	if _, _, err := readMySQLPacket(conn); err != nil {
+		t.Fatalf("read auth switch: %v", err)
+	}
+	if err := writeMySQLPacket(conn, 3, append([]byte(token), 0)); err != nil {
+		t.Fatalf("write auth switch response: %v", err)
+	}
+	okPkt, _, err := readMySQLPacket(conn)
+	if err != nil {
+		t.Fatalf("read final ok: %v", err)
+	}
+	if len(okPkt) == 0 || okPkt[0] != okHeader {
+		t.Fatalf("expected OK packet; got pkt[0]=0x%02x", okPkt[0])
+	}
+
+	// Issue the denied query. The gateway should synthesise an ERR
+	// packet directly (the fake upstream never sees the query).
+	if err := writeMySQLPacket(conn, 0, append([]byte{comQuery}, []byte(denyCmd)...)); err != nil {
+		t.Fatalf("write COM_QUERY (deny): %v", err)
+	}
+	errPkt, _, err := readMySQLPacket(conn)
+	if err != nil {
+		t.Fatalf("read deny ERR: %v", err)
+	}
+	if len(errPkt) == 0 || errPkt[0] != errHeader {
+		t.Fatalf("expected ERR packet for deny; got pkt[0]=0x%02x payload=%q", errPkt[0], errPkt)
+	}
+	if !strings.Contains(string(errPkt), reason) {
+		t.Errorf("deny ERR packet should mention %q; got %q", reason, errPkt)
+	}
+	// The ERR payload layout is:
+	//   [0] 0xff
+	//   [1..2] error code (LE)
+	//   [3] '#'
+	//   [4..8] sql_state (5 ASCII bytes)
+	//   [9..] message text
+	if len(errPkt) >= 9 {
+		errCode := uint16(errPkt[1]) | uint16(errPkt[2])<<8
+		if errCode != 1227 {
+			t.Errorf("deny ERR error_code = %d; want 1227 (ER_SPECIFIC_ACCESS_DENIED_ERROR)", errCode)
+		}
+		if string(errPkt[4:9]) != "42000" {
+			t.Errorf("deny ERR sql_state = %q; want 42000", string(errPkt[4:9]))
+		}
+	}
+
+	// Allowed query proceeds normally.
+	if err := writeMySQLPacket(conn, 0, append([]byte{comQuery}, []byte(allowCmd)...)); err != nil {
+		t.Fatalf("write COM_QUERY (allow): %v", err)
+	}
+	for {
+		pkt, _, err := readMySQLPacket(conn)
+		if err != nil {
+			t.Fatalf("read allow reply: %v", err)
+		}
+		if len(pkt) == 0 {
+			continue
+		}
+		if pkt[0] == okHeader || pkt[0] == errHeader {
+			break
+		}
+	}
+
+	if err := writeMySQLPacket(conn, 0, []byte{comQuit}); err != nil {
+		t.Fatalf("write COM_QUIT: %v", err)
+	}
+	_ = conn.Close()
+
+	rows := waitForCommandRows(ctx, commandSink, 2)
+	if len(rows) < 2 {
+		t.Fatalf("captured %d rows; want 2: %+v", len(rows), rows)
+	}
+	denyRow := rows[0]
+	if denyRow.Input != denyCmd {
+		t.Errorf("deny row input = %q; want %q", denyRow.Input, denyCmd)
+	}
+	if denyRow.RiskFlag == nil {
+		t.Fatalf("deny row should carry a risk flag; got nil")
+	}
+	if !strings.Contains(*denyRow.RiskFlag, "policy:deny") {
+		t.Errorf("deny row risk flag = %q; want policy:deny", *denyRow.RiskFlag)
+	}
+	allowRow := rows[1]
+	if allowRow.Input != allowCmd {
+		t.Errorf("allow row input = %q; want %q", allowRow.Input, allowCmd)
+	}
+	if allowRow.RiskFlag != nil {
+		t.Errorf("allow row should not have a risk flag; got %q", *allowRow.RiskFlag)
+	}
+}
+
 // TestMySQLListener_RejectsBadToken proves the listener emits a clean
 // ERR packet when the cleartext token does not authorize.
 func TestMySQLListener_RejectsBadToken(t *testing.T) {

@@ -132,6 +132,15 @@ type Dependencies struct {
 	// nil; the routes are only registered when this dependency
 	// is present.
 	PAMAuditService *pam.PAMAuditService
+
+	// PAMPolicyAdapter backs POST /pam/policy/evaluate — the
+	// gateway-facing endpoint that runs an operator-typed command
+	// through PAMCommandPolicyService and returns the
+	// (action, reason) pair the SSH / K8s / DB listeners enforce.
+	// May be nil; the route is only registered when this
+	// dependency is present so dev binaries without a DB stay
+	// healthy.
+	PAMPolicyAdapter *pam.SessionPolicyAdapter
 }
 
 // Router builds the *gin.Engine that serves the access platform's
@@ -239,6 +248,10 @@ func Router(deps Dependencies) *gin.Engine {
 	if deps.PAMAuditService != nil {
 		ah := NewPAMAuditHandler(deps.PAMAuditService)
 		ah.Register(r)
+	}
+	if deps.PAMPolicyAdapter != nil {
+		ph := NewPAMPolicyHandler(deps.PAMPolicyAdapter)
+		ph.Register(r)
 	}
 
 	return r

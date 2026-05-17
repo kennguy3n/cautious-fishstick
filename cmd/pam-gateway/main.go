@@ -69,6 +69,7 @@ func main() {
 	authz := gateway.NewAPIAuthorizer(cfg.APIURL, cfg.APIKey, nil)
 	injector := gateway.NewAPISecretInjector(cfg.APIURL, cfg.APIKey, nil)
 	commandSink := gateway.NewAPICommandSink(cfg.APIURL, cfg.APIKey, nil)
+	policyEval := gateway.NewAPIPolicyEvaluator(cfg.APIURL, cfg.APIKey, nil)
 
 	var replayStore gateway.ReplayStore
 	if cfg.ReplayDir != "" {
@@ -99,13 +100,14 @@ func main() {
 	}
 
 	listener, err := gateway.NewSSHListener(gateway.SSHListenerConfig{
-		Port:        cfg.SSHPort,
-		HostKey:     hostKey,
-		Authorizer:  authz,
-		Injector:    injector,
-		CA:          ca,
-		ReplayStore: replayStore,
-		CommandSink: commandSink,
+		Port:          cfg.SSHPort,
+		HostKey:       hostKey,
+		Authorizer:    authz,
+		Injector:      injector,
+		CA:            ca,
+		ReplayStore:   replayStore,
+		CommandSink:   commandSink,
+		CommandPolicy: policyEval,
 	})
 	if err != nil {
 		log.Fatalf("pam-gateway: build ssh listener: %v", err)

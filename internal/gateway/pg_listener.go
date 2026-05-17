@@ -32,6 +32,15 @@ type PGListenerConfig struct {
 	ReplayStore     ReplayStore
 	CommandSink     CommandSink
 	ShutdownTimeout time.Duration
+
+	// CommandPolicy evaluates each Simple-Query against the
+	// pam_command_policies rule set. Optional — when nil the
+	// listener forwards every query unchanged. When set, "deny"
+	// rules short-circuit the query before it reaches the
+	// upstream cluster (the operator sees a synthesised
+	// ErrorResponse + ReadyForQuery so libpq stays happy) and
+	// "step_up" rules raise a risk flag on the audit row.
+	CommandPolicy CommandPolicyEvaluator
 }
 
 // PGListener is the production PostgreSQL gateway.
@@ -374,6 +383,52 @@ func (l *PGListener) proxyQueries(ctx context.Context, session *AuthorizedSessio
 			_ = frontend.Flush()
 			return io.EOF
 		case *pgproto3.Query:
+			// Evaluate the policy engine before forwarding. On
+			// "deny" we short-circuit by synthesising an
+			// ErrorResponse + ReadyForQuery so libpq stays in
+			// the expected protocol state, and we record the
+			// command as denied (with the policy reason as the
+			// hashed output payload so audit reviewers see the
+			// rule that blocked it). On any policy error we
+			// fail-open and forward the query — matching the
+			// SSH listener's existing semantics.
+			if l.cfg.CommandPolicy != nil {
+				action, reason, err := l.cfg.CommandPolicy.EvaluateCommand(ctx, session.WorkspaceID, session.SessionID, m.String)
+				if err != nil {
+					log.Printf("gateway: pg evaluate policy session=%s err=%v", session.SessionID, err)
+				} else {
+					switch action {
+					case "deny":
+						denialMsg := reason
+						if denialMsg == "" {
+							denialMsg = "command blocked by PAM policy"
+						}
+						if parser != nil {
+							parser.WriteInput(ctx, []byte(m.String+"\n"))
+							parser.WriteOutput([]byte(denialMsg))
+							parser.SetRiskFlag("pg:policy:deny")
+							parser.WriteInput(ctx, []byte("\n"))
+						}
+						backend.Send(&pgproto3.ErrorResponse{
+							Severity: "ERROR",
+							Code:     "42501", // insufficient_privilege
+							Message:  denialMsg,
+						})
+						backend.Send(&pgproto3.ReadyForQuery{TxStatus: 'I'})
+						if err := backend.Flush(); err != nil {
+							return fmt.Errorf("flush policy deny: %w", err)
+						}
+						continue
+					case "step_up":
+						if parser != nil {
+							parser.SetRiskFlag("pg:policy:step_up")
+						}
+						// step_up rules don't block the query in
+						// the Phase 1 wire — mobile MFA prompt is
+						// out-of-band. We just flag the row.
+					}
+				}
+			}
 			if parser != nil {
 				parser.WriteInput(ctx, []byte(m.String+"\n"))
 			}

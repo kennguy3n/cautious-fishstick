@@ -56,6 +56,15 @@ type MySQLListenerConfig struct {
 	ReplayStore     ReplayStore
 	CommandSink     CommandSink
 	ShutdownTimeout time.Duration
+
+	// CommandPolicy evaluates each COM_QUERY against the
+	// pam_command_policies rule set. Optional — when nil the
+	// listener forwards every query unchanged. When set, "deny"
+	// rules short-circuit the query before it reaches the
+	// upstream MySQL server (the operator sees a synthesised ERR
+	// packet so the client driver returns a normal SQL error)
+	// and "step_up" rules raise a risk flag on the audit row.
+	CommandPolicy CommandPolicyEvaluator
 }
 
 // MySQLListener is the production MySQL gateway.
@@ -246,7 +255,7 @@ func (l *MySQLListener) handleConn(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	if err := l.proxyQueries(ctx, opReader, opWriter, upstreamConn, parser); err != nil && !errors.Is(err, io.EOF) {
+	if err := l.proxyQueries(ctx, session, opReader, opWriter, upstreamConn, parser); err != nil && !errors.Is(err, io.EOF) {
 		log.Printf("gateway: mysql proxy loop session=%s: %v", session.SessionID, err)
 	}
 
@@ -404,7 +413,7 @@ func (l *MySQLListener) connectUpstream(ctx context.Context, session *Authorized
 // operator, special-cases COM_QUERY for audit capture, forwards
 // everything to the upstream, and pumps the matching response
 // frames back.
-func (l *MySQLListener) proxyQueries(ctx context.Context, opR io.Reader, opW io.Writer, upstream net.Conn, parser *CommandParser) error {
+func (l *MySQLListener) proxyQueries(ctx context.Context, session *AuthorizedSession, opR io.Reader, opW io.Writer, upstream net.Conn, parser *CommandParser) error {
 	for {
 		pkt, seq, err := readMySQLPacket(opR)
 		if err != nil {
@@ -422,6 +431,49 @@ func (l *MySQLListener) proxyQueries(ctx context.Context, opR io.Reader, opW io.
 			_ = writeMySQLPacket(upstream, seq, pkt)
 			return io.EOF
 		case comQuery:
+			sqlText := string(pkt[1:])
+			// Evaluate the policy engine before forwarding. On
+			// "deny" we short-circuit by synthesising an ERR
+			// packet so the MySQL client driver surfaces a normal
+			// SQL error to the operator. On any policy error we
+			// fail-open and forward the query — matching the SSH
+			// listener's existing semantics.
+			if l.cfg.CommandPolicy != nil {
+				action, reason, err := l.cfg.CommandPolicy.EvaluateCommand(ctx, session.WorkspaceID, session.SessionID, sqlText)
+				if err != nil {
+					log.Printf("gateway: mysql evaluate policy session=%s err=%v", session.SessionID, err)
+				} else {
+					switch action {
+					case "deny":
+						denialMsg := reason
+						if denialMsg == "" {
+							denialMsg = "command blocked by PAM policy"
+						}
+						if parser != nil {
+							parser.WriteInput(ctx, append(append([]byte{}, pkt[1:]...), '\n'))
+							parser.WriteOutput([]byte(denialMsg))
+							parser.SetRiskFlag("mysql:policy:deny")
+							parser.WriteInput(ctx, []byte("\n"))
+						}
+						// 1227 = ER_SPECIFIC_ACCESS_DENIED_ERROR — a
+						// privilege-related error that MySQL clients
+						// already render in plain English. Sequence id
+						// of an ERR packet is the next id after the
+						// COM_QUERY — i.e. seq+1.
+						if err := writeMySQLErr(opW, seq+1, 1227, "42000", denialMsg); err != nil {
+							return fmt.Errorf("write policy deny err: %w", err)
+						}
+						continue
+					case "step_up":
+						if parser != nil {
+							parser.SetRiskFlag("mysql:policy:step_up")
+						}
+						// step_up rules don't block the query in
+						// the Phase 1 wire — mobile MFA prompt is
+						// out-of-band. We just flag the row.
+					}
+				}
+			}
 			if parser != nil {
 				// CommandParser keys command boundaries off newlines
 				// in its input stream. Wrap the SQL text in a trailing
