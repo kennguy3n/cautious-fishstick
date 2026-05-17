@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -37,19 +38,36 @@ func NewSSHCertificateAuthority(caSigner ssh.Signer, validity time.Duration) *SS
 	return &SSHCertificateAuthority{caSigner: caSigner, validity: validity}
 }
 
-// LoadSSHCAFromPath loads a CA private key from a PEM file on disk
-// and returns an SSHCertificateAuthority bound to it.
-func LoadSSHCAFromPath(path string, validity time.Duration) (*SSHCertificateAuthority, error) {
-	if path == "" {
+// LoadSSHCAFromPath loads a CA private key and returns an
+// SSHCertificateAuthority bound to it. The valueOrPath argument
+// accepts either form:
+//
+//   - inline PEM content (when the value begins with a `-----BEGIN`
+//     header, after whitespace trimming) — what K8s Secret env
+//     injection via `valueFrom: secretKeyRef` produces;
+//   - a filesystem path to a PEM file — what the volume-mount
+//     Secret pattern produces.
+//
+// An empty value is rejected so the gateway falls back to the
+// credential-injection path instead of silently issuing user certs
+// with a zero-value CA.
+func LoadSSHCAFromPath(valueOrPath string, validity time.Duration) (*SSHCertificateAuthority, error) {
+	if valueOrPath == "" {
 		return nil, errors.New("gateway: ssh ca key path is empty")
 	}
-	pem, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("gateway: read ssh ca key %s: %w", path, err)
+	var pem []byte
+	if strings.HasPrefix(strings.TrimSpace(valueOrPath), "-----BEGIN") {
+		pem = []byte(strings.TrimSpace(valueOrPath))
+	} else {
+		b, err := os.ReadFile(valueOrPath)
+		if err != nil {
+			return nil, fmt.Errorf("gateway: read ssh ca key %s: %w", valueOrPath, err)
+		}
+		pem = b
 	}
 	signer, err := ssh.ParsePrivateKey(pem)
 	if err != nil {
-		return nil, fmt.Errorf("gateway: parse ssh ca key %s: %w", path, err)
+		return nil, fmt.Errorf("gateway: parse ssh ca key: %w", err)
 	}
 	return NewSSHCertificateAuthority(signer, validity), nil
 }

@@ -63,6 +63,19 @@ spec:
               containerPort: 8081
               protocol: TCP
           env:
+            # GOMEMLIMIT lets the Go runtime know about the cgroup
+            # memory limit (512Mi) so the GC stays aggressive enough
+            # to keep RSS under that ceiling. 460MiB leaves ~52MiB of
+            # headroom for non-Go allocations (cgo stacks, file
+            # descriptors, in-flight session buffers) before the
+            # kernel OOM-kills the container. GOGC=100 is the Go
+            # default and is set explicitly so it does not get
+            # overridden by a stale env value. Matches
+            # deploy/helm/shieldnet-access/values.yaml.
+            - name: GOMEMLIMIT
+              value: "460MiB"
+            - name: GOGC
+              value: "100"
             - name: PAM_GATEWAY_SSH_PORT
               value: "2222"
             - name: PAM_GATEWAY_HEALTH_PORT
