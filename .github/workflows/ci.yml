@@ -51,11 +51,14 @@ jobs:
         # regression in MS 4–10 surfaces in the CI log without having to
         # download artifacts. The earlier `go test ./...` step already
         # exercises these; this is an audit trail, not a duplicate test.
+        # internal/handlers/ is a flat package — `./internal/handlers/...`
+        # is the canonical pattern Go expands to that single package, and
+        # `go test -run` filters the PAM handler tests by name.
         run: |
           go test -race -timeout=180s -v \
             ./internal/gateway/... \
-            ./internal/services/pam/... \
-            ./internal/handlers/pam_...
+            ./internal/services/pam/...
+          go test -race -timeout=180s -v -run '^TestPAM' ./internal/handlers/...
 
       - name: Verify swagger spec is up to date
         run: bash scripts/generate-swagger.sh --check

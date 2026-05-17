@@ -143,8 +143,9 @@ Status: 🟡 In progress | ~96% (72 / 75 Phase 1 tasks)
   pins `cpu=500m / mem=512Mi` resource requests, mounts an
   `emptyDir` at `/var/lib/shieldnet/replay` for active-session
   replay buffering, and reads protocol-listener ports + S3
-  replay-store config from the ConfigMap (`PAM_GATEWAY_LISTEN_*`,
-  `PAM_S3_BUCKET`, `PAM_S3_REGION`). Listed under
+  replay-store config from the ConfigMap
+  (`PAM_GATEWAY_{SSH,HEALTH,PG,MYSQL,K8S}_PORT`, `PAM_S3_BUCKET`,
+  `PAM_S3_REGION`). Listed under
   `deploy/k8s/kustomization.yaml` so a single
   `kubectl apply -k deploy/k8s` rolls out the full platform.
 - **Helm template**
