@@ -23,6 +23,9 @@ resources:
   - access-ai-agent/deployment.yaml
   - access-ai-agent/service.yaml
   - access-ai-agent/configmap.yaml
+  - pam-gateway/deployment.yaml
+  - pam-gateway/service.yaml
+  - pam-gateway/configmap.yaml
 
 commonLabels:
   app.kubernetes.io/part-of: shieldnet-access

@@ -1,0 +1,230 @@
+{{- if .Values.pamGateway.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pam-gateway
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shieldnet-access.labels" . | nindent 4 }}
+    app.kubernetes.io/name: pam-gateway
+    app.kubernetes.io/component: gateway
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pam-gateway-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shieldnet-access.labels" . | nindent 4 }}
+    app.kubernetes.io/name: pam-gateway
+data:
+  api-url: {{ .Values.pamGateway.config.apiUrl | quote }}
+  pg-port: {{ .Values.pamGateway.config.pgPort | quote }}
+  mysql-port: {{ .Values.pamGateway.config.mysqlPort | quote }}
+  k8s-port: {{ .Values.pamGateway.config.k8sPort | quote }}
+  replay-dir: {{ .Values.pamGateway.config.replayDir | quote }}
+  s3-bucket: {{ .Values.pamGateway.config.s3Bucket | quote }}
+  s3-region: {{ .Values.pamGateway.config.s3Region | quote }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pam-gateway-secrets
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shieldnet-access.labels" . | nindent 4 }}
+    app.kubernetes.io/name: pam-gateway
+type: Opaque
+stringData:
+  api-key: {{ .Values.pamGateway.secrets.apiKey | quote }}
+  ssh-host-key: {{ .Values.pamGateway.secrets.sshHostKey | quote }}
+  ssh-ca-key: {{ .Values.pamGateway.secrets.sshCaKey | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pam-gateway
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shieldnet-access.labels" . | nindent 4 }}
+    app.kubernetes.io/name: pam-gateway
+    app.kubernetes.io/component: gateway
+spec:
+  type: {{ .Values.pamGateway.service.type }}
+  selector:
+    {{- include "shieldnet-access.selectorLabels" (dict "name" "pam-gateway" "ctx" .) | nindent 4 }}
+  ports:
+    - name: ssh
+      port: {{ .Values.pamGateway.service.sshPort }}
+      targetPort: ssh
+      protocol: TCP
+    - name: pg
+      port: {{ .Values.pamGateway.service.pgPort }}
+      targetPort: pg
+      protocol: TCP
+    - name: mysql
+      port: {{ .Values.pamGateway.service.mysqlPort }}
+      targetPort: mysql
+      protocol: TCP
+    - name: k8s
+      port: {{ .Values.pamGateway.service.k8sPort }}
+      targetPort: k8s
+      protocol: TCP
+    - name: health
+      port: {{ .Values.pamGateway.service.healthPort }}
+      targetPort: health
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pam-gateway
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "shieldnet-access.labels" . | nindent 4 }}
+    app.kubernetes.io/name: pam-gateway
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: {{ .Values.pamGateway.replicaCount }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "shieldnet-access.selectorLabels" (dict "name" "pam-gateway" "ctx" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "shieldnet-access.labels" . | nindent 8 }}
+        {{- include "shieldnet-access.selectorLabels" (dict "name" "pam-gateway" "ctx" .) | nindent 8 }}
+        app.kubernetes.io/component: gateway
+    spec:
+      serviceAccountName: pam-gateway
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # 30s drains the in-flight SSH / SQL / K8s sessions per
+      # cmd/pam-gateway/main.go:pamGatewayShutdownTimeout. Anything
+      # longer just delays the rollout without buying drain time.
+      terminationGracePeriodSeconds: 35
+      containers:
+        - name: pam-gateway
+          image: {{ include "shieldnet-access.image" (dict "service" "pam-gateway" "tag" .Values.image.pamGatewayTag "ctx" .) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: ssh
+              containerPort: 2222
+              protocol: TCP
+            - name: pg
+              containerPort: 5432
+              protocol: TCP
+            - name: mysql
+              containerPort: 3306
+              protocol: TCP
+            - name: k8s
+              containerPort: 8443
+              protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          env:
+            - name: PAM_GATEWAY_SSH_PORT
+              value: "2222"
+            - name: PAM_GATEWAY_HEALTH_PORT
+              value: "8081"
+            {{- range $k, $v := .Values.pamGateway.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            - name: PAM_GATEWAY_API_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: pam-gateway-config
+                  key: api-url
+            - name: PAM_GATEWAY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: pam-gateway-secrets
+                  key: api-key
+            - name: PAM_GATEWAY_PG_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: pam-gateway-config
+                  key: pg-port
+                  optional: true
+            - name: PAM_GATEWAY_MYSQL_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: pam-gateway-config
+                  key: mysql-port
+                  optional: true
+            - name: PAM_GATEWAY_K8S_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: pam-gateway-config
+                  key: k8s-port
+                  optional: true
+            - name: PAM_GATEWAY_REPLAY_DIR
+              valueFrom:
+                configMapKeyRef:
+                  name: pam-gateway-config
+                  key: replay-dir
+                  optional: true
+            - name: PAM_S3_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: pam-gateway-config
+                  key: s3-bucket
+                  optional: true
+            - name: PAM_S3_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: pam-gateway-config
+                  key: s3-region
+                  optional: true
+            - name: PAM_GATEWAY_SSH_HOST_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: pam-gateway-secrets
+                  key: ssh-host-key
+                  optional: true
+            - name: PAM_GATEWAY_SSH_CA_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: pam-gateway-secrets
+                  key: ssh-ca-key
+                  optional: true
+          resources:
+            {{- toYaml .Values.pamGateway.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 6
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - name: replays
+              mountPath: {{ .Values.pamGateway.config.replayDir }}
+      volumes:
+        - name: replays
+          emptyDir:
+            sizeLimit: {{ .Values.pamGateway.replayVolumeSize | quote }}
+{{- end }}

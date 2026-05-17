@@ -32,6 +32,7 @@ image:
   accessWorkerTag: ""
   accessWorkflowTag: ""
   accessAiAgentTag: ""
+  pamGatewayTag: ""
 
 # Sizing follows docs/architecture.md §12.
 ztnaApi:
@@ -147,6 +148,52 @@ accessAiAgent:
   service:
     type: ClusterIP
     port: 8090
+
+# pam-gateway — privileged-session protocol proxy. Sizing follows
+# docs/pam/architecture.md §9 (cpu=500m mem=512Mi). The PG / MySQL /
+# K8s listeners are opt-in via the matching pgPort / mysqlPort /
+# k8sPort config keys below — leave them blank to deploy an SSH-only
+# gateway. The Service still defines the four protocol ports so an
+# operator who later enables a listener does not have to redeploy the
+# Service to expose it.
+pamGateway:
+  enabled: true
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "1500m"
+      memory: "512Mi"
+  env:
+    GOMEMLIMIT: "460MiB"
+    GOGC: "100"
+  config:
+    apiUrl: "http://ztna-api.shieldnet-access.svc.cluster.local:8080"
+    pgPort: ""
+    mysqlPort: ""
+    k8sPort: ""
+    replayDir: "/var/lib/pam-gateway/replays"
+    s3Bucket: ""
+    s3Region: ""
+  secrets:
+    # MUST match ztnaApi.secrets.aiAgentApiKey.
+    apiKey: "CHANGE_ME"
+    # Empty values let the gateway auto-generate / fall back to
+    # credential injection at boot — fine for dev clusters, NOT for
+    # production where you want a stable SSH host key and a real
+    # SSH CA.
+    sshHostKey: ""
+    sshCaKey: ""
+  service:
+    type: ClusterIP
+    sshPort: 2222
+    pgPort: 5432
+    mysqlPort: 3306
+    k8sPort: 8443
+    healthPort: 8081
+  replayVolumeSize: "256Mi"
 
 # Pod-level securityContext shared by every Go service. The Python
 # agent reuses the same defaults (non-root, readOnlyRootFilesystem,

@@ -1,0 +1,15 @@
+# Sub-kustomization for pam-gateway. Pulled in from
+# deploy/k8s/kustomization.yaml; lets an operator apply just the
+# gateway with `kubectl apply -k deploy/k8s/pam-gateway/` when they
+# want to redeploy only the proxy.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - deployment.yaml
+  - service.yaml
+  - configmap.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: shieldnet-access
+  app.kubernetes.io/component: gateway
